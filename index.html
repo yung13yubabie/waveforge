@@ -9,8 +9,8 @@
        for decoded audio + waveform canvas. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
   <title>WaveForge — Professional Mastering DAW</title>
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="manifest" href="/site.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./site.webmanifest">
   <meta name="theme-color" content="#E8003C">
   <link rel="stylesheet" href="/src/css/tokens.css">
   <link rel="stylesheet" href="/src/css/reset.css">
@@ -63,13 +63,13 @@
       <!-- Engine boots in B (processed) mode — button state must match -->
       <div class="ab-toggle" role="group" aria-label="A/B 比對與快照">
         <button id="ab-a" class="ab-btn" aria-pressed="false"
-                data-tooltip="A = 原始音訊（bypass）">A</button>
+                data-tooltip="原曲 — 繞過所有處理，聆聽原始音訊">原曲</button>
         <button id="ab-b" class="ab-btn active" aria-pressed="true"
-                data-tooltip="B = 套用母帶處理後">B</button>
+                data-tooltip="調整 — 套用目前母帶處理鏈">調整</button>
         <button id="snap-c" class="ab-btn snap-btn" aria-pressed="false"
-                data-tooltip="C：空（點按存入快照）">C</button>
+                data-tooltip="存1 — 空：點按儲存目前設定">存1</button>
         <button id="snap-d" class="ab-btn snap-btn" aria-pressed="false"
-                data-tooltip="D：空（點按存入快照）">D</button>
+                data-tooltip="存2 — 空：點按儲存目前設定">存2</button>
       </div>
 
       <!-- Analyze -->

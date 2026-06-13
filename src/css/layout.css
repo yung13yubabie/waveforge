@@ -122,7 +122,7 @@
   padding: 6px 14px;
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--c-text-3);
+  color: var(--c-text-2);
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
@@ -133,10 +133,10 @@
   background: var(--c-primary);
 }
 
-/* C/D snapshot slots — dimmer until filled */
-.ab-btn.snap-btn { color: var(--c-text-3); opacity: 0.5; }
+/* 存1/存2 slots — dimmer until filled */
+.ab-btn.snap-btn { color: var(--c-text-3); opacity: 0.6; border-left: 1px solid var(--c-border); }
 .ab-btn.snap-btn:hover { opacity: 1; color: var(--c-text-1); background: var(--c-bg-overlay); }
-.ab-btn.snap-btn.snap-filled { opacity: 1; color: var(--c-primary); border-left: 1px solid var(--c-border); }
+.ab-btn.snap-btn.snap-filled { opacity: 1; color: var(--c-primary); }
 
 .header-btn {
   display: flex;

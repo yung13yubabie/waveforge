@@ -2,11 +2,11 @@
   "name": "WaveForge",
   "short_name": "WaveForge",
   "description": "Professional Mastering DAW",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0A0A0F",
   "theme_color": "#E8003C",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }
