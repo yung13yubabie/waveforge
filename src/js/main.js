@@ -777,17 +777,24 @@ async function boot() {
       : `${label}：空（點按存入當前設定）`)
   }
   function handleSnap(key, shift) {
-    if (!engine.ctx) return
+    if (!engine.ctx) {
+      setStatus('請先載入音檔再使用 C/D 快照', false)
+      return
+    }
+    const label = key.toUpperCase()
     if (snapSlots[key] && !shift) {
       engine.restore(snapSlots[key])
       syncUIFromEngine()
       recordEditNow()
+      setStatus(`已還原快照 ${label}`, true)
     } else if (snapSlots[key] && shift) {
       snapSlots[key] = null
       updateSnapBtn(key)
+      setStatus(`已清除快照 ${label}`, true)
     } else {
       snapSlots[key] = engine.serialize()
       updateSnapBtn(key)
+      setStatus(`已儲存快照 ${label} — 再次點按可還原`, true)
     }
   }
   document.getElementById('snap-c')?.addEventListener('click', e => handleSnap('c', e.shiftKey))
