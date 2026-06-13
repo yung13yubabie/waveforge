@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Data-egress lock: connect-src 'self' blocks exfiltration of uploaded audio
+       to any other origin. Relax to 'self https://your-backend' when Phase-2
+       backend is wired. worker-src blob: needed for AudioWorklet, media/img blob:
+       for decoded audio + waveform canvas. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>WaveForge — Professional Mastering DAW</title>
+  <link rel="stylesheet" href="/src/css/tokens.css">
+  <link rel="stylesheet" href="/src/css/reset.css">
+  <link rel="stylesheet" href="/src/css/layout.css">
+</head>
+<body>
+
+
+<!-- ── Processing overlay ─────────────────────────────────── -->
+<div id="processing-overlay" role="status" aria-live="polite">
+  <div class="processing-wave">
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+    <div class="processing-wave-bar"></div>
+  </div>
+  <div id="processing-step" class="processing-step">準備中...</div>
+  <div class="processing-progress-bar">
+    <div id="processing-fill" class="processing-progress-fill" style="width:0%"></div>
+  </div>
+</div>
+
+<!-- ── Main app ────────────────────────────────────────────── -->
+<div id="app">
+
+  <!-- Header -->
+  <header class="header" role="banner">
+    <div class="logo">Wave<span>Forge</span></div>
+
+    <!-- Upload zone -->
+    <label class="upload-zone" id="upload-zone" role="button" aria-label="上傳音訊檔案">
+      <input type="file" id="file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg" aria-hidden="true">
+      <span class="upload-icon" aria-hidden="true">⬆</span>
+      <span id="upload-text-wrap">
+        <span class="upload-text"><strong>點擊上傳</strong> 或拖拉音檔</span>
+        <span class="upload-formats">MP3 · WAV · FLAC · AAC · M4A</span>
+      </span>
+    </label>
+
+    <div class="header-actions">
+      <!-- A/B comparison + C/D snapshots -->
+      <!-- Engine boots in B (processed) mode — button state must match -->
+      <div class="ab-toggle" role="group" aria-label="A/B 比對與快照">
+        <button id="ab-a" class="ab-btn" aria-pressed="false"
+                data-tooltip="A = 原始音訊（bypass）">A</button>
+        <button id="ab-b" class="ab-btn active" aria-pressed="true"
+                data-tooltip="B = 套用母帶處理後">B</button>
+        <button id="snap-c" class="ab-btn snap-btn" aria-pressed="false"
+                data-tooltip="C：空（點按存入快照）">C</button>
+        <button id="snap-d" class="ab-btn snap-btn" aria-pressed="false"
+                data-tooltip="D：空（點按存入快照）">D</button>
+      </div>
+
+      <!-- Analyze -->
+      <button id="analyze-btn" class="header-btn" disabled
+              data-tooltip="分析曲風、BPM、Key（需要上傳音檔）">
+        ◎ 分析
+      </button>
+
+      <!-- Add current track to the album sequence -->
+      <button id="album-add-btn" class="header-btn" disabled
+              data-tooltip="把目前曲目（含目前處理鏈設定）加入專輯序列">
+        ＋ 加入專輯
+      </button>
+
+      <!-- Export -->
+      <select id="export-bitdepth" class="export-bitdepth" aria-label="輸出位元深度"
+              data-tooltip="24-bit 母帶 / 16-bit 加 TPDF dither（CD 交付）">
+        <option value="24">24-bit</option>
+        <option value="16">16-bit</option>
+      </select>
+      <button id="export-btn" class="header-btn primary" disabled
+              data-tooltip="輸出處理後音檔">
+        ↓ 輸出
+      </button>
+    </div>
+  </header>
+
+  <!-- Analysis bar -->
+  <div class="analysis-bar" role="complementary" aria-label="音訊分析資訊">
+    <div class="analysis-pill genre" id="pill-genre">
+      <span class="analysis-label">曲風</span>
+      <span class="analysis-value" id="val-genre" title="需後端 AI 分析">—</span>
+      <span class="analysis-conf-track" aria-hidden="true">
+        <span class="analysis-conf-fill" id="conf-val-genre"></span>
+      </span>
+    </div>
+    <div class="analysis-sep" aria-hidden="true">·</div>
+    <div class="analysis-pill bpm">
+      <span class="analysis-label">BPM</span>
+      <span class="analysis-value" id="val-bpm">—</span>
+      <span class="analysis-conf-track" aria-hidden="true">
+        <span class="analysis-conf-fill" id="conf-val-bpm"></span>
+      </span>
+    </div>
+    <div class="analysis-sep" aria-hidden="true">·</div>
+    <div class="analysis-pill key">
+      <span class="analysis-label">Key</span>
+      <span class="analysis-value" id="val-key">—</span>
+      <span class="analysis-conf-track" aria-hidden="true">
+        <span class="analysis-conf-fill" id="conf-val-key"></span>
+      </span>
+    </div>
+    <div class="analysis-sep" aria-hidden="true">·</div>
+    <div class="analysis-pill lufs">
+      <span class="analysis-label">M-LUFS</span>
+      <span class="analysis-value" id="val-lufs">—</span>
+    </div>
+    <div class="analysis-sep" aria-hidden="true">·</div>
+    <div class="analysis-pill">
+      <span class="analysis-label">True Peak</span>
+      <span class="analysis-value" id="val-tp">—</span>
+    </div>
+    <div class="analysis-status">
+      <div class="analysis-dot" id="status-dot"></div>
+      <span id="status-text">等待音檔</span>
+    </div>
+  </div>
+
+  <!-- ── Workspace (waveform + stems) ──────────────────── -->
+  <main class="workspace" role="main">
+    <!-- Main waveform -->
+    <div class="main-waveform-panel">
+      <div class="waveform-toolbar">
+        <span class="waveform-label">主波形</span>
+        <button class="icon-btn" id="undo-btn" disabled data-tooltip="復原 (Ctrl+Z)" aria-label="復原">↶</button>
+        <button class="icon-btn" id="redo-btn" disabled data-tooltip="重做 (Ctrl+Shift+Z)" aria-label="重做">↷</button>
+        <div class="waveform-zoom">
+          <span class="waveform-zoom-label" aria-hidden="true">VIEW</span>
+          <button class="icon-btn" id="zoom-out" disabled data-tooltip="縮小" aria-label="縮小">−</button>
+          <button class="icon-btn" id="zoom-in"  disabled data-tooltip="放大" aria-label="放大">+</button>
+          <button class="icon-btn" id="zoom-fit" disabled data-tooltip="符合視窗" aria-label="符合視窗">⊡</button>
+          <output class="waveform-zoom-value" id="zoom-level" aria-live="polite">1×</output>
+        </div>
+      </div>
+      <div id="waveform-main" role="img" aria-label="主波形顯示區">
+        <!-- Empty-state placeholder; removed by main.js after file load -->
+        <div class="waveform-empty" id="waveform-empty" aria-hidden="true">
+          <div class="waveform-empty-bars">
+            <!-- Bar heights as inline style to create a mock waveform silhouette -->
+            <div class="waveform-empty-bar" style="height:12px"></div>
+            <div class="waveform-empty-bar" style="height:22px"></div>
+            <div class="waveform-empty-bar" style="height:30px"></div>
+            <div class="waveform-empty-bar" style="height:18px"></div>
+            <div class="waveform-empty-bar" style="height:34px"></div>
+            <div class="waveform-empty-bar" style="height:26px"></div>
+            <div class="waveform-empty-bar" style="height:36px"></div>
+            <div class="waveform-empty-bar" style="height:28px"></div>
+            <div class="waveform-empty-bar" style="height:20px"></div>
+            <div class="waveform-empty-bar" style="height:32px"></div>
+            <div class="waveform-empty-bar" style="height:14px"></div>
+            <div class="waveform-empty-bar" style="height:24px"></div>
+          </div>
+          <div class="waveform-empty-text">拖拉音訊檔案至此，或點擊上方區域上傳</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stems panel -->
+    <section class="album-panel" aria-label="專輯母帶序列">
+      <div class="album-head">
+        <span class="album-title-label">專輯母帶序列</span>
+        <span class="album-count" id="album-count">0 軌</span>
+        <label class="album-target" data-tooltip="量測每軌處理後響度，計算增益 trim 當對齊起點（再手動微調）">
+          目標 <input type="number" id="album-target" value="-14" step="0.5" min="-30" max="-6"> LUFS
+        </label>
+        <button id="album-align-btn" class="header-btn" disabled
+                data-tooltip="對齊每軌響度到目標（起點；trim 折入限幅器前，不破壞天花板）">
+          ⇄ 對齊響度
+        </button>
+        <button id="album-export-btn" class="header-btn" disabled
+                data-tooltip="渲染全部曲目 → 拼接 → 輸出 CUE+WAV 母帶影像（44.1k/16bit + MD5，ZIP 打包）">
+          ↓ 輸出專輯
+        </button>
+      </div>
+      <div class="album-cols" aria-hidden="true">
+        <span class="ac-num">#</span>
+        <span class="ac-title">曲目</span>
+        <span class="ac-lufs">LUFS</span>
+        <span class="ac-gain">增益 dB</span>
+        <span class="ac-gap">間隙 s</span>
+        <span class="ac-isrc">ISRC</span>
+        <span class="ac-ops">操作</span>
+      </div>
+      <div id="album-list">
+        <div class="album-empty" id="album-empty">
+          <div class="album-empty-icon">💿</div>
+          <div class="album-empty-text">載入並調好一首後，按上方「＋ 加入專輯」逐曲建立序列；之後輸出 DDP。</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Mastering chain (right panel) ──────────────────── -->
+  <aside class="chain-panel" aria-label="母帶處理鏈">
+    <div class="chain-header">
+      <span class="chain-title">處理鏈</span>
+      <select id="preset-select" class="preset-select" aria-label="選擇預設">
+        <optgroup id="user-preset-group" label="── 我的預設 ──" hidden></optgroup>
+        <optgroup label="── 音色個性 ──">
+          <option value="">選擇預設...</option>
+          <option value="warm">Warm（溫暖）</option>
+          <option value="balanced">Balanced（平衡）</option>
+          <option value="open">Open（開闊透明）</option>
+          <option value="punchy">Punchy（力度衝擊）</option>
+          <option value="intimate">Intimate（親密貼近）</option>
+          <option value="cinematic">Cinematic（電影史詩）</option>
+          <option value="loud">Loud（競賽響度）</option>
+          <option value="dynamic">Dynamic（動態保留）</option>
+        </optgroup>
+        <optgroup label="── 曲風 ──">
+          <option value="pop">Pop（流行）</option>
+          <option value="hiphop">Hip-hop / Trap（嘻哈）</option>
+          <option value="edm">EDM / Electronic（電子舞曲）</option>
+          <option value="house">House / Techno（浩室）</option>
+          <option value="rnb">R&amp;B / Soul（節奏藍調）</option>
+          <option value="jazz">Jazz（爵士）</option>
+          <option value="classical">Classical（古典）</option>
+          <option value="metal">Metal / Rock（金屬）</option>
+          <option value="punk">Punk / Indie（龐克）</option>
+          <option value="ambient">Ambient（環境音）</option>
+          <option value="lofi">Lo-fi Hip-hop</option>
+          <option value="country">Country / Folk（鄉村）</option>
+          <option value="reggae">Reggae / Dub（雷鬼）</option>
+          <option value="kpop">K-pop</option>
+          <option value="latin">Latin（拉丁）</option>
+          <option value="gospel">Gospel / Choir（福音）</option>
+          <option value="podcast">Podcast / Spoken</option>
+          <option value="game">Game Audio（遊戲）</option>
+        </optgroup>
+        <optgroup label="── 年代 ──">
+          <option value="era60s">60s Motown</option>
+          <option value="era70s">70s Classic Rock</option>
+          <option value="era80s">80s New Wave</option>
+          <option value="era90s">90s Golden Age</option>
+          <option value="era2000s">2000s Loud Wars</option>
+          <option value="streaming">Streaming Era（現代）</option>
+        </optgroup>
+        <optgroup label="── 輸出平台 ──">
+          <option value="spotify">Spotify（-14 LUFS）</option>
+          <option value="youtube">YouTube（-13 LUFS）</option>
+          <option value="apple">Apple Music（-16 LUFS）</option>
+          <option value="tidal">Tidal HiFi（-14 LUFS）</option>
+          <option value="cd">CD Master（-16 LUFS）</option>
+          <option value="vinyl">Vinyl Cut（黑膠刻版）</option>
+          <option value="broadcast">Broadcast / TV（EBU R128）</option>
+        </optgroup>
+      </select>
+      <button id="preset-save-btn" class="icon-btn" data-tooltip="把目前處理鏈存成我的預設" aria-label="儲存預設">💾</button>
+    </div>
+
+    <div class="chain-modules" role="list" aria-label="母帶處理模組">
+
+      <!-- [1] High Pass / Low Pass -->
+      <article class="module-card" id="mod-hplp" role="listitem">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="hplp-enabled" aria-label="HP / LP Filter 啟用" checked>
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">HP / LP Filter</div>
+            <div class="module-name-cn">截頻器 — 切除極端頻率</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="hp-freq" data-min="20" data-max="500" data-default="20" data-unit="Hz">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">HP Freq</div>
+                <div class="knob-value">20 Hz</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="lp-freq" data-min="8000" data-max="22000" data-default="22000" data-unit="Hz">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">LP Freq</div>
+                <div class="knob-value">22k Hz</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [2] Parametric EQ -->
+      <article class="module-card" id="mod-eq" role="listitem">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="eq-enabled" aria-label="Parametric EQ 啟用" checked>
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Parametric EQ</div>
+            <div class="module-name-cn">音色雕刻刀 — 精確頻率調整</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div class="eq-canvas-wrap" aria-label="EQ頻率響應曲線">
+            <canvas id="eq-canvas"></canvas>
+          </div>
+          <div class="eq-bands" id="eq-bands-container">
+            <!-- Injected by eq.js: 10 bands -->
+          </div>
+          <label class="eq-linphase-row" data-tooltip="輸出時以線性相位 FIR 套用 EQ（零相位失真，預覽仍為低延遲 biquad）">
+            <input type="checkbox" id="eq-linphase">
+            <span>線性相位 EQ（輸出時套用）</span>
+          </label>
+          <div class="eq-match-row">
+            <label class="eq-match-btn" data-tooltip="載入參考曲，自動把音色平衡匹配寫入 EQ（響度另由限幅器/預設處理）">
+              <input type="file" id="ref-file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg,audio/*" hidden>
+              ⊕ 參考曲匹配
+            </label>
+            <span class="eq-match-status" id="ref-match-status"></span>
+          </div>
+          <div class="spectrum-wrap" aria-label="即時頻譜分析">
+            <canvas id="spectrum-canvas"></canvas>
+          </div>
+          <div class="spectrogram-wrap" aria-label="時頻瀑布圖（spectrogram）">
+            <canvas id="spectrogram-canvas"></canvas>
+          </div>
+        </div>
+      </article>
+
+      <!-- [3] Dynamic EQ -->
+      <article class="module-card" id="mod-dyneq" role="listitem"
+               data-tooltip="動態 EQ — 偵測頻段超過門限時才削減（AudioWorklet 實作）">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="dyneq-enabled" aria-label="Dynamic EQ 啟用">
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Dynamic EQ</div>
+            <div class="module-name-cn">會思考的EQ — 超過門限才修正</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="dyneq-freq" data-min="200" data-max="8000" data-default="2000" data-unit="Hz">
+                <svg class="knob-svg" width="36" height="36"></svg>
+                <div class="knob-label">Freq</div>
+                <div class="knob-value">2k</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="dyneq-thresh" data-min="-60" data-max="0" data-default="-24" data-unit="dB">
+                <svg class="knob-svg" width="36" height="36"></svg>
+                <div class="knob-label">Thresh</div>
+                <div class="knob-value">-24</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="dyneq-ratio" data-min="1" data-max="10" data-default="3" data-unit=":1">
+                <svg class="knob-svg" width="36" height="36"></svg>
+                <div class="knob-label">Ratio</div>
+                <div class="knob-value">3:1</div>
+              </div>
+            </div>
+          </div>
+          <div class="gr-meter" aria-label="Dynamic EQ 增益衰減">
+            <div class="gr-meter-bar"><div class="gr-meter-fill" id="dyneq-gr-fill"></div></div>
+            <div class="gr-meter-label" id="dyneq-gr-value">GR: 0.0 dB</div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [4] Mid/Side EQ + Widener -->
+      <article class="module-card" id="mod-ms" role="listitem"
+               data-tooltip="M/S 矩陣 — 中側分離處理與立體聲寬度">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="ms-enabled" aria-label="Mid/Side EQ 啟用">
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Mid/Side EQ</div>
+            <div class="module-name-cn">立體聲手術刀 — 中側分開處理</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="ms-width" data-min="0" data-max="200" data-default="100" data-unit="%">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Width</div>
+                <div class="knob-value">100%</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="ms-mid-gain" data-min="-12" data-max="12" data-default="0" data-unit="dB">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Mid Gain</div>
+                <div class="knob-value">0 dB</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="ms-side-gain" data-min="-12" data-max="12" data-default="0" data-unit="dB">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Side Gain</div>
+                <div class="knob-value">0 dB</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [5] Multiband Compressor — true 3-band (subtractive crossover) -->
+      <article class="module-card" id="mod-mbc" role="listitem"
+               data-tooltip="真‧3頻段獨立壓縮（低/中/高，減法式分頻完美重建）">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="mbc-enabled" aria-label="Multiband Compressor 啟用" checked>
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Multiband Compressor</div>
+            <div class="module-name-cn">分區動態管理員 — 3頻段獨立壓縮</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <canvas id="comp-gr-canvas" class="comp-gr-canvas" aria-label="增益衰減顯示"></canvas>
+          <div class="comp-gr-label" id="comp-gr-value">GR: 0.0 dB</div>
+          <!-- Crossover frequencies (LOW | MID | HIGH split points) -->
+          <div class="mbc-xovers">
+            <div class="knob-wrap" data-param="mbc-xover1" data-min="60" data-max="500" data-default="250" data-unit="Hz">
+              <svg class="knob-svg" width="34" height="34"></svg>
+              <div class="knob-label">低/中 分頻</div>
+              <div class="knob-value">250</div>
+            </div>
+            <div class="knob-wrap" data-param="mbc-xover2" data-min="1000" data-max="8000" data-default="2500" data-unit="Hz">
+              <svg class="knob-svg" width="34" height="34"></svg>
+              <div class="knob-label">中/高 分頻</div>
+              <div class="knob-value">2.5k</div>
+            </div>
+          </div>
+          <!-- Per-band threshold + ratio -->
+          <div class="mbc-band"><span class="mbc-band-label">低頻</span>
+            <div class="knob-wrap" data-param="mbc-low-thresh" data-min="-60" data-max="0" data-default="-24" data-unit="dB">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Thresh</div><div class="knob-value">-24</div>
+            </div>
+            <div class="knob-wrap" data-param="mbc-low-ratio" data-min="1" data-max="20" data-default="4" data-unit=":1">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Ratio</div><div class="knob-value">4:1</div>
+            </div>
+          </div>
+          <div class="mbc-band"><span class="mbc-band-label">中頻</span>
+            <div class="knob-wrap" data-param="mbc-mid-thresh" data-min="-60" data-max="0" data-default="-24" data-unit="dB">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Thresh</div><div class="knob-value">-24</div>
+            </div>
+            <div class="knob-wrap" data-param="mbc-mid-ratio" data-min="1" data-max="20" data-default="4" data-unit=":1">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Ratio</div><div class="knob-value">4:1</div>
+            </div>
+          </div>
+          <div class="mbc-band"><span class="mbc-band-label">高頻</span>
+            <div class="knob-wrap" data-param="mbc-high-thresh" data-min="-60" data-max="0" data-default="-24" data-unit="dB">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Thresh</div><div class="knob-value">-24</div>
+            </div>
+            <div class="knob-wrap" data-param="mbc-high-ratio" data-min="1" data-max="20" data-default="4" data-unit=":1">
+              <svg class="knob-svg" width="34" height="34"></svg><div class="knob-label">Ratio</div><div class="knob-value">4:1</div>
+            </div>
+          </div>
+          <!-- Shared dynamics -->
+          <div class="comp-controls">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="comp-attack" data-min="0.001" data-max="0.3" data-default="0.003" data-unit="s">
+                <svg class="knob-svg" width="34" height="34"></svg>
+                <div class="knob-label">Attack</div>
+                <div class="knob-value">3ms</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="comp-release" data-min="0.05" data-max="2" data-default="0.25" data-unit="s">
+                <svg class="knob-svg" width="34" height="34"></svg>
+                <div class="knob-label">Release</div>
+                <div class="knob-value">250ms</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="comp-makeup" data-min="-12" data-max="12" data-default="0" data-unit="dB">
+                <svg class="knob-svg" width="34" height="34"></svg>
+                <div class="knob-label">Makeup</div>
+                <div class="knob-value">0</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="mbc-mix" data-min="0" data-max="100" data-default="100" data-unit="%"
+                   data-tooltip="平行壓縮混合比 — 100% 全壓縮，50% 乾濕各半（平行壓縮技術）">
+                <svg class="knob-svg" width="34" height="34"></svg>
+                <div class="knob-label">Mix</div>
+                <div class="knob-value">100</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [6] Saturator -->
+      <article class="module-card" id="mod-sat" role="listitem">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="sat-enabled" aria-label="Saturator 啟用">
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Saturator</div>
+            <div class="module-name-cn">諧波激勵器 — 類比溫暖感</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="vinyl-format-btn active" data-sat-type="tape">Tape</button>
+            <button class="vinyl-format-btn" data-sat-type="tube">Tube</button>
+            <button class="vinyl-format-btn" data-sat-type="transformer">Trans.</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="sat-drive" data-min="0" data-max="100" data-default="20" data-unit="%">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Drive</div>
+                <div class="knob-value">20%</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="sat-mix" data-min="0" data-max="100" data-default="50" data-unit="%">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Mix</div>
+                <div class="knob-value">50%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [7] Peak Limiter (digital peak, NOT ITU-R true-peak — see meter for TP) -->
+      <article class="module-card active" id="mod-limiter" role="listitem"
+               data-tooltip="DynamicsCompressor 峰值控制（非 ITU-R true-peak 演算法）。True Peak 量測見下方響度計">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="limiter-enabled" aria-label="Peak Limiter 啟用" checked>
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Peak Limiter</div>
+            <div class="module-name-cn">峰值控制 — 防止數位削波</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="lim-ceiling" data-min="-6" data-max="0" data-default="-1" data-unit="dBFS"
+                   data-tooltip="樣本峰值天花板（DynamicsCompressor，非 ITU-R True Peak — 輸出 True Peak 由「真 True-Peak 限幅」勾選控制）">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Ceiling</div>
+                <div class="knob-value">-1.0</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="lim-input" data-min="-12" data-max="12" data-default="0" data-unit="dB">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Input</div>
+                <div class="knob-value">0</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="lim-release" data-min="0.01" data-max="1" data-default="0.1" data-unit="s">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Release</div>
+                <div class="knob-value">100ms</div>
+              </div>
+            </div>
+          </div>
+          <label class="eq-linphase-row" data-tooltip="輸出時以 4× 過採樣離線限幅，保證檔案 true peak ≤ 天花板（預覽仍為低延遲峰值限幅）">
+            <input type="checkbox" id="lim-truepeak">
+            <span>真 True-Peak 限幅（輸出時）</span>
+          </label>
+          <!-- IRC mode selection: Web Audio 無法實作 IRC，誠實停用 -->
+          <div style="font-size:10px;color:var(--c-text-3);margin-bottom:6px">
+            IRC 演算法模式 <span class="phase-badge">需後端離線渲染</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap"
+               data-tooltip="瀏覽器 DynamicsCompressor 無法實作 IRC 演算法；此選項需後端渲染支援">
+            <button class="vinyl-format-btn" data-irc="I" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC I</button>
+            <button class="vinyl-format-btn" data-irc="II" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC II</button>
+            <button class="vinyl-format-btn" data-irc="III" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC III</button>
+            <button class="vinyl-format-btn" data-irc="IV" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC IV</button>
+            <button class="vinyl-format-btn" data-irc="V" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC V ✦</button>
+          </div>
+        </div>
+      </article>
+
+      <!-- [8] De-esser -->
+      <article class="module-card" id="mod-deesser" role="listitem"
+               data-tooltip="分頻段齒音壓制 — 高頻超過門限時動態衰減（AudioWorklet 實作）">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="deesser-enabled" aria-label="De-esser 啟用">
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">De-esser</div>
+            <div class="module-name-cn">去齒音器 — 消除刺耳齒音</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="dess-freq" data-min="2000" data-max="10000" data-default="6000" data-unit="Hz">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Freq</div>
+                <div class="knob-value">6k</div>
+              </div>
+            </div>
+            <div class="eq-band">
+              <div class="knob-wrap" data-param="dess-thresh" data-min="-60" data-max="0" data-default="-30" data-unit="dB">
+                <svg class="knob-svg" width="40" height="40"></svg>
+                <div class="knob-label">Thresh</div>
+                <div class="knob-value">-30</div>
+              </div>
+            </div>
+          </div>
+          <div class="gr-meter" aria-label="De-esser 增益衰減">
+            <div class="gr-meter-bar"><div class="gr-meter-fill" id="deesser-gr-fill"></div></div>
+            <div class="gr-meter-label" id="deesser-gr-value">GR: 0.0 dB</div>
+          </div>
+        </div>
+      </article>
+
+      <!-- [9] Vinyl Cut -->
+      <article class="module-card" id="mod-vinyl" role="listitem">
+        <div class="module-head" aria-expanded="false">
+          <label class="module-toggle">
+            <input type="checkbox" id="vinyl-enabled" aria-label="Vinyl Cut Mode 啟用">
+            <span class="module-toggle-track"></span>
+            <span class="module-toggle-thumb"></span>
+          </label>
+          <div>
+            <div class="module-name">Vinyl Cut Mode</div>
+            <div class="module-name-cn">黑膠刻版 — 真實 RIAA 標準</div>
+          </div>
+          <span class="module-expand" aria-hidden="true">▼</span>
+        </div>
+        <div class="module-body">
+          <div class="vinyl-format-select">
+            <button class="vinyl-format-btn active" data-vinyl-format="12-33">12" 33rpm</button>
+            <button class="vinyl-format-btn" data-vinyl-format="12-45">12" 45rpm</button>
+            <button class="vinyl-format-btn" data-vinyl-format="7-45">7" 45rpm</button>
+          </div>
+          <div style="font-size:10px;color:var(--c-text-3);margin-bottom:4px">每面時長</div>
+          <div class="vinyl-time-bar-wrap">
+            <div id="vinyl-time-bar" class="vinyl-time-bar" style="width:0%;background:var(--c-green)"></div>
+          </div>
+          <div id="vinyl-time-label" style="font-size:10px;color:var(--c-text-3);margin-bottom:8px">— / 18:00 理想</div>
+          <div class="vinyl-warnings" id="vinyl-warnings">
+            <div class="vinyl-warning ok">✓ 等待音檔上傳以進行黑膠分析</div>
+          </div>
+        </div>
+      </article>
+
+    </div><!-- .chain-modules -->
+
+    <!-- LUFS Meters -->
+    <div class="meters-panel" role="region" aria-label="響度計">
+      <div class="meters-title">響度計</div>
+      <div class="lufs-readings">
+        <div class="lufs-reading">
+          <div class="lufs-reading-label">Momentary (M)</div>
+          <div class="lufs-reading-value" id="lufs-m">—</div>
+        </div>
+        <div class="lufs-reading">
+          <div class="lufs-reading-label">Short-term (S)</div>
+          <div class="lufs-reading-value" id="lufs-s">—</div>
+        </div>
+        <div class="lufs-reading">
+          <div class="lufs-reading-label">Integrated (I)</div>
+          <div class="lufs-reading-value" id="lufs-i">—</div>
+        </div>
+        <div class="lufs-reading">
+          <div class="lufs-reading-label">True Peak</div>
+          <div class="lufs-reading-value" id="lufs-tp">—</div>
+        </div>
+      </div>
+      <!-- Stereo phase correlation: safety net for M/S width (−1 anti-phase … +1 mono) -->
+      <div class="corr-meter" aria-label="立體聲相位相關性">
+        <div class="corr-meter-head">
+          <span class="corr-meter-title">相位相關</span>
+          <span class="corr-meter-value" id="corr-value">—</span>
+        </div>
+        <div class="corr-meter-track">
+          <div class="corr-meter-zero" aria-hidden="true"></div>
+          <div class="corr-meter-needle" id="corr-needle"></div>
+        </div>
+        <div class="corr-meter-scale" aria-hidden="true"><span>-1</span><span>0</span><span>+1</span></div>
+      </div>
+      <!-- Goniometer / vectorscope: visual stereo field + phase (M up, anti-phase = horizontal) -->
+      <div class="gonio-meter" aria-label="立體聲向量示波器">
+        <div class="gonio-meter-head">
+          <span class="gonio-meter-title">向量示波器</span>
+        </div>
+        <div class="gonio-wrap"><canvas id="gonio-canvas"></canvas></div>
+      </div>
+      <!-- Loudness history: scrolling short-term LUFS vs target (chart recorder) -->
+      <div class="loudness-graph-meter" aria-label="響度歷史時間軸">
+        <div class="loudness-graph-head">
+          <span class="loudness-graph-title">響度歷史 (S)</span>
+        </div>
+        <div class="loudness-graph-wrap"><canvas id="loudness-graph-canvas"></canvas></div>
+      </div>
+      <div class="lufs-platforms">
+        <div class="platform-row">
+          <span class="platform-name">Spotify</span>
+          <span class="platform-target">-14 LUFS</span>
+          <div class="platform-bar-wrap"><div class="platform-bar ok" id="bar-spotify" style="width:0%"></div></div>
+          <span class="platform-status" id="status-spotify">—</span>
+        </div>
+        <div class="platform-row">
+          <span class="platform-name">YouTube</span>
+          <span class="platform-target">-13 LUFS</span>
+          <div class="platform-bar-wrap"><div class="platform-bar ok" id="bar-youtube" style="width:0%"></div></div>
+          <span class="platform-status" id="status-youtube">—</span>
+        </div>
+        <div class="platform-row">
+          <span class="platform-name">Apple Music</span>
+          <span class="platform-target">-16 LUFS</span>
+          <div class="platform-bar-wrap"><div class="platform-bar ok" id="bar-apple" style="width:0%"></div></div>
+          <span class="platform-status" id="status-apple">—</span>
+        </div>
+        <div class="platform-row">
+          <span class="platform-name">Tidal</span>
+          <span class="platform-target">-14 LUFS</span>
+          <div class="platform-bar-wrap"><div class="platform-bar ok" id="bar-tidal" style="width:0%"></div></div>
+          <span class="platform-status" id="status-tidal">—</span>
+        </div>
+        <div class="platform-row">
+          <span class="platform-name">Broadcast</span>
+          <span class="platform-target">-23 LUFS</span>
+          <div class="platform-bar-wrap"><div class="platform-bar ok" id="bar-broadcast" style="width:0%"></div></div>
+          <span class="platform-status" id="status-broadcast">—</span>
+        </div>
+      </div>
+    </div>
+
+  </aside><!-- .chain-panel -->
+
+  <!-- ── Transport bar ────────────────────────────────────── -->
+  <footer class="transport" role="toolbar" aria-label="播放控制">
+    <div class="transport-time" aria-live="polite" aria-atomic="true">
+      <span id="time-current">0:00</span>
+      <span class="time-total"> / <span id="time-total">0:00</span></span>
+    </div>
+
+    <div class="transport-controls">
+      <button class="transport-btn" id="btn-skip-back" aria-label="跳到開頭" title="跳到開頭">⏮</button>
+      <button class="transport-btn play-btn" id="btn-play" aria-label="播放" title="播放 (空白鍵)">▶</button>
+      <button class="transport-btn" id="btn-skip-fwd" aria-label="跳到結尾" title="跳到結尾">⏭</button>
+      <button class="transport-btn" id="btn-loop" aria-pressed="false" aria-label="循環播放" title="循環播放">⟳</button>
+    </div>
+
+    <div class="transport-progress" id="transport-progress" role="slider" tabindex="0"
+         aria-label="播放進度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="transport-progress-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+
+    <div class="transport-right">
+      <div class="vol-knob-wrap">
+        <span>音量</span>
+        <input type="range" id="master-vol" min="0" max="1" step="0.01" value="0.8"
+               style="width:70px;accent-color:var(--c-primary)" aria-label="主音量">
+        <span id="master-vol-label">80%</span>
+      </div>
+    </div>
+  </footer>
+
+</div><!-- #app -->
+
+<script type="module" src="/src/js/main.js"></script>
+</body>
+</html>

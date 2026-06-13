@@ -1,0 +1,82 @@
+:root {
+  /* ── Colour palette ─────────────────────────────────── */
+  --c-bg-base:       #0A0A0F;
+  --c-bg-surface:    #12121A;
+  --c-bg-elevated:   #1A1A26;
+  --c-bg-overlay:    #22222E;
+  --c-bg-input:      #0F0F18;
+
+  --c-primary:       #E8003C;
+  --c-primary-h:     #FF2D55;
+  --c-primary-muted: rgba(232, 0, 60, 0.12);
+  --c-primary-glow:  rgba(232, 0, 60, 0.25);
+  --c-primary-dim:   rgba(232, 0, 60, 0.06);
+
+  --c-waveform:      #FF4B6E;
+  --c-waveform-prog: #E8003C;
+  --c-waveform-stem-0: #FF4B6E; /* vocals */
+  --c-waveform-stem-1: #4ECDC4; /* drums  */
+  --c-waveform-stem-2: #FFE66D; /* bass   */
+  --c-waveform-stem-3: #A29BFE; /* piano  */
+  --c-waveform-stem-4: #6BCB77; /* guitar */
+  --c-waveform-stem-5: #FD9644; /* other  */
+
+  --c-green:  #2ED573;
+  --c-orange: #FFA502;
+  --c-blue:   #4ECDC4;
+
+  --c-text-1:   #F1F2F6;
+  --c-text-2:   #A4ACC0;
+  --c-text-3:   #7A849C;  /* ≥4.5:1 on surface — WCAG AA for small text */
+  --c-text-inv: #0A0A0F;
+
+  --c-border:       rgba(255,255,255,0.06);
+  --c-border-focus: rgba(232,0,60,0.45);
+  --c-border-hover: rgba(255,255,255,0.12);
+
+  /* ── Spacing ────────────────────────────────────────── */
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+
+  /* ── Typography ─────────────────────────────────────── */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-ui:   -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  --text-xs:  11px;
+  --text-sm:  12px;
+  --text-md:  14px;
+  --text-lg:  16px;
+  --text-xl:  20px;
+  --text-2xl: 24px;
+
+  /* ── Radius ─────────────────────────────────────────── */
+  --r-sm:  4px;
+  --r-md:  8px;
+  --r-lg:  12px;
+  --r-xl:  16px;
+  --r-full: 9999px;
+
+  /* ── Shadow ─────────────────────────────────────────── */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.5);
+  --shadow-glow: 0 0 16px var(--c-primary-glow);
+
+  /* ── Transition ─────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-mid:  240ms;
+  --dur-slow: 400ms;
+
+  /* ── Layout ─────────────────────────────────────────── */
+  --header-h:    56px;
+  --analysis-h:  36px;
+  --transport-h: 52px;
+  --chain-w:     320px;
+  --stems-h:     240px;
+}

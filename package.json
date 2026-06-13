@@ -1,0 +1,27 @@
+{
+  "name": "waveforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Professional mastering DAW — WaveForge",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "wavesurfer.js": "^7.8.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/ui": "^4.1.8",
+    "jsdom": "^25.0.1",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  }
+}

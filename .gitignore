@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+coverage/
+.verify-dist*/
+debug_screenshots/
+*.log
+.DS_Store
+Thumbs.db
