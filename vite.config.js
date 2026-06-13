@@ -5,6 +5,8 @@ export default defineConfig({
   // (subdirectory hosting otherwise 404s the worklets and silently disables them)
   base: './',
   server: { port: 5173 },
+  // Vite 8/Rolldown bug: __BUNDLED_DEV__ is not injected into production build
+  define: { __BUNDLED_DEV__: false },
   build: {
     target: 'es2022',
     rollupOptions: {

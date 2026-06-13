@@ -4,7 +4,7 @@
 
 > 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 24-bit WAV。
 
-**Live demo：** [waveforge.pages.dev](https://waveforge.pages.dev)（即將上線）
+**Live demo：** [yung13yubabie.github.io/waveforge](https://yung13yubabie.github.io/waveforge/)
 
 ---
 
