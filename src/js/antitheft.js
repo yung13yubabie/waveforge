@@ -24,6 +24,14 @@ let emailNotify = true
 const works = []   // [{ id, name, file, fingerprint, lastScan, results }]
 let activeWorkId = null
 
+// ── Helpers ───────────────────────────────────────────────
+function safeHref(url) {
+  try {
+    const u = new URL(url)
+    return (u.protocol === 'https:' || u.protocol === 'http:') ? url : '#'
+  } catch { return '#' }
+}
+
 // ── Auth overlay ──────────────────────────────────────────
 export function checkAuthOverlay() {
   const overlay  = document.getElementById('auth-required-overlay')
@@ -32,7 +40,8 @@ export function checkAuthOverlay() {
   const settingsBtn = document.getElementById('settings-auth-btn')
   const avatarEl = document.getElementById('auth-avatar')
 
-  if (overlay) overlay.classList.toggle('visible', !currentUser)
+  const shouldBlock = SUPABASE_READY && !currentUser
+  if (overlay) overlay.classList.toggle('visible', shouldBlock)
 
   if (currentUser) {
     const initial = (currentUser.email?.[0] ?? '?').toUpperCase()
@@ -210,6 +219,8 @@ async function handleWorksUpload(file) {
 
 // ── Scan a work ───────────────────────────────────────────
 async function scanWork(work) {
+  if (radarScanning) return  // already scanning
+
   const statusEl = document.getElementById('scan-status-text')
   const countEl  = document.getElementById('scan-results-count')
   const scanBtn  = document.querySelector(`.work-scan-btn[data-id="${work.id}"]`)
@@ -262,9 +273,12 @@ async function scanWork(work) {
     work.results  = results
     work.lastScan = now.toISOString()
 
-    document.getElementById('scan-track-name').textContent = work.name
-    document.getElementById('scan-matches-count').textContent = results.length
-    document.getElementById('scan-last-time').textContent = now.toLocaleDateString('zh-TW')
+    const trackNameEl = document.getElementById('scan-track-name')
+    const matchesEl   = document.getElementById('scan-matches-count')
+    const lastTimeEl  = document.getElementById('scan-last-time')
+    if (trackNameEl) trackNameEl.textContent = work.name
+    if (matchesEl)   matchesEl.textContent   = results.length
+    if (lastTimeEl)  lastTimeEl.textContent  = now.toLocaleDateString('zh-TW')
     if (countEl) countEl.textContent = `${results.length} 筆`
 
     renderResults(work)
@@ -330,25 +344,51 @@ function renderResults(work) {
     return
   }
 
-  listEl.innerHTML = work.results.map((r, i) => {
+  const fragment = document.createDocumentFragment()
+  work.results.forEach((r, i) => {
     const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
-    const safeTitle  = document.createElement('span')
-    const safeArtist = document.createElement('span')
-    safeTitle.textContent  = r.title
-    safeArtist.textContent = r.artist
-    return `
-    <div class="scan-result-item" style="animation-delay:${i * 60}ms">
-      <div class="result-similarity ${cls}">${r.similarity}%</div>
-      <div class="result-info">
-        <div class="result-title">${safeTitle.innerHTML}</div>
-        <div class="result-meta">
-          <span>${safeArtist.innerHTML}</span>
-          <span class="result-platform">${r.platform ?? ''}</span>
-        </div>
-      </div>
-      <a class="result-link" href="${r.url}" target="_blank" rel="noopener noreferrer" aria-label="前往平台">↗</a>
-    </div>`
-  }).join('')
+
+    const item = document.createElement('div')
+    item.className = 'scan-result-item'
+    item.style.animationDelay = `${i * 60}ms`
+
+    const simEl = document.createElement('div')
+    simEl.className = `result-similarity ${cls}`
+    simEl.textContent = `${r.similarity}%`
+
+    const infoEl = document.createElement('div')
+    infoEl.className = 'result-info'
+
+    const titleEl = document.createElement('div')
+    titleEl.className = 'result-title'
+    titleEl.textContent = r.title ?? ''
+
+    const metaEl = document.createElement('div')
+    metaEl.className = 'result-meta'
+
+    const artistEl = document.createElement('span')
+    artistEl.textContent = r.artist ?? ''
+
+    const platformEl = document.createElement('span')
+    platformEl.className = 'result-platform'
+    platformEl.textContent = r.platform ?? ''
+
+    metaEl.append(artistEl, platformEl)
+    infoEl.append(titleEl, metaEl)
+
+    const linkEl = document.createElement('a')
+    linkEl.className = 'result-link'
+    linkEl.href = safeHref(r.url)
+    linkEl.target = '_blank'
+    linkEl.rel = 'noopener noreferrer'
+    linkEl.setAttribute('aria-label', r.platform ? `前往 ${r.platform}` : '前往平台')
+    linkEl.textContent = '↗'
+
+    item.append(simEl, infoEl, linkEl)
+    fragment.appendChild(item)
+  })
+
+  listEl.replaceChildren(fragment)
 }
 
 function renderWorksList() {
@@ -418,13 +458,16 @@ function renderWorksList() {
 
     card.addEventListener('click', () => {
       activeWorkId = w.id
-      document.getElementById('scan-track-name').textContent = w.name
-      const st = document.getElementById('scan-status-text')
+      const trackNameEl  = document.getElementById('scan-track-name')
+      const matchesEl    = document.getElementById('scan-matches-count')
+      const lastTimeEl   = document.getElementById('scan-last-time')
+      const st           = document.getElementById('scan-status-text')
+      if (trackNameEl) trackNameEl.textContent = w.name
       if (st) st.textContent = w.lastScan
         ? `上次掃描 ${new Date(w.lastScan).toLocaleDateString('zh-TW')}`
         : '未掃描'
-      document.getElementById('scan-matches-count').textContent = w.results?.length ?? '—'
-      document.getElementById('scan-last-time').textContent = w.lastScan
+      if (matchesEl) matchesEl.textContent = w.results?.length ?? '—'
+      if (lastTimeEl) lastTimeEl.textContent = w.lastScan
         ? new Date(w.lastScan).toLocaleDateString('zh-TW')
         : '—'
       const countEl = document.getElementById('scan-results-count')

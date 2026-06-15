@@ -317,7 +317,8 @@ export async function separateStems(fileOrBlob) {
     btnEl.textContent = 'AI 分軌（重試）'
     btnEl.disabled    = false
     console.error('[Demucs]', err)
-    document.getElementById('bounce-status').textContent = `分軌失敗：${err.message}`
+    const bsEl = document.getElementById('bounce-status')
+    if (bsEl) bsEl.textContent = `分軌失敗：${err.message}`
   }
 }
 

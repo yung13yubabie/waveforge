@@ -186,14 +186,6 @@ async function boot() {
   // ── Anti-theft detection ─────────────────────────────────
   initAntiTheft()
 
-  // ── Auth modal close ─────────────────────────────────────
-  document.getElementById('modal-close')?.addEventListener('click', () => {
-    document.getElementById('auth-modal')?.classList.remove('open')
-  })
-  document.getElementById('auth-modal')?.addEventListener('click', e => {
-    if (e.target === e.currentTarget) e.currentTarget.classList.remove('open')
-  })
-
   // ── Auth pill opens modal ────────────────────────────────
   document.getElementById('auth-login-pill')?.addEventListener('click', () => {
     document.getElementById('auth-modal')?.classList.add('open')
