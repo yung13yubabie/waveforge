@@ -76,7 +76,20 @@
   /* ── Layout ─────────────────────────────────────────── */
   --header-h:    56px;
   --analysis-h:  36px;
+  --mode-nav-h:  40px;
   --transport-h: 52px;
   --chain-w:     320px;
   --stems-h:     240px;
+
+  /* ── Stems colours (kept for stem panels) ─────────── */
+  --stem-vocals-bg:  rgba(255,75,110,0.08);
+  --stem-drums-bg:   rgba(78,205,196,0.08);
+  --stem-bass-bg:    rgba(255,230,109,0.08);
+  --stem-other-bg:   rgba(253,150,68,0.08);
+
+  /* ── Anti-theft status colours ─────────────────────── */
+  --c-match-high:   #FF4B6E;
+  --c-match-mid:    #FFA502;
+  --c-match-low:    #2ED573;
+  --c-scan-glow:    rgba(78,205,196,0.3);
 }

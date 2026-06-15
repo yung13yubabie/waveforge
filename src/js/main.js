@@ -1,4 +1,7 @@
 import WaveSurfer from 'wavesurfer.js'
+import { initModeNav }        from './mode-nav.js'
+import { initAntiTheft }      from './antitheft.js'
+import { initStemsMastering } from './stems-mastering.js'
 import { AudioEngine }    from './audio/engine.js'
 import { initKnobs }      from './ui/knob.js'
 import { EQCanvas }       from './ui/eq-canvas.js'
@@ -177,6 +180,25 @@ async function boot() {
 
   buildEQBands()
 
+  // ── Mode navigation ──────────────────────────────────────
+  initModeNav()
+
+  // ── Anti-theft detection ─────────────────────────────────
+  initAntiTheft()
+
+  // ── Auth modal close ─────────────────────────────────────
+  document.getElementById('modal-close')?.addEventListener('click', () => {
+    document.getElementById('auth-modal')?.classList.remove('open')
+  })
+  document.getElementById('auth-modal')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.remove('open')
+  })
+
+  // ── Auth pill opens modal ────────────────────────────────
+  document.getElementById('auth-login-pill')?.addEventListener('click', () => {
+    document.getElementById('auth-modal')?.classList.add('open')
+  })
+
   const engine   = new AudioEngine()
   const stems    = new StemsPanel(document.getElementById('stems-container'))
 
@@ -187,6 +209,9 @@ async function boot() {
   // Album sequence (Phase 6) + the currently-loaded File (for per-track snapshot)
   const album = new Album()
   let currentFile = null
+
+  // ── Stems mastering ──────────────────────────────────────
+  initStemsMastering(() => currentFile)
 
   // ── File loading ────────────────────────────────────────
   let isLoadingFile = false
@@ -299,6 +324,7 @@ async function boot() {
       document.getElementById('analyze-btn').disabled = false
       document.getElementById('export-btn').disabled  = false
       document.getElementById('album-add-btn').disabled = false
+      document.getElementById('stems-ai-btn').disabled = false
       for (const z of ['zoom-in','zoom-out','zoom-fit'])
         document.getElementById(z)?.removeAttribute('disabled')
 

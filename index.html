@@ -97,6 +97,20 @@
     </div>
   </header>
 
+  <!-- Mode navigation tabs -->
+  <nav class="mode-nav" role="tablist" aria-label="功能模式">
+    <button class="mode-tab active" role="tab" data-mode="master"
+            aria-selected="true" aria-controls="mode-master">母帶處理</button>
+    <button class="mode-tab" role="tab" data-mode="stems"
+            aria-selected="false" aria-controls="mode-stems">分軌母帶</button>
+    <button class="mode-tab" role="tab" data-mode="antitheft"
+            aria-selected="false" aria-controls="mode-antitheft">防盜偵測</button>
+    <div class="mode-nav-auth">
+      <button class="auth-login-pill" id="auth-login-pill">登入 / 註冊</button>
+      <div class="auth-avatar" id="auth-avatar" hidden aria-label="帳號選單">?</div>
+    </div>
+  </nav>
+
   <!-- Analysis bar -->
   <div class="analysis-bar" role="complementary" aria-label="音訊分析資訊">
     <div class="analysis-pill genre" id="pill-genre">
@@ -138,8 +152,9 @@
     </div>
   </div>
 
+  <!-- ── Mode: Master (default) ─────────────────────────── -->
   <!-- ── Workspace (waveform + stems) ──────────────────── -->
-  <main class="workspace" role="main">
+  <main class="workspace" id="mode-master" role="main">
     <!-- Main waveform -->
     <div class="main-waveform-panel">
       <div class="waveform-toolbar">
@@ -779,6 +794,178 @@
 
   </aside><!-- .chain-panel -->
 
+  <!-- ── Mode: Stems Mastering ──────────────────────────── -->
+  <section class="workspace mode-panel" id="mode-stems" role="tabpanel"
+           aria-labelledby="tab-stems" hidden>
+    <div class="stems-mode-panel">
+      <!-- AI Separation zone -->
+      <div class="stems-ai-zone">
+        <button class="stems-ai-btn" id="stems-ai-btn" disabled>
+          ◈ AI 分軌
+        </button>
+        <div class="stems-ai-info">
+          <div class="stems-ai-title">Demucs 智慧分軌</div>
+          <div class="stems-ai-desc">傳送至 Hugging Face Spaces，自動分離 4 軌（人聲 / 鼓 / 貝斯 / 其他）· 約等待 2–5 分鐘</div>
+        </div>
+        <div class="demucs-progress-wrap" id="demucs-progress-wrap">
+          <canvas id="demucs-canvas" width="180" height="56"></canvas>
+          <div class="demucs-eta" id="demucs-eta">估計剩餘 —</div>
+        </div>
+      </div>
+
+      <!-- Per-stem processing grid -->
+      <div class="stems-processing-grid" id="stems-processing-grid">
+        <div class="works-empty" style="grid-column:1/-1">
+          <div class="works-empty-icon">◈</div>
+          <div class="works-empty-text">上傳音檔後點擊「AI 分軌」，<br>WaveForge 會自動把音樂拆成 4 個樂器軌道，<br>讓你對每個樂器個別調整 EQ 和壓縮。</div>
+        </div>
+      </div>
+
+      <!-- Bounce to master chain -->
+      <div class="stems-bounce-bar">
+        <span class="bounce-status" id="bounce-status">分軌完成後可進行 Bounce</span>
+        <button class="bounce-btn" id="bounce-btn" disabled>
+          Bounce &amp; Master →
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Mode: Anti-theft Detection ──────────────────────── -->
+  <section class="workspace mode-panel" id="mode-antitheft" role="tabpanel"
+           aria-labelledby="tab-antitheft" hidden style="position:relative">
+
+    <!-- Auth required overlay (shown when not logged in) -->
+    <div class="auth-required-overlay" id="auth-required-overlay">
+      <div class="auth-required-card">
+        <div class="auth-required-icon">🔐</div>
+        <div class="auth-required-title">需要登入</div>
+        <div class="auth-required-desc">防盜偵測系統需要帳號來儲存您的作品指紋，以及綁定 ACRCloud API Key。</div>
+        <button class="auth-cta-btn" id="auth-cta-btn">登入 / 免費註冊</button>
+      </div>
+    </div>
+
+    <div class="antitheft-panel">
+      <!-- Left: Works Library -->
+      <div class="works-library">
+        <div class="works-library-head">
+          <span class="works-library-title">我的作品庫</span>
+          <label class="works-add-btn" id="works-add-label">
+            <input type="file" id="works-file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg" hidden>
+            + 新增
+          </label>
+        </div>
+        <div class="works-list" id="works-list">
+          <div class="works-empty">
+            <div class="works-empty-icon">♪</div>
+            <div class="works-empty-text">點擊「+ 新增」上傳您的原創作品，WaveForge 會萃取音訊指紋存入資料庫。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center: Scan results -->
+      <div class="scan-main">
+        <div class="scan-radar-area">
+          <canvas id="acr-radar-canvas" width="160" height="160"></canvas>
+          <div class="scan-radar-info">
+            <div class="scan-radar-title" id="scan-track-name">選擇作品開始掃描</div>
+            <div class="scan-radar-status" id="scan-status-text">等待中</div>
+            <div class="scan-radar-stats">
+              <div class="scan-stat">
+                <div class="scan-stat-value" id="scan-matches-count">—</div>
+                <div class="scan-stat-label">疑似吻合</div>
+              </div>
+              <div class="scan-stat">
+                <div class="scan-stat-value" id="scan-last-time">—</div>
+                <div class="scan-stat-label">上次掃描</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scan-results-head">
+          <span class="scan-results-title">比對結果</span>
+          <span class="scan-results-count" id="scan-results-count">0 筆</span>
+        </div>
+        <div class="scan-results-list" id="scan-results-list">
+          <div class="scan-empty">
+            <div style="font-size:32px;opacity:0.2">◎</div>
+            <div>選擇左側作品並點擊「掃描」開始比對</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Settings -->
+      <div class="antitheft-settings">
+        <div>
+          <div class="settings-section-title">ACRCloud API Key</div>
+          <div class="api-key-field">
+            <div class="api-key-input-wrap">
+              <input type="password" class="api-key-input" id="acr-api-key"
+                     placeholder="貼上您的 Access Key" autocomplete="off">
+              <button class="api-key-save" id="acr-key-save">儲存</button>
+            </div>
+            <div class="api-key-hint">
+              API Key 加密儲存於您的帳號，不會傳送到 WaveForge 伺服器以外的地方。
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <button class="tutorial-toggle" id="tutorial-toggle" aria-expanded="false"
+                  aria-controls="tutorial-body">
+            如何申請 ACRCloud API Key？
+            <span class="tutorial-toggle-arrow" aria-hidden="true">▼</span>
+          </button>
+          <div class="tutorial-body" id="tutorial-body">
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">1</div>
+              <div>前往 <a class="tutorial-link" href="https://console.acrcloud.com/signup" target="_blank" rel="noopener">console.acrcloud.com/signup</a> 免費註冊帳號</div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">2</div>
+              <div>進入 Console → 建立一個新專案（選 Audio &amp; Video Recognition）</div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">3</div>
+              <div>在專案頁面複製 <strong>Access Key</strong> 和 <strong>Access Secret</strong></div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">4</div>
+              <div>貼入上方欄位，點擊「儲存」。免費方案每月有 <strong>1,000 次</strong>辨識額度。</div>
+            </div>
+            <div style="margin-top:8px;padding:8px;background:var(--c-primary-dim);border-radius:var(--r-sm);font-size:10px;color:var(--c-text-3)">
+              額度耗盡時：在 ACRCloud 申請新帳號或升級方案，更新此處的 API Key 即可繼續使用。
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">通知設定</div>
+          <div class="notify-row">
+            <div>
+              <div class="notify-label">Email 通知</div>
+              <div class="notify-sub">偵測到新吻合時發送 Email</div>
+            </div>
+            <label class="module-toggle" style="margin-left:auto">
+              <input type="checkbox" id="notify-email-toggle" checked>
+              <span class="module-toggle-track"></span>
+              <span class="module-toggle-thumb"></span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">帳號</div>
+          <div style="font-size:var(--text-xs);color:var(--c-text-3);line-height:1.6;margin-bottom:var(--sp-3)"
+               id="auth-user-info">未登入</div>
+          <button class="auth-login-pill" id="settings-auth-btn"
+                  style="width:100%;padding:8px;text-align:center">登入 / 註冊</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Transport bar ────────────────────────────────────── -->
   <footer class="transport" role="toolbar" aria-label="播放控制">
     <div class="transport-time" aria-live="polite" aria-atomic="true">
@@ -809,6 +996,35 @@
   </footer>
 
 </div><!-- #app -->
+
+<!-- ── Auth Modal ────────────────────────────────────────── -->
+<div class="modal-backdrop" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-card">
+    <button class="modal-close" id="modal-close" aria-label="關閉">✕</button>
+    <div class="modal-title" id="modal-title">登入 WaveForge</div>
+    <div class="modal-sub">使用防盜偵測功能需要帳號</div>
+
+    <div class="form-field">
+      <label class="form-label" for="modal-email">Email</label>
+      <input type="email" class="form-input" id="modal-email" placeholder="your@email.com" autocomplete="email">
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="modal-password">密碼</label>
+      <input type="password" class="form-input" id="modal-password" placeholder="•••••••••" autocomplete="current-password">
+    </div>
+    <button class="modal-submit-btn" id="modal-submit">登入</button>
+
+    <div class="modal-divider">或</div>
+    <button class="modal-google-btn" id="modal-google">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      使用 Google 登入
+    </button>
+
+    <div class="modal-switch">
+      還沒有帳號？<button class="modal-switch-link" id="modal-switch-register">免費註冊</button>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="/src/js/main.js"></script>
 </body>
