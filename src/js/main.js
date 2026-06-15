@@ -21,6 +21,7 @@ import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
 import { listUserPresets, saveUserPreset, getUserPreset } from './user-presets.js'
 import { renderMasterChain } from './audio/render-chain.js'
+import { SUPABASE_READY, HF_READY } from './config.js'
 import { truePeakLimit } from './audio/true-peak-limiter.js'
 import { assembleAlbum } from './audio/album-assembly.js'
 import { generateCue } from './audio/cue.js'
@@ -187,10 +188,17 @@ async function boot() {
   // ── Anti-theft detection ─────────────────────────────────
   initAntiTheft()
 
-  // ── Auth pill opens modal ────────────────────────────────
-  document.getElementById('auth-login-pill')?.addEventListener('click', () => {
-    document.getElementById('auth-modal')?.classList.add('open')
-  })
+  // ── Auth pill: open modal + show backend status in tooltip ──
+  const loginPill = document.getElementById('auth-login-pill')
+  if (loginPill) {
+    if (!SUPABASE_READY) {
+      loginPill.setAttribute('data-tooltip', '尚未設定 Supabase 後端（.env 缺少 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY），登入功能無法使用')
+      loginPill.classList.add('backend-unavailable')
+    }
+    loginPill.addEventListener('click', () => {
+      document.getElementById('auth-modal')?.classList.add('open')
+    })
+  }
 
   const engine   = new AudioEngine()
   const stems    = new StemsPanel(document.getElementById('stems-container'))
@@ -1333,12 +1341,13 @@ async function boot() {
     const bitdepthEl   = document.getElementById('export-bitdepth')
     const mp3BitrateEl = document.getElementById('export-mp3-bitrate')
     const srSelect     = document.getElementById('export-samplerate')
-    if (bitdepthEl)   bitdepthEl.hidden   = isMp3
-    if (mp3BitrateEl) mp3BitrateEl.hidden = !isMp3
-    // 96kHz not supported by lamejs MP3 encoder — hide that option when MP3 is selected
+    // bitdepth only applies to WAV; kbps only applies to MP3
+    if (bitdepthEl)   { bitdepthEl.disabled   = isMp3;  bitdepthEl.classList.toggle('inactive', isMp3) }
+    if (mp3BitrateEl) { mp3BitrateEl.disabled  = !isMp3; mp3BitrateEl.classList.toggle('inactive', !isMp3) }
+    // lamejs does not support 96kHz — force to 44.1kHz when MP3 is selected
     if (srSelect) {
       const opt96 = srSelect.querySelector('option[value="96000"]')
-      if (opt96) opt96.hidden = isMp3
+      if (opt96) opt96.disabled = isMp3
       if (isMp3 && srSelect.value === '96000') srSelect.value = '44100'
     }
   })

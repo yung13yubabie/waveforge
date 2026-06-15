@@ -96,8 +96,8 @@
           <option value="24">24-bit</option>
           <option value="16">16-bit</option>
         </select>
-        <select id="export-mp3-bitrate" class="export-select" aria-label="MP3 位元率" hidden
-                data-tooltip="MP3 輸出位元率（kbps）">
+        <select id="export-mp3-bitrate" class="export-select" aria-label="MP3 位元率" disabled
+                data-tooltip="選擇 MP3 格式後可設定輸出位元率（kbps）">
           <option value="128">128 kbps</option>
           <option value="192">192 kbps</option>
           <option value="256">256 kbps</option>
@@ -830,7 +830,10 @@
         </button>
         <div class="stems-ai-info">
           <div class="stems-ai-title">Demucs 智慧分軌</div>
-          <div class="stems-ai-desc">傳送至 Hugging Face Spaces，自動分離 4 軌（人聲 / 鼓 / 貝斯 / 其他）· 約等待 2–5 分鐘</div>
+          <div id="stems-hf-desc" class="stems-ai-desc">傳送至 Hugging Face Spaces，自動分離 4 軌（人聲 / 鼓 / 貝斯 / 其他）· 約等待 2–5 分鐘</div>
+          <div id="stems-hf-notice" class="stems-backend-notice" hidden>
+            ⚠ HF Spaces 未設定（<code>VITE_HF_ENDPOINT</code> 未填入），目前為示範模式，不會進行真實分軌。
+          </div>
         </div>
         <div class="demucs-progress-wrap" id="demucs-progress-wrap">
           <canvas id="demucs-canvas" width="180" height="56"></canvas>
@@ -1047,6 +1050,9 @@
     <button class="modal-close" id="modal-close" aria-label="關閉">✕</button>
     <div class="modal-title" id="modal-title">WaveForge 帳號</div>
     <div class="modal-sub">登入後可同步作品庫 · 儲存 ACRCloud Key · 接收 Email 通知</div>
+    <div id="auth-backend-notice" class="auth-backend-notice" hidden>
+      ⚠ 後端尚未設定（Supabase 未連線）。請在 <code>.env</code> 中設定 <code>VITE_SUPABASE_URL</code> 與 <code>VITE_SUPABASE_ANON_KEY</code> 後重新部署。
+    </div>
 
     <!-- Tabs -->
     <div class="auth-tabs" role="tablist">

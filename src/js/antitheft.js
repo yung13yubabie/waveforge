@@ -634,6 +634,14 @@ function initAuthModal() {
   const tabSignIn  = document.getElementById('auth-tab-signin')
   const tabSignUp  = document.getElementById('auth-tab-signup')
 
+  // Show backend status notice when Supabase is not configured
+  if (!SUPABASE_READY) {
+    const notice = document.getElementById('auth-backend-notice')
+    if (notice) notice.hidden = false
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.setAttribute('data-tooltip', '後端未設定，無法登入') }
+    if (googleBtn) { googleBtn.disabled = true; googleBtn.setAttribute('data-tooltip', '後端未設定，無法登入') }
+  }
+
   let isSignUp = false
 
   function setMsg(text, isError = false) {

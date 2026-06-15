@@ -459,6 +459,14 @@ export async function bounce() {
 
 // ── Public init ───────────────────────────────────────────
 export function initStemsMastering(getAudioFile) {
+  // Show backend notice if HF not configured
+  if (!HF_READY) {
+    const notice = document.getElementById('stems-hf-notice')
+    const desc   = document.getElementById('stems-hf-desc')
+    if (notice) notice.hidden = false
+    if (desc)   desc.hidden   = true
+  }
+
   const btn = document.getElementById('stems-ai-btn')
   btn?.addEventListener('click', () => {
     const file = getAudioFile()
