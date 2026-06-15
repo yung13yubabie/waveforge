@@ -7,7 +7,7 @@
        Each *.supabase.co covers both API and Edge Functions endpoints.
        *.hf.space covers the user-deployed Demucs Space.
        identify-*.acrcloud.com covers ACRCloud identify endpoints. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co https://*.hf.space https://identify-eu-west-1.acrcloud.com https://identify-us-west-2.acrcloud.com https://api.resend.com; worker-src 'self' blob:; img-src 'self' data: blob: https://*.googleusercontent.com; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co https://*.hf.space https://identify-eu-west-1.acrcloud.com https://identify-us-west-2.acrcloud.com https://api.resend.com https://www.youtube.com https://open.spotify.com https://soundcloud.com https://api.deezer.com https://embed.music.apple.com; worker-src 'self' blob:; img-src 'self' data: blob: https://*.googleusercontent.com https://i.ytimg.com https://i.scdn.co https://i1.sndcdn.com https://is1-ssl.mzstatic.com https://e-cdns-images.dzcdn.net; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <title>WaveForge — Professional Mastering DAW</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="manifest" href="./site.webmanifest">
@@ -50,7 +50,7 @@
 
     <!-- Upload zone -->
     <label class="upload-zone" id="upload-zone" role="button" aria-label="上傳音訊檔案">
-      <input type="file" id="file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg" aria-hidden="true">
+      <input type="file" id="file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg" aria-hidden="true" multiple>
       <span class="upload-icon" aria-hidden="true">⬆</span>
       <span id="upload-text-wrap">
         <span class="upload-text"><strong>點擊上傳</strong> 或拖拉音檔</span>
@@ -84,16 +84,36 @@
         ＋ 加入專輯
       </button>
 
-      <!-- Export -->
-      <select id="export-bitdepth" class="export-bitdepth" aria-label="輸出位元深度"
-              data-tooltip="24-bit 母帶 / 16-bit 加 TPDF dither（CD 交付）">
-        <option value="24">24-bit</option>
-        <option value="16">16-bit</option>
-      </select>
-      <button id="export-btn" class="header-btn primary" disabled
-              data-tooltip="輸出處理後音檔">
-        ↓ 輸出
-      </button>
+      <!-- Export controls -->
+      <div class="export-controls">
+        <select id="export-format" class="export-select" aria-label="輸出格式"
+                data-tooltip="WAV = 無損母帶；MP3 = 有損分享用">
+          <option value="wav">WAV</option>
+          <option value="mp3">MP3</option>
+        </select>
+        <select id="export-bitdepth" class="export-select" aria-label="輸出位元深度"
+                data-tooltip="24-bit 母帶 / 16-bit 加 TPDF dither（CD 交付）">
+          <option value="24">24-bit</option>
+          <option value="16">16-bit</option>
+        </select>
+        <select id="export-mp3-bitrate" class="export-select" aria-label="MP3 位元率" hidden
+                data-tooltip="MP3 輸出位元率（kbps）">
+          <option value="128">128 kbps</option>
+          <option value="192">192 kbps</option>
+          <option value="256">256 kbps</option>
+          <option value="320">320 kbps</option>
+        </select>
+        <select id="export-samplerate" class="export-select" aria-label="採樣率"
+                data-tooltip="44.1kHz = CD/串流標準；48kHz = 影片；96kHz = 高解析度">
+          <option value="44100">44.1 kHz</option>
+          <option value="48000">48 kHz</option>
+          <option value="96000">96 kHz</option>
+        </select>
+        <button id="export-btn" class="header-btn primary" disabled
+                data-tooltip="輸出處理後音檔">
+          ↓ 輸出
+        </button>
+      </div>
     </div>
   </header>
 
@@ -145,6 +165,11 @@
     <div class="analysis-pill">
       <span class="analysis-label">True Peak</span>
       <span class="analysis-value" id="val-tp">—</span>
+    </div>
+    <div class="analysis-sep" aria-hidden="true">·</div>
+    <div class="analysis-pill" id="pill-bitrate">
+      <span class="analysis-label">來源位元率</span>
+      <span class="analysis-value" id="val-bitrate">—</span>
     </div>
     <div class="analysis-status">
       <div class="analysis-dot" id="status-dot"></div>
@@ -848,6 +873,21 @@
     <div class="antitheft-panel">
       <!-- Left: Works Library -->
       <div class="works-library">
+        <!-- URL Detection -->
+        <div class="url-detect-section">
+          <div class="url-detect-head">
+            <span class="url-detect-title">URL 版權偵測</span>
+            <span class="url-detect-subtitle">貼上 YouTube / Spotify / SoundCloud / Apple Music / Deezer 連結</span>
+          </div>
+          <div class="url-detect-input-row">
+            <input type="url" id="url-detect-input" class="url-detect-input"
+                   placeholder="https://..."
+                   autocomplete="off" spellcheck="false">
+            <button id="url-detect-btn" class="url-detect-btn">查詢</button>
+          </div>
+          <div id="url-detect-result" class="url-detect-result" hidden></div>
+        </div>
+
         <div class="works-library-head">
           <span class="works-library-title">我的作品庫</span>
           <label class="works-add-btn" id="works-add-label">

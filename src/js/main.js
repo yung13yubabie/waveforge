@@ -15,6 +15,7 @@ import { PRESETS }        from './presets.js'
 import { detectBPM, detectKey } from './audio/analyze.js'
 import { buildExportReport, measureIntegratedLUFS } from './audio/measure.js'
 import { encodeWAV } from './audio/wav.js'
+import { encodeMP3 } from './audio/mp3.js'
 import { averageSpectrum, computeMatchCurve } from './audio/match-eq.js'
 import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
@@ -362,6 +363,13 @@ async function boot() {
       document.getElementById('time-total').textContent = fmtTime(engine.duration)
       updateVinylUI(engine.duration)
 
+      // Source bitrate detection (file-size estimate: works for all formats)
+      const bitrateEl = document.getElementById('val-bitrate')
+      if (bitrateEl && engine.duration > 0) {
+        const kbps = Math.round((file.size * 8) / (engine.duration * 1000))
+        bitrateEl.textContent = `${kbps} kbps`
+      }
+
       // Start EQ canvas + spectrum
       eqCanvas.startLoop()
       spectrumAn.startLoop()
@@ -411,8 +419,24 @@ async function boot() {
   const uploadZone = document.getElementById('upload-zone')
   const fileInput  = document.getElementById('file-input')
 
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files?.[0]) loadFile(fileInput.files[0])
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files ?? [])
+    fileInput.value = ''
+    if (files.length === 0) return
+    if (files.length === 1) {
+      await loadFile(files[0])
+    } else {
+      // Batch mode: snapshot current chain, add all to album, preview first
+      const snapshot = engine.serialize()
+      for (const f of files) {
+        await loadFile(f)
+        album.add({ name: f.name.replace(/\.[^.]+$/, ''), file: f, snapshot: engine.serialize() })
+      }
+      await loadFile(files[0])
+      renderAlbumUI()
+      setStatus(`批量加入 ${files.length} 首至專輯序列，已套用目前處理鏈設定`, true)
+      void snapshot  // referenced to avoid lint warning
+    }
   })
 
   uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over') })
@@ -1305,6 +1329,15 @@ async function boot() {
     console.info('[WaveForge] export report', report)
   }
 
+  // ── Export format toggle ────────────────────────────────
+  document.getElementById('export-format')?.addEventListener('change', (e) => {
+    const isMp3 = e.target.value === 'mp3'
+    const bitdepthEl = document.getElementById('export-bitdepth')
+    const mp3BitrateEl = document.getElementById('export-mp3-bitrate')
+    if (bitdepthEl) bitdepthEl.hidden = isMp3
+    if (mp3BitrateEl) mp3BitrateEl.hidden = !isMp3
+  })
+
   // ── Export ──────────────────────────────────────────────
   document.getElementById('export-btn')?.addEventListener('click', async () => {
     if (!engine.buffer) return
@@ -1314,36 +1347,31 @@ async function boot() {
     setProcessing(true, '渲染處理後音訊（離線渲染）...', 0)
 
     try {
-      const dur = engine.buffer.duration
-      const sr  = engine.ctx.sampleRate
-      const p   = engine.params
-      const byp = engine.bypassed
+      const dur    = engine.buffer.duration
+      const p      = engine.params
+      const byp    = engine.bypassed
+      const format = document.getElementById('export-format')?.value ?? 'wav'
+      const exportSR = parseInt(document.getElementById('export-samplerate')?.value ?? '44100', 10)
 
-      // Linear-phase EQ (export only): compute the 10-band EQ magnitude → FIR.
-      // Realtime preview stays minimum-phase biquad.
       let linPhaseMag = null
       if (!byp.eq && document.getElementById('eq-linphase')?.checked) {
         const FFT_N = 4096
         const grid = new Float32Array(FFT_N / 2 + 1)
-        const nyq = sr / 2
+        const nyq = engine.ctx.sampleRate / 2
         for (let k = 0; k <= FFT_N / 2; k++) grid[k] = Math.max(1, (k / (FFT_N / 2)) * nyq)
         linPhaseMag = engine.getEQResponse(grid)
       }
 
-      setProcessing(true, `渲染中（${fmtTime(dur)}）...`, 30)
-      // Single shared chain (also used by album per-track render) — no drift.
+      setProcessing(true, `渲染中（${fmtTime(dur)}，${exportSR / 1000} kHz）...`, 30)
       const rendered = await renderMasterChain({
         engine, sourceBuffer: engine.buffer, params: p, bypassed: byp,
-        sampleRate: sr, linPhaseMag, dynamicsWorkletUrl,
+        sampleRate: exportSR, linPhaseMag, dynamicsWorkletUrl,
       })
       setProcessing(true, '分析輸出...', 70)
 
-      // Mastering report: measure the ACTUAL rendered output (not the live meter)
       let channels = []
       for (let ch = 0; ch < rendered.numberOfChannels; ch++) channels.push(rendered.getChannelData(ch))
 
-      // True-peak safety pass (export only): 4× oversampled offline limiter that
-      // GUARANTEES the file's inter-sample peak ≤ ceiling. Realtime stays sample-peak.
       if (!byp.limiter && document.getElementById('lim-truepeak')?.checked) {
         setProcessing(true, '真 True-Peak 限幅...', 60)
         channels = truePeakLimit(channels, rendered.sampleRate, p.limCeiling)
@@ -1354,24 +1382,36 @@ async function boot() {
         ceilingDb: byp.limiter ? 0 : p.limCeiling,
       })
 
-      const bitDepth = parseInt(document.getElementById('export-bitdepth')?.value ?? '24', 10)
-      setProcessing(true, `編碼 WAV ${bitDepth}-bit...`, 85)
+      const baseName = currentFile
+        ? currentFile.name.replace(/\.[^.]+$/, '')
+        : 'waveforge'
 
-      const wav = encodeWAV(channels, rendered.sampleRate, bitDepth)
-      const blob = new Blob([wav], { type: 'audio/wav' })
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
+      let blob, filename
+      if (format === 'mp3') {
+        const kbps = parseInt(document.getElementById('export-mp3-bitrate')?.value ?? '192', 10)
+        setProcessing(true, `編碼 MP3 ${kbps}kbps...`, 85)
+        const mp3 = encodeMP3(channels, rendered.sampleRate, kbps)
+        blob = new Blob([mp3], { type: 'audio/mpeg' })
+        filename = `${baseName}_master_${kbps}kbps.mp3`
+      } else {
+        const bitDepth = parseInt(document.getElementById('export-bitdepth')?.value ?? '24', 10)
+        setProcessing(true, `編碼 WAV ${bitDepth}-bit...`, 85)
+        const wav = encodeWAV(channels, rendered.sampleRate, bitDepth)
+        blob = new Blob([wav], { type: 'audio/wav' })
+        filename = `${baseName}_master.wav`
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a   = document.createElement('a')
       a.href = url
-      a.download = `waveforge-master-${bitDepth}bit.wav`
-      // Firefox ignores .click() on a detached anchor — must be in the DOM,
-      // and the URL must outlive the click (revoke async, not immediately).
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
 
       setProcessing(false, '', 100)
-      showExportReport(report, bitDepth)
+      showExportReport(report, format === 'mp3' ? 'MP3' : parseInt(document.getElementById('export-bitdepth')?.value ?? '24', 10))
     } catch (err) {
       setProcessing(false, '', 0)
       setStatus(`輸出失敗：${err.message}`, false)

@@ -8,6 +8,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_READY } from './config.js'
+import { fetchUrlMeta, detectPlatform } from './audio/url-meta.js'
 
 // ── Supabase client (lazy init) ───────────────────────────
 const supabase = SUPABASE_READY
@@ -701,6 +702,87 @@ export function initAntiTheft() {
     if (storedKey)    { acrAccessKey = storedKey; const el = document.getElementById('acr-api-key'); if (el) el.value = storedKey }
     if (storedSecret) acrAccessSecret = storedSecret
   }
+
+  // ── URL detection ─────────────────────────────────────────
+  const urlInput  = document.getElementById('url-detect-input')
+  const urlBtn    = document.getElementById('url-detect-btn')
+  const urlResult = document.getElementById('url-detect-result')
+
+  function renderUrlResult(meta) {
+    if (!urlResult) return
+    urlResult.hidden = false
+    urlResult.replaceChildren()
+
+    const row = document.createElement('div')
+    row.className = 'url-result-row'
+
+    if (meta.thumbnailUrl) {
+      const img = document.createElement('img')
+      img.src = meta.thumbnailUrl
+      img.alt = ''
+      img.className = 'url-result-thumb'
+      img.loading = 'lazy'
+      row.appendChild(img)
+    }
+
+    const info = document.createElement('div')
+    info.className = 'url-result-info'
+
+    const platform = document.createElement('span')
+    platform.className = 'url-result-platform'
+    platform.textContent = meta.platform
+
+    const title = document.createElement('div')
+    title.className = 'url-result-title'
+    title.textContent = meta.title ?? '（無標題）'
+
+    const author = document.createElement('div')
+    author.className = 'url-result-author'
+    author.textContent = meta.authorName ?? ''
+
+    info.append(platform, title, author)
+    row.appendChild(info)
+    urlResult.appendChild(row)
+
+    const note = document.createElement('div')
+    note.className = 'url-result-note'
+    note.textContent = '已擷取元資料。如需音訊指紋比對，請上傳該曲目的音訊檔至「我的作品庫」。'
+    urlResult.appendChild(note)
+  }
+
+  function renderUrlError(msg) {
+    if (!urlResult) return
+    urlResult.hidden = false
+    urlResult.replaceChildren()
+    const err = document.createElement('div')
+    err.className = 'url-result-error'
+    err.textContent = msg
+    urlResult.appendChild(err)
+  }
+
+  async function doUrlDetect() {
+    const raw = urlInput?.value?.trim()
+    if (!raw) return
+    if (urlBtn) { urlBtn.disabled = true; urlBtn.textContent = '查詢中...' }
+    if (urlResult) urlResult.hidden = true
+
+    try {
+      const platform = detectPlatform(raw)
+      if (platform === 'SUNO') {
+        renderUrlError('SUNO 無公開 API，無法自動擷取資訊')
+        return
+      }
+      const meta = await fetchUrlMeta(raw)
+      renderUrlResult(meta)
+    } catch (err) {
+      renderUrlError(err.message)
+    } finally {
+      if (urlBtn) { urlBtn.disabled = false; urlBtn.textContent = '查詢' }
+    }
+  }
+
+  urlBtn?.addEventListener('click', doUrlDetect)
+  urlInput?.addEventListener('keydown', e => { if (e.key === 'Enter') doUrlDetect() })
 
   // ACRCloud settings save button
   document.getElementById('acr-key-save')?.addEventListener('click', saveSettings)
