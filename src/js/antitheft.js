@@ -762,4 +762,14 @@ export function initAntiTheft() {
     const modeNote = document.getElementById('auth-user-info')
     if (modeNote) modeNote.textContent = '訪客模式 — 掃描為 Demo 結果'
   }
+
+  if (!SUPABASE_READY) {
+    const panel = document.querySelector('#mode-antitheft .antitheft-panel')
+    const banner = document.createElement('div')
+    banner.className = 'guest-mode-banner'
+    const msg = document.createElement('span')
+    msg.textContent = '訪客模式：掃描結果為 Demo 資料。設定 Supabase 可啟用完整功能（真實 ACRCloud 掃描、帳號同步）。'
+    banner.appendChild(msg)
+    panel?.prepend(banner)
+  }
 }

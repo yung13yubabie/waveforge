@@ -333,6 +333,8 @@ function buildStemCard(meta) {
   const card = document.createElement('div')
   card.className = 'stem-proc-card'
   card.style.borderTop = `2px solid ${meta.color}`
+  const stemIndex = STEM_META.findIndex(m => m.key === meta.key)
+  card.style.setProperty('--stem-card-delay', `${stemIndex * 60}ms`)
 
   const modeNote = HF_READY
     ? '已分軌'
