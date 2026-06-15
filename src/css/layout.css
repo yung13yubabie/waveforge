@@ -2672,19 +2672,27 @@
 }
 .modal-google-btn:hover { border-color: var(--c-border-hover); }
 
-.modal-switch {
-  text-align: center;
-  font-size: var(--text-xs);
-  color: var(--c-text-3);
+/* ── Auth tabs ───────────────────────────────────────────── */
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: var(--sp-4);
 }
-.modal-switch-link {
-  color: var(--c-primary);
-  cursor: pointer;
+.auth-tab {
+  flex: 1;
+  padding: 8px;
+  font-size: var(--text-sm);
   background: none;
   border: none;
-  font-size: inherit;
-  padding: 0;
-  text-decoration: underline;
+  border-bottom: 2px solid transparent;
+  color: var(--c-text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+.auth-tab.active {
+  color: var(--c-primary);
+  border-bottom-color: var(--c-primary);
 }
 
 /* ── ACRCloud Radar animation ────────────────────────────── */

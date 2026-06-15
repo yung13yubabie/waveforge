@@ -1,32 +1,446 @@
-// Anti-theft detection module (ACRCloud + Supabase integration skeleton)
+/**
+ * Anti-Theft Detection — Supabase Auth + ACRCloud 音訊指紋比對
+ *
+ * 模式：
+ *   SUPABASE_READY=false → 訪客模式（localStorage ACR key，Demo 掃描結果）
+ *   SUPABASE_READY=true  → 完整模式（Supabase 帳號 + Edge Function 呼叫 ACRCloud）
+ */
 
-// ── Auth state (replaced by Supabase client in Phase 2) ──────────
-let currentUser = null   // { email, id } | null
-let acrApiKey = ''
+import { createClient } from '@supabase/supabase-js'
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_READY } from './config.js'
 
-// ── Auth overlay ──────────────────────────────────────────────────
+// ── Supabase client (lazy init) ───────────────────────────
+const supabase = SUPABASE_READY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null
+
+// ── Auth state ────────────────────────────────────────────
+let currentUser = null     // { id, email } | null
+let acrAccessKey = ''
+let acrAccessSecret = ''
+let emailNotify = true
+
+// ── Works library (in-memory; synced to DB in live mode) ──
+const works = []   // [{ id, name, file, fingerprint, lastScan, results }]
+let activeWorkId = null
+
+// ── Auth overlay ──────────────────────────────────────────
 export function checkAuthOverlay() {
-  const overlay = document.getElementById('auth-required-overlay')
-  if (!overlay) return
-  overlay.classList.toggle('visible', !currentUser)
-
-  const infoEl = document.getElementById('auth-user-info')
+  const overlay  = document.getElementById('auth-required-overlay')
+  const infoEl   = document.getElementById('auth-user-info')
+  const loginBtn = document.getElementById('auth-login-pill')
   const settingsBtn = document.getElementById('settings-auth-btn')
+  const avatarEl = document.getElementById('auth-avatar')
+
+  if (overlay) overlay.classList.toggle('visible', !currentUser)
+
   if (currentUser) {
-    if (infoEl)     infoEl.textContent = currentUser.email
+    const initial = (currentUser.email?.[0] ?? '?').toUpperCase()
+    if (infoEl)     infoEl.textContent = currentUser.email ?? ''
+    if (avatarEl)   { avatarEl.hidden = false; avatarEl.textContent = initial }
+    if (loginBtn)   loginBtn.hidden = true
     if (settingsBtn) settingsBtn.textContent = '登出'
   } else {
-    if (infoEl)     infoEl.textContent = '未登入'
+    if (infoEl)     infoEl.textContent = SUPABASE_READY ? '未登入' : '訪客模式'
+    if (avatarEl)   avatarEl.hidden = true
+    if (loginBtn)   loginBtn.hidden = false
     if (settingsBtn) settingsBtn.textContent = '登入 / 註冊'
   }
 }
 
-// ── Works library state ───────────────────────────────────────────
-const works = []   // [{ id, name, fingerprint, lastScan, results }]
-let activeWorkId = null
+// ── Supabase auth methods ─────────────────────────────────
+async function signInEmail(email, password) {
+  if (!supabase) return { error: new Error('Supabase 未設定') }
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  return { data, error }
+}
 
-// ── Radar canvas animation ────────────────────────────────────────
-let radarAnim = null
+async function signUpEmail(email, password) {
+  if (!supabase) return { error: new Error('Supabase 未設定') }
+  const { data, error } = await supabase.auth.signUp({ email, password })
+  return { data, error }
+}
+
+async function signInGoogle() {
+  if (!supabase) return
+  await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.href },
+  })
+}
+
+async function signOut() {
+  if (supabase) await supabase.auth.signOut()
+  currentUser = null
+  acrAccessKey = ''
+  acrAccessSecret = ''
+  checkAuthOverlay()
+}
+
+// ── Load user settings from Supabase ─────────────────────
+async function loadUserSettings(userId) {
+  if (!supabase) return
+  const { data } = await supabase
+    .from('user_settings')
+    .select('acr_access_key, acr_access_secret, email_notify')
+    .eq('user_id', userId)
+    .single()
+
+  if (data) {
+    acrAccessKey    = data.acr_access_key ?? ''
+    acrAccessSecret = data.acr_access_secret ?? ''
+    emailNotify     = data.email_notify ?? true
+
+    const keyInput   = document.getElementById('acr-api-key')
+    const secretInput = document.getElementById('acr-api-secret')
+    const notifyToggle = document.getElementById('email-notify-toggle')
+    if (keyInput && acrAccessKey) keyInput.value = acrAccessKey
+    if (secretInput && acrAccessSecret) secretInput.value = '••••••••••••'
+    if (notifyToggle) notifyToggle.checked = emailNotify
+  }
+}
+
+// ── Load user's works from Supabase DB ────────────────────
+async function loadWorksFromDB() {
+  if (!supabase || !currentUser) return
+  const { data, error } = await supabase
+    .from('works')
+    .select('id, name, fingerprint_ok, last_scan')
+    .eq('user_id', currentUser.id)
+    .order('created_at', { ascending: false })
+
+  if (error || !data) return
+
+  // Merge DB works with in-memory (avoid duplicates by id)
+  for (const dbWork of data) {
+    const existing = works.find(w => w.id === dbWork.id)
+    if (!existing) {
+      works.unshift({
+        id:          dbWork.id,
+        name:        dbWork.name,
+        file:        null,
+        fingerprint: dbWork.fingerprint_ok,
+        lastScan:    dbWork.last_scan,
+        results:     [],
+      })
+    }
+  }
+  renderWorksList()
+}
+
+// ── Save ACRCloud settings ────────────────────────────────
+async function saveSettings() {
+  const keyInput    = document.getElementById('acr-api-key')
+  const secretInput = document.getElementById('acr-api-secret')
+  const saveBtn     = document.getElementById('acr-key-save')
+
+  const newKey    = keyInput?.value?.trim() ?? ''
+  const newSecret = secretInput?.value?.trim() ?? ''
+  if (!newKey) return
+
+  acrAccessKey    = newKey
+  if (newSecret && newSecret !== '••••••••••••') acrAccessSecret = newSecret
+
+  if (supabase && currentUser) {
+    await supabase.from('user_settings').upsert({
+      user_id:           currentUser.id,
+      acr_access_key:    acrAccessKey,
+      acr_access_secret: acrAccessSecret || undefined,
+    })
+  } else {
+    // Guest mode → localStorage
+    localStorage.setItem('acr-api-key',    acrAccessKey)
+    if (acrAccessSecret) localStorage.setItem('acr-api-secret', acrAccessSecret)
+  }
+
+  if (saveBtn) {
+    saveBtn.textContent = '已儲存 ✓'
+    saveBtn.classList.add('saved')
+    setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+  }
+}
+
+// ── Save email notification preference ───────────────────
+async function saveEmailNotify(val) {
+  emailNotify = val
+  if (supabase && currentUser) {
+    await supabase.from('user_settings').upsert({
+      user_id:      currentUser.id,
+      email_notify: val,
+    })
+  }
+}
+
+// ── Upload original work ──────────────────────────────────
+async function handleWorksUpload(file) {
+  const id = `work-${Date.now()}`
+  const work = {
+    id,
+    name:        file.name.replace(/\.[^.]+$/, ''),
+    file,
+    fingerprint: false,
+    lastScan:    null,
+    results:     [],
+  }
+  works.unshift(work)
+  renderWorksList()
+
+  if (supabase && currentUser) {
+    // Save to DB
+    const { data, error } = await supabase.from('works').insert({
+      id:             id,
+      user_id:        currentUser.id,
+      name:           work.name,
+      file_size_bytes: file.size,
+      fingerprint_ok: false,
+    }).select('id').single()
+
+    if (!error && data) work.id = data.id
+  }
+
+  // Simulate fingerprint extraction (Phase 3: real ACRCloud fingerprint endpoint)
+  setTimeout(() => {
+    work.fingerprint = true
+    if (supabase && currentUser) {
+      supabase.from('works').update({ fingerprint_ok: true }).eq('id', work.id)
+    }
+    renderWorksList()
+  }, 1500)
+}
+
+// ── Scan a work ───────────────────────────────────────────
+async function scanWork(work) {
+  const statusEl = document.getElementById('scan-status-text')
+  const countEl  = document.getElementById('scan-results-count')
+  const scanBtn  = document.querySelector(`.work-scan-btn[data-id="${work.id}"]`)
+
+  if (!acrAccessKey) {
+    if (statusEl) statusEl.textContent = '請先在設定中填入 ACRCloud Access Key'
+    return
+  }
+
+  radarScanning = true
+  if (statusEl) statusEl.textContent = '掃描中...'
+  if (scanBtn)  { scanBtn.classList.add('scanning'); scanBtn.textContent = '掃描中...' }
+
+  try {
+    let results
+
+    if (SUPABASE_READY && currentUser && work.file) {
+      // ── Live mode: call Supabase Edge Function ────────
+      const sample = await extractAudioSample(work.file, 30)
+      const session = (await supabase.auth.getSession()).data.session
+      const res = await fetch(ACR_EDGE_FN, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          work_id:     work.id,
+          audio_base64: sample,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
+      results = json.results ?? []
+    } else {
+      // ── Demo mode: show stub results ──────────────────
+      await new Promise(r => setTimeout(r, 3000))
+      const modeNote = SUPABASE_READY ? '（需登入帳號）' : '（需設定 Supabase）'
+      results = [
+        { similarity: 94, title: `待 ACRCloud 回傳 ${modeNote}`, artist: '—', platform: 'ACRCloud', url: '#' },
+        { similarity: 81, title: '請完成後端設定後重試', artist: '—', platform: 'ACRCloud', url: '#' },
+      ]
+    }
+
+    radarScanning = false
+    const now = new Date()
+    if (statusEl) statusEl.textContent = `完成 · ${now.toLocaleDateString('zh-TW')}`
+    if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重新掃描' }
+
+    work.results  = results
+    work.lastScan = now.toISOString()
+
+    document.getElementById('scan-track-name').textContent = work.name
+    document.getElementById('scan-matches-count').textContent = results.length
+    document.getElementById('scan-last-time').textContent = now.toLocaleDateString('zh-TW')
+    if (countEl) countEl.textContent = `${results.length} 筆`
+
+    renderResults(work)
+    renderWorksList()
+
+  } catch (err) {
+    radarScanning = false
+    if (statusEl) statusEl.textContent = `掃描失敗：${err.message}`
+    if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重試' }
+    console.error('[ACRCloud scan]', err)
+  }
+}
+
+/** Extract first N seconds of audio as base64 WAV data URL */
+async function extractAudioSample(file, durationSec) {
+  const arr = await file.arrayBuffer()
+  const ctx = new OfflineAudioContext(2, 48000 * durationSec, 48000)
+  const decoded = await ctx.decodeAudioData(arr.slice(0))
+  const src = ctx.createBufferSource()
+  src.buffer = decoded
+  src.connect(ctx.destination)
+  src.start(0, 0, durationSec)
+  const rendered = await ctx.startRendering()
+
+  // Encode to WAV
+  const numCh = rendered.numberOfChannels
+  const len   = rendered.length
+  const sr    = rendered.sampleRate
+  const byteRate = sr * numCh * 2
+  const dataBytes = len * numCh * 2
+  const buf = new ArrayBuffer(44 + dataBytes)
+  const dv  = new DataView(buf)
+  const w   = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)) }
+
+  w(0, 'RIFF'); dv.setUint32(4, 36 + dataBytes, true); w(8, 'WAVE')
+  w(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true)
+  dv.setUint16(22, numCh, true); dv.setUint32(24, sr, true)
+  dv.setUint32(28, byteRate, true); dv.setUint16(32, numCh * 2, true); dv.setUint16(34, 16, true)
+  w(36, 'data'); dv.setUint32(40, dataBytes, true)
+
+  let off = 44
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = Math.max(-1, Math.min(1, rendered.getChannelData(c)[i]))
+      dv.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+      off += 2
+    }
+  }
+
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  for (const byte of bytes) bin += String.fromCharCode(byte)
+  return `data:audio/wav;base64,${btoa(bin)}`
+}
+
+// ── Render helpers ────────────────────────────────────────
+function renderResults(work) {
+  const listEl = document.getElementById('scan-results-list')
+  if (!listEl) return
+
+  if (!work?.results?.length) {
+    listEl.innerHTML = `<div class="scan-empty"><div style="font-size:32px;opacity:0.2">◎</div><div>尚無比對結果</div></div>`
+    return
+  }
+
+  listEl.innerHTML = work.results.map((r, i) => {
+    const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
+    const safeTitle  = document.createElement('span')
+    const safeArtist = document.createElement('span')
+    safeTitle.textContent  = r.title
+    safeArtist.textContent = r.artist
+    return `
+    <div class="scan-result-item" style="animation-delay:${i * 60}ms">
+      <div class="result-similarity ${cls}">${r.similarity}%</div>
+      <div class="result-info">
+        <div class="result-title">${safeTitle.innerHTML}</div>
+        <div class="result-meta">
+          <span>${safeArtist.innerHTML}</span>
+          <span class="result-platform">${r.platform ?? ''}</span>
+        </div>
+      </div>
+      <a class="result-link" href="${r.url}" target="_blank" rel="noopener noreferrer" aria-label="前往平台">↗</a>
+    </div>`
+  }).join('')
+}
+
+function renderWorksList() {
+  const listEl = document.getElementById('works-list')
+  if (!listEl) return
+
+  if (!works.length) {
+    listEl.innerHTML = `
+      <div class="works-empty">
+        <div class="works-empty-icon">♪</div>
+        <div class="works-empty-text">點擊「+ 新增」上傳您的原創作品，WaveForge 會萃取音訊指紋存入資料庫。</div>
+      </div>`
+    return
+  }
+
+  const fragment = document.createDocumentFragment()
+  for (const w of works) {
+    const card = document.createElement('div')
+    card.className = `work-card${w.id === activeWorkId ? ' active' : ''}`
+    card.dataset.id = w.id
+
+    const title = document.createElement('div')
+    title.className = 'work-card-title'
+    title.textContent = w.name   // textContent → XSS-safe
+    title.title       = w.name
+
+    const meta = document.createElement('div')
+    meta.className = 'work-card-meta'
+    const fpDot = document.createElement('div')
+    fpDot.className = 'work-card-fp'
+    fpDot.innerHTML = `<div class="fp-dot${w.fingerprint ? ' ok' : ''}"></div>${w.fingerprint ? '指紋已建立' : '建立中...'}`
+    const scanTime = document.createElement('span')
+    scanTime.textContent = w.lastScan
+      ? `· ${new Date(w.lastScan).toLocaleDateString('zh-TW')}`
+      : '· 未掃描'
+    meta.append(fpDot, scanTime)
+
+    const actions = document.createElement('div')
+    actions.className = 'work-card-actions'
+
+    const scanBtn = document.createElement('button')
+    scanBtn.className = 'work-scan-btn'
+    scanBtn.dataset.id = w.id
+    scanBtn.textContent = w.results?.length ? '重新掃描' : '掃描'
+    scanBtn.addEventListener('click', e => {
+      e.stopPropagation()
+      scanWork(w)
+    })
+
+    const delBtn = document.createElement('button')
+    delBtn.className = 'work-del-btn'
+    delBtn.dataset.del = w.id
+    delBtn.setAttribute('aria-label', '刪除')
+    delBtn.textContent = '✕'
+    delBtn.addEventListener('click', async e => {
+      e.stopPropagation()
+      const idx = works.findIndex(x => x.id === w.id)
+      if (idx !== -1) works.splice(idx, 1)
+      if (supabase && currentUser) {
+        await supabase.from('works').delete().eq('id', w.id)
+      }
+      renderWorksList()
+    })
+
+    actions.append(scanBtn, delBtn)
+    card.append(title, meta, actions)
+
+    card.addEventListener('click', () => {
+      activeWorkId = w.id
+      document.getElementById('scan-track-name').textContent = w.name
+      const st = document.getElementById('scan-status-text')
+      if (st) st.textContent = w.lastScan
+        ? `上次掃描 ${new Date(w.lastScan).toLocaleDateString('zh-TW')}`
+        : '未掃描'
+      document.getElementById('scan-matches-count').textContent = w.results?.length ?? '—'
+      document.getElementById('scan-last-time').textContent = w.lastScan
+        ? new Date(w.lastScan).toLocaleDateString('zh-TW')
+        : '—'
+      const countEl = document.getElementById('scan-results-count')
+      if (countEl) countEl.textContent = `${w.results?.length ?? 0} 筆`
+      renderResults(w)
+      renderWorksList()
+    })
+
+    fragment.appendChild(card)
+  }
+
+  listEl.replaceChildren(fragment)
+}
+
+// ── Radar canvas animation ────────────────────────────────
+let radarAnim    = null
 let radarScanning = false
 
 function startRadar() {
@@ -36,7 +450,7 @@ function startRadar() {
   const W = canvas.width, H = canvas.height, CX = W / 2, CY = H / 2, R = W / 2 - 8
   let angle = 0
 
-  function drawFrame() {
+  function draw() {
     ctx.clearRect(0, 0, W, H)
 
     // Background circle
@@ -61,12 +475,6 @@ function startRadar() {
     ctx.beginPath(); ctx.moveTo(CX, CY - R); ctx.lineTo(CX, CY + R); ctx.stroke()
 
     if (radarScanning) {
-      // Sweep gradient
-      const grad = ctx.createConicalGradient
-        ? ctx.createConicalGradient(CX, CY, angle)
-        : null
-
-      // Fallback: draw a triangle wedge
       ctx.save()
       ctx.translate(CX, CY)
       ctx.rotate(angle)
@@ -82,7 +490,6 @@ function startRadar() {
       ctx.fillStyle = sweep
       ctx.fill()
 
-      // Sweep line
       ctx.beginPath()
       ctx.moveTo(0, 0)
       ctx.lineTo(R, 0)
@@ -91,7 +498,6 @@ function startRadar() {
       ctx.stroke()
 
       ctx.restore()
-
       angle += 0.04
     }
 
@@ -101,19 +507,15 @@ function startRadar() {
     ctx.fillStyle = radarScanning ? '#4ECDC4' : 'rgba(78,205,196,0.4)'
     ctx.fill()
 
-    radarAnim = requestAnimationFrame(drawFrame)
+    radarAnim = requestAnimationFrame(draw)
   }
 
   if (radarAnim) cancelAnimationFrame(radarAnim)
-  drawFrame()
+  draw()
 }
 
-function stopRadar() {
-  radarScanning = false
-}
-
-// ── Demucs progress canvas ────────────────────────────────────────
-let demucsAnim = null
+// ── Demucs progress canvas (shared with stems-mastering) ──
+let demucsAnim    = null
 let demucsRunning = false
 
 export function startDemucsAnimation() {
@@ -122,8 +524,8 @@ export function startDemucsAnimation() {
   const ctx = canvas.getContext('2d')
   const W = canvas.width, H = canvas.height
   const COLORS = ['#FF4B6E', '#4ECDC4', '#FFE66D', '#FD9644']
-  const BARS = 28
-  const phase = Array.from({ length: BARS }, (_, i) => (i / BARS) * Math.PI * 2)
+  const BARS   = 28
+  const phase  = Array.from({ length: BARS }, (_, i) => (i / BARS) * Math.PI * 2)
   let t = 0
   demucsRunning = true
 
@@ -134,9 +536,9 @@ export function startDemucsAnimation() {
 
     for (let i = 0; i < BARS; i++) {
       const colorIdx = Math.floor((i / BARS) * COLORS.length)
-      const height = (0.3 + 0.7 * Math.abs(Math.sin(phase[i] + t))) * H * 0.85
-      const y = (H - height) / 2
-      ctx.fillStyle = COLORS[colorIdx] + 'CC'
+      const height   = (0.3 + 0.7 * Math.abs(Math.sin(phase[i] + t))) * H * 0.85
+      const y        = (H - height) / 2
+      ctx.fillStyle  = COLORS[colorIdx] + 'CC'
       ctx.beginPath()
       if (ctx.roundRect) {
         ctx.roundRect(i * (bw + 2), y, bw, height, 2)
@@ -157,161 +559,14 @@ export function startDemucsAnimation() {
 export function stopDemucsAnimation() {
   demucsRunning = false
   if (demucsAnim) cancelAnimationFrame(demucsAnim)
+  demucsAnim = null
 }
 
-// ── Scan a work with ACRCloud ─────────────────────────────────────
-async function scanWork(work) {
-  const statusEl = document.getElementById('scan-status-text')
-  const countEl  = document.getElementById('scan-results-count')
-  const listEl   = document.getElementById('scan-results-list')
-  const scanBtn  = document.querySelector(`.work-scan-btn[data-id="${work.id}"]`)
-
-  if (!acrApiKey) {
-    setStatus('請先在右側設定填入 ACRCloud API Key', false)
-    return
-  }
-
-  radarScanning = true
-  if (statusEl) statusEl.textContent = '掃描中...'
-  if (scanBtn)  scanBtn.classList.add('scanning')
-  if (scanBtn)  scanBtn.textContent = '掃描中...'
-
-  // Phase 2: replace with real ACRCloud API call via Supabase Edge Function
-  // For now, show loading state for 3 seconds (demo)
-  await new Promise(r => setTimeout(r, 3000))
-
-  radarScanning = false
-  if (statusEl)    statusEl.textContent = `完成 · ${new Date().toLocaleDateString('zh-TW')}`
-  if (scanBtn)     scanBtn.classList.remove('scanning')
-  if (scanBtn)     scanBtn.textContent = '重新掃描'
-
-  // Demo results (replace with real API response in Phase 2)
-  const demoResults = [
-    { similarity: 94, title: '（待 ACRCloud 回傳）', artist: '—', platform: 'Spotify', url: '#' },
-    { similarity: 81, title: '請先串接後端 API', artist: '—', platform: 'YouTube', url: '#' },
-  ]
-
-  work.results = demoResults
-  work.lastScan = new Date().toISOString()
-  renderResults(work)
-  renderWorksList()
-
-  document.getElementById('scan-matches-count').textContent = demoResults.length
-  document.getElementById('scan-last-time').textContent = new Date().toLocaleDateString('zh-TW')
-  if (countEl) countEl.textContent = `${demoResults.length} 筆`
-}
-
-// ── Render helpers ────────────────────────────────────────────────
-function renderResults(work) {
-  const listEl = document.getElementById('scan-results-list')
-  if (!listEl) return
-
-  if (!work?.results?.length) {
-    listEl.innerHTML = `<div class="scan-empty"><div style="font-size:32px;opacity:0.2">◎</div><div>尚無比對結果</div></div>`
-    return
-  }
-
-  listEl.innerHTML = work.results.map((r, i) => {
-    const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
-    return `
-    <div class="scan-result-item" style="animation-delay:${i * 60}ms">
-      <div class="result-similarity ${cls}">${r.similarity}%</div>
-      <div class="result-info">
-        <div class="result-title">${r.title}</div>
-        <div class="result-meta">
-          <span>${r.artist}</span>
-          <span class="result-platform">${r.platform}</span>
-        </div>
-      </div>
-      <a class="result-link" href="${r.url}" target="_blank" rel="noopener" aria-label="前往平台">↗</a>
-    </div>`
-  }).join('')
-}
-
-function renderWorksList() {
-  const listEl = document.getElementById('works-list')
-  if (!listEl) return
-  if (!works.length) {
-    listEl.innerHTML = `<div class="works-empty"><div class="works-empty-icon">♪</div><div class="works-empty-text">點擊「+ 新增」上傳您的原創作品，WaveForge 會萃取音訊指紋存入資料庫。</div></div>`
-    return
-  }
-
-  listEl.innerHTML = works.map(w => `
-    <div class="work-card ${w.id === activeWorkId ? 'active' : ''}" data-id="${w.id}">
-      <div class="work-card-title" title="${w.name}">${w.name}</div>
-      <div class="work-card-meta">
-        <div class="work-card-fp">
-          <div class="fp-dot ${w.fingerprint ? 'ok' : ''}"></div>
-          ${w.fingerprint ? '指紋已建立' : '建立指紋中...'}
-        </div>
-        ${w.lastScan ? `· ${new Date(w.lastScan).toLocaleDateString('zh-TW')}` : '· 未掃描'}
-      </div>
-      <div class="work-card-actions">
-        <button class="work-scan-btn" data-id="${w.id}">
-          ${w.results?.length ? '重新掃描' : '掃描'}
-        </button>
-        <button class="work-del-btn" data-del="${w.id}" aria-label="刪除">✕</button>
-      </div>
-    </div>
-  `).join('')
-
-  // Wire scan buttons
-  listEl.querySelectorAll('.work-scan-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation()
-      const work = works.find(w => w.id === btn.dataset.id)
-      if (work) scanWork(work)
-    })
-  })
-
-  // Wire delete buttons
-  listEl.querySelectorAll('.work-del-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation()
-      const idx = works.findIndex(w => w.id === btn.dataset.del)
-      if (idx !== -1) works.splice(idx, 1)
-      renderWorksList()
-    })
-  })
-
-  // Wire card click → show results
-  listEl.querySelectorAll('.work-card').forEach(card => {
-    card.addEventListener('click', () => {
-      activeWorkId = card.dataset.id
-      const work = works.find(w => w.id === activeWorkId)
-      if (work) {
-        document.getElementById('scan-track-name').textContent = work.name
-        document.getElementById('scan-status-text').textContent = work.lastScan ? `上次掃描 ${new Date(work.lastScan).toLocaleDateString('zh-TW')}` : '未掃描'
-        document.getElementById('scan-matches-count').textContent = work.results?.length ?? '—'
-        document.getElementById('scan-last-time').textContent = work.lastScan ? new Date(work.lastScan).toLocaleDateString('zh-TW') : '—'
-        renderResults(work)
-        document.getElementById('scan-results-count').textContent = `${work.results?.length ?? 0} 筆`
-      }
-      renderWorksList()
-    })
-  })
-}
-
-// ── Upload original work ──────────────────────────────────────────
-function handleWorksUpload(file) {
-  const id = `work-${Date.now()}`
-  const work = { id, name: file.name.replace(/\.[^.]+$/, ''), fingerprint: false, lastScan: null, results: [] }
-  works.push(work)
-  renderWorksList()
-
-  // Simulate fingerprint extraction (Phase 2: real ACRCloud identify)
-  setTimeout(() => {
-    work.fingerprint = true
-    renderWorksList()
-  }, 1500)
-}
-
-// ── Tutorial toggle ───────────────────────────────────────────────
+// ── Tutorial toggle ───────────────────────────────────────
 function initTutorial() {
   const toggle = document.getElementById('tutorial-toggle')
   const body   = document.getElementById('tutorial-body')
   if (!toggle || !body) return
-
   toggle.addEventListener('click', () => {
     const open = toggle.getAttribute('aria-expanded') === 'true'
     toggle.setAttribute('aria-expanded', String(!open))
@@ -319,38 +574,98 @@ function initTutorial() {
   })
 }
 
-// ── API key save ──────────────────────────────────────────────────
-function initApiKeySave() {
-  const input   = document.getElementById('acr-api-key')
-  const saveBtn = document.getElementById('acr-key-save')
-  if (!input || !saveBtn) return
+// ── Auth modal wiring ─────────────────────────────────────
+function initAuthModal() {
+  const modal      = document.getElementById('auth-modal')
+  const closeBtn   = document.getElementById('modal-close')
+  const emailInput = document.getElementById('auth-email')
+  const passInput  = document.getElementById('auth-password')
+  const submitBtn  = document.getElementById('auth-submit')
+  const googleBtn  = document.getElementById('auth-google')
+  const msgEl      = document.getElementById('auth-message')
+  const tabSignIn  = document.getElementById('auth-tab-signin')
+  const tabSignUp  = document.getElementById('auth-tab-signup')
 
-  saveBtn.addEventListener('click', () => {
-    acrApiKey = input.value.trim()
-    if (!acrApiKey) return
-    localStorage.setItem('acr-api-key', acrApiKey)
-    saveBtn.textContent = '已儲存 ✓'
-    saveBtn.classList.add('saved')
-    setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+  let isSignUp = false
+
+  function setMsg(text, isError = false) {
+    if (!msgEl) return
+    msgEl.textContent = text
+    msgEl.style.color = isError ? 'var(--c-primary)' : 'var(--c-green)'
+  }
+
+  tabSignIn?.addEventListener('click', () => {
+    isSignUp = false
+    tabSignIn.classList.add('active')
+    tabSignUp?.classList.remove('active')
+    if (submitBtn) submitBtn.textContent = '登入'
+    setMsg('')
   })
 
-  // Restore from localStorage
-  const stored = localStorage.getItem('acr-api-key')
-  if (stored) { input.value = stored; acrApiKey = stored }
+  tabSignUp?.addEventListener('click', () => {
+    isSignUp = true
+    tabSignUp.classList.add('active')
+    tabSignIn?.classList.remove('active')
+    if (submitBtn) submitBtn.textContent = '註冊'
+    setMsg('')
+  })
+
+  submitBtn?.addEventListener('click', async () => {
+    const email = emailInput?.value?.trim()
+    const pass  = passInput?.value ?? ''
+    if (!email || !pass) { setMsg('請填寫 Email 和密碼', true); return }
+
+    submitBtn.disabled = true
+    submitBtn.textContent = isSignUp ? '註冊中...' : '登入中...'
+    setMsg('')
+
+    const fn = isSignUp ? signUpEmail : signInEmail
+    const { error } = await fn(email, pass)
+
+    if (error) {
+      setMsg(error.message, true)
+    } else {
+      setMsg(isSignUp ? '已寄出驗證信，請確認後再登入' : '登入成功！')
+      if (!isSignUp) setTimeout(() => modal?.classList.remove('open'), 1000)
+    }
+
+    submitBtn.disabled = false
+    submitBtn.textContent = isSignUp ? '註冊' : '登入'
+  })
+
+  googleBtn?.addEventListener('click', () => signInGoogle())
+
+  closeBtn?.addEventListener('click', () => modal?.classList.remove('open'))
+  modal?.addEventListener('click', e => {
+    if (e.target === modal) modal.classList.remove('open')
+  })
 }
 
-// ── Status helper (reused from main.js pattern) ───────────────────
-function setStatus(msg, ok) {
-  const el = document.getElementById('status-text')
-  if (el) el.textContent = msg
-}
-
-// ── Public init ───────────────────────────────────────────────────
+// ── Public init ───────────────────────────────────────────
 export function initAntiTheft() {
+  // Listen for mode-nav trigger
   document.addEventListener('wf:check-auth', () => checkAuthOverlay())
+
+  // Start radar animation
   startRadar()
   initTutorial()
-  initApiKeySave()
+  initAuthModal()
+
+  // Restore guest-mode ACR key from localStorage
+  if (!SUPABASE_READY) {
+    const storedKey    = localStorage.getItem('acr-api-key')
+    const storedSecret = localStorage.getItem('acr-api-secret')
+    if (storedKey)    { acrAccessKey = storedKey; const el = document.getElementById('acr-api-key'); if (el) el.value = storedKey }
+    if (storedSecret) acrAccessSecret = storedSecret
+  }
+
+  // ACRCloud settings save button
+  document.getElementById('acr-key-save')?.addEventListener('click', saveSettings)
+
+  // Email notify toggle
+  document.getElementById('email-notify-toggle')?.addEventListener('change', e => {
+    saveEmailNotify(e.target.checked)
+  })
 
   // Works file input
   document.getElementById('works-file-input')?.addEventListener('change', e => {
@@ -359,16 +674,49 @@ export function initAntiTheft() {
     e.target.value = ''
   })
 
-  // Auth overlay buttons
-  document.getElementById('auth-cta-btn')?.addEventListener('click', () => {
-    document.getElementById('auth-modal')?.classList.add('open')
-  })
+  // Settings auth button (login / logout)
   document.getElementById('settings-auth-btn')?.addEventListener('click', () => {
     if (currentUser) {
-      currentUser = null
-      checkAuthOverlay()
+      signOut()
     } else {
       document.getElementById('auth-modal')?.classList.add('open')
     }
   })
+
+  // Auth overlay CTA
+  document.getElementById('auth-cta-btn')?.addEventListener('click', () => {
+    document.getElementById('auth-modal')?.classList.add('open')
+  })
+
+  // Supabase auth state listener
+  if (supabase) {
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      currentUser = session?.user
+        ? { id: session.user.id, email: session.user.email }
+        : null
+
+      checkAuthOverlay()
+
+      if (currentUser) {
+        await loadUserSettings(currentUser.id)
+        await loadWorksFromDB()
+      }
+    })
+
+    // Restore session on page load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        currentUser = { id: session.user.id, email: session.user.email }
+        checkAuthOverlay()
+        loadUserSettings(currentUser.id)
+        loadWorksFromDB()
+      }
+    })
+  }
+
+  // Show mode note if Supabase not configured
+  if (!SUPABASE_READY) {
+    const modeNote = document.getElementById('auth-user-info')
+    if (modeNote) modeNote.textContent = '訪客模式 — 掃描為 Demo 結果'
+  }
 }

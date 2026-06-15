@@ -213,6 +213,25 @@ async function boot() {
   // ── Stems mastering ──────────────────────────────────────
   initStemsMastering(() => currentFile)
 
+  // ── Stem Bounce → load mixed buffer into master chain ────
+  document.addEventListener('wf:stem-bounce', async (e) => {
+    const buffer = e.detail?.buffer
+    if (!buffer) return
+    try {
+      // Encode mixed buffer to WAV, then load as a File so doLoadFile handles it
+      const channels = []
+      for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c))
+      const wav  = encodeWAV(channels, buffer.sampleRate, 24)
+      const file = new File([wav], 'stems-bounce.wav', { type: 'audio/wav' })
+      // Switch to master mode so the user sees the waveform
+      document.querySelector('.mode-tab[data-mode="master"]')?.click()
+      await loadFile(file)
+    } catch (err) {
+      setStatus(`Bounce 載入失敗：${err.message}`, false)
+      console.error('[wf:stem-bounce]', err)
+    }
+  })
+
   // ── File loading ────────────────────────────────────────
   let isLoadingFile = false
   async function loadFile(file) {

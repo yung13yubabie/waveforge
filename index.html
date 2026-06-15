@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Data-egress lock: connect-src 'self' blocks exfiltration of uploaded audio
-       to any other origin. Relax to 'self https://your-backend' when Phase-2
-       backend is wired. worker-src blob: needed for AudioWorklet, media/img blob:
-       for decoded audio + waveform canvas. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <!-- Phase-2: connect-src extended to allow Supabase, HF Spaces, ACRCloud.
+       Each *.supabase.co covers both API and Edge Functions endpoints.
+       *.hf.space covers the user-deployed Demucs Space.
+       identify-*.acrcloud.com covers ACRCloud identify endpoints. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co https://*.hf.space https://identify-eu-west-1.acrcloud.com https://identify-us-west-2.acrcloud.com https://api.resend.com; worker-src 'self' blob:; img-src 'self' data: blob: https://*.googleusercontent.com; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <title>WaveForge — Professional Mastering DAW</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="manifest" href="./site.webmanifest">
@@ -903,10 +903,14 @@
             <div class="api-key-input-wrap">
               <input type="password" class="api-key-input" id="acr-api-key"
                      placeholder="貼上您的 Access Key" autocomplete="off">
+            </div>
+            <div class="api-key-input-wrap" style="margin-top:6px">
+              <input type="password" class="api-key-input" id="acr-api-secret"
+                     placeholder="貼上您的 Access Secret" autocomplete="off">
               <button class="api-key-save" id="acr-key-save">儲存</button>
             </div>
             <div class="api-key-hint">
-              API Key 加密儲存於您的帳號，不會傳送到 WaveForge 伺服器以外的地方。
+              Key 與 Secret 儲存於您的帳號（Supabase 模式）或本機（訪客模式），不會傳送至 ACRCloud 以外的地方。
             </div>
           </div>
         </div>
@@ -948,7 +952,7 @@
               <div class="notify-sub">偵測到新吻合時發送 Email</div>
             </div>
             <label class="module-toggle" style="margin-left:auto">
-              <input type="checkbox" id="notify-email-toggle" checked>
+              <input type="checkbox" id="email-notify-toggle" checked>
               <span class="module-toggle-track"></span>
               <span class="module-toggle-thumb"></span>
             </label>
@@ -1001,28 +1005,34 @@
 <div class="modal-backdrop" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
   <div class="modal-card">
     <button class="modal-close" id="modal-close" aria-label="關閉">✕</button>
-    <div class="modal-title" id="modal-title">登入 WaveForge</div>
-    <div class="modal-sub">使用防盜偵測功能需要帳號</div>
+    <div class="modal-title" id="modal-title">WaveForge 帳號</div>
+    <div class="modal-sub">登入後可同步作品庫 · 儲存 ACRCloud Key · 接收 Email 通知</div>
+
+    <!-- Tabs -->
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" id="auth-tab-signin" role="tab" aria-selected="true">登入</button>
+      <button class="auth-tab" id="auth-tab-signup" role="tab" aria-selected="false">註冊</button>
+    </div>
 
     <div class="form-field">
-      <label class="form-label" for="modal-email">Email</label>
-      <input type="email" class="form-input" id="modal-email" placeholder="your@email.com" autocomplete="email">
+      <label class="form-label" for="auth-email">Email</label>
+      <input type="email" class="form-input" id="auth-email" placeholder="your@email.com" autocomplete="email">
     </div>
     <div class="form-field">
-      <label class="form-label" for="modal-password">密碼</label>
-      <input type="password" class="form-input" id="modal-password" placeholder="•••••••••" autocomplete="current-password">
+      <label class="form-label" for="auth-password">密碼</label>
+      <input type="password" class="form-input" id="auth-password" placeholder="•••••••••" autocomplete="current-password">
     </div>
-    <button class="modal-submit-btn" id="modal-submit">登入</button>
+
+    <!-- Status message -->
+    <div id="auth-message" style="font-size:var(--text-xs);min-height:16px;margin-bottom:var(--sp-3)"></div>
+
+    <button class="modal-submit-btn" id="auth-submit">登入</button>
 
     <div class="modal-divider">或</div>
-    <button class="modal-google-btn" id="modal-google">
+    <button class="modal-google-btn" id="auth-google">
       <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
       使用 Google 登入
     </button>
-
-    <div class="modal-switch">
-      還沒有帳號？<button class="modal-switch-link" id="modal-switch-register">免費註冊</button>
-    </div>
   </div>
 </div>
 
