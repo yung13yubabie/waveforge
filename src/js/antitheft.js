@@ -420,7 +420,11 @@ function renderWorksList() {
     meta.className = 'work-card-meta'
     const fpDot = document.createElement('div')
     fpDot.className = 'work-card-fp'
-    fpDot.innerHTML = `<div class="fp-dot${w.fingerprint ? ' ok' : ''}"></div>${w.fingerprint ? '指紋已建立' : '建立中...'}`
+    const dot = document.createElement('div')
+    dot.className = `fp-dot${w.fingerprint ? ' ok' : ''}`
+    const fpLabel = document.createElement('span')
+    fpLabel.textContent = w.fingerprint ? '指紋已建立' : '建立中...'
+    fpDot.append(dot, fpLabel)
     const scanTime = document.createElement('span')
     scanTime.textContent = w.lastScan
       ? `· ${new Date(w.lastScan).toLocaleDateString('zh-TW')}`
@@ -718,7 +722,7 @@ export function initAntiTheft() {
 
     if (meta.thumbnailUrl) {
       const img = document.createElement('img')
-      img.src = meta.thumbnailUrl
+      img.src = safeHref(meta.thumbnailUrl)  // reuse existing protocol validator
       img.alt = ''
       img.className = 'url-result-thumb'
       img.loading = 'lazy'

@@ -426,16 +426,14 @@ async function boot() {
     if (files.length === 1) {
       await loadFile(files[0])
     } else {
-      // Batch mode: snapshot current chain, add all to album, preview first
+      // Batch mode: snapshot current chain once, add all files to album, load first for preview
       const snapshot = engine.serialize()
       for (const f of files) {
-        await loadFile(f)
-        album.add({ name: f.name.replace(/\.[^.]+$/, ''), file: f, snapshot: engine.serialize() })
+        album.add({ name: f.name.replace(/\.[^.]+$/, ''), file: f, snapshot })
       }
       await loadFile(files[0])
-      renderAlbumUI()
+      renderAlbum()
       setStatus(`批量加入 ${files.length} 首至專輯序列，已套用目前處理鏈設定`, true)
-      void snapshot  // referenced to avoid lint warning
     }
   })
 
@@ -1326,16 +1324,23 @@ async function boot() {
     } else {
       setStatus(`✓ ${parts.join(' · ')}`, true)
     }
-    console.info('[WaveForge] export report', report)
+    if (import.meta.env.DEV) console.info('[WaveForge] export report', report)
   }
 
   // ── Export format toggle ────────────────────────────────
   document.getElementById('export-format')?.addEventListener('change', (e) => {
     const isMp3 = e.target.value === 'mp3'
-    const bitdepthEl = document.getElementById('export-bitdepth')
+    const bitdepthEl   = document.getElementById('export-bitdepth')
     const mp3BitrateEl = document.getElementById('export-mp3-bitrate')
-    if (bitdepthEl) bitdepthEl.hidden = isMp3
+    const srSelect     = document.getElementById('export-samplerate')
+    if (bitdepthEl)   bitdepthEl.hidden   = isMp3
     if (mp3BitrateEl) mp3BitrateEl.hidden = !isMp3
+    // 96kHz not supported by lamejs MP3 encoder — hide that option when MP3 is selected
+    if (srSelect) {
+      const opt96 = srSelect.querySelector('option[value="96000"]')
+      if (opt96) opt96.hidden = isMp3
+      if (isMp3 && srSelect.value === '96000') srSelect.value = '44100'
+    }
   })
 
   // ── Export ──────────────────────────────────────────────
@@ -1382,9 +1387,9 @@ async function boot() {
         ceilingDb: byp.limiter ? 0 : p.limCeiling,
       })
 
-      const baseName = currentFile
+      const baseName = (currentFile
         ? currentFile.name.replace(/\.[^.]+$/, '')
-        : 'waveforge'
+        : 'waveforge').replace(/[/\\]/g, '_')
 
       let blob, filename
       if (format === 'mp3') {

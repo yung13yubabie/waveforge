@@ -1,13 +1,19 @@
 import lamejs from 'lamejs'
 
+const VALID_SAMPLE_RATES = new Set([8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000])
+
 /**
  * Encode Float32 channel data to MP3 using lamejs.
  * @param {Float32Array[]} channels - [left, right] or [mono]
- * @param {number} sampleRate
+ * @param {number} sampleRate - must be one of lamejs' supported rates (not 96000)
  * @param {number} kbps - 128 | 192 | 256 | 320
  * @returns {Uint8Array}
  */
 export function encodeMP3(channels, sampleRate, kbps = 192) {
+  if (!VALID_SAMPLE_RATES.has(sampleRate)) {
+    throw new Error(`MP3 不支援此採樣率：${sampleRate} Hz（僅支援最高 48000 Hz）`)
+  }
+  if (!channels[0]?.length) throw new Error('音訊緩衝區為空，無法編碼 MP3')
   const numChannels = Math.min(channels.length, 2)
   const encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, kbps)
   const sampleBlockSize = 1152 // lamejs requires multiples of 1152
