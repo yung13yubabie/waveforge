@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
 
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "user_settings: own row only" ON user_settings;
 CREATE POLICY "user_settings: own row only" ON user_settings
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS works (
 
 ALTER TABLE works ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "works: own rows only" ON works;
 CREATE POLICY "works: own rows only" ON works
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS scan_results (
 ALTER TABLE scan_results ENABLE ROW LEVEL SECURITY;
 
 -- Only allow access through works (user owns the work → can see its results)
+DROP POLICY IF EXISTS "scan_results: via works owner" ON scan_results;
 CREATE POLICY "scan_results: via works owner" ON scan_results
   USING (
     EXISTS (

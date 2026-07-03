@@ -144,7 +144,7 @@ Vite 8 · vanilla JS ES2022 · Web Audio API（AudioWorklet）· WaveSurfer.js 7
 3. 限制：單檔 ≤ 50MB，推論 timeout 10 分鐘
 
 ### Supabase（帳號 + 防盜偵測）
-1. 建立 Supabase 專案，依序執行 `supabase/migrations/001_init.sql`、`002_harden_schema.sql`
+1. 建立 Supabase 專案，在 Dashboard SQL Editor **依序**執行 `supabase/migrations/001_init.sql`（建表）→ `002_harden_schema.sql`（強化）。順序不能顛倒 — 002 是對 001 建立的表做增量修改，先跑 002 會報 `relation "user_settings" does not exist`。兩個腳本都可安全重跑（idempotent）。
 2. 部署 Edge Function：`supabase functions deploy acr-scan`
 3. Google 登入：Supabase Dashboard → Authentication → Providers → Google，填入 Google Cloud OAuth Client ID/Secret
 4. Email 通知（可選）：Edge Function Secrets 設定 `RESEND_API_KEY`
