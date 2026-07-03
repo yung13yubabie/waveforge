@@ -1,10 +1,11 @@
 ---
 title: WaveForge Demucs Stem Separator
 emoji: 🎚️
-colorFrom: red
-colorTo: cyan
+colorFrom: purple
+colorTo: blue
 sdk: gradio
-sdk_version: 4.44.1
+sdk_version: 6.19.0
+python_version: 3.11
 app_file: app.py
 pinned: false
 license: mit
@@ -26,15 +27,19 @@ WaveForge 的 AI 分軌後端，使用 [Demucs htdemucs](https://github.com/face
 
 ## API 端點
 
-Gradio 自動產生 REST API：
+Gradio 自動產生 REST API（`api_name="separate"`，兩段式協議）：
 
 ```
-POST https://<space-url>/api/predict
+# 1. 上傳音檔
+POST https://<space-url>/upload          (FormData: files)
+
+# 2. 送出任務 → 取得 event_id
+POST https://<space-url>/call/separate
 Content-Type: application/json
-{
-  "data": [null],         // 由 /upload 先上傳取得 path 後替換
-  "fn_index": 0
-}
+{ "data": [{ "path": "<upload 回傳的路徑>", "meta": { "_type": "gradio.FileData" } }] }
+
+# 3. SSE 串流等待結果（event: complete）
+GET https://<space-url>/call/separate/<event_id>
 ```
 
 回傳 4 個音檔（vocals / drums / bass / other）。

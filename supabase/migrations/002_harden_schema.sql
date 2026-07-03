@@ -48,6 +48,7 @@ CREATE POLICY "works: own rows only" ON works
 
 -- scan_results：user_id 直接限制（比透過 works EXISTS 子查詢更快也更嚴格）
 DROP POLICY IF EXISTS "scan_results: via works owner" ON scan_results;
+DROP POLICY IF EXISTS "scan_results: own rows only" ON scan_results;
 CREATE POLICY "scan_results: own rows only" ON scan_results
   FOR ALL TO authenticated
   USING (auth.uid() = user_id)
