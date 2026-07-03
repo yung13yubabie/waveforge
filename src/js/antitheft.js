@@ -117,6 +117,14 @@ async function loadUserSettings(userId) {
     if (spIdInput && spotifyClientId) spIdInput.value = spotifyClientId
     if (spSecInput && spotifyClientSecret) spSecInput.value = '••••••••••••'
     if (notifyToggle) notifyToggle.checked = emailNotify
+
+    // Reflect persisted state so the user can see it's saved on their account
+    if (acrAccessKey && acrAccessSecret) {
+      setKeyStatus('acr-key-status', '✓ 已儲存於你的帳號', 'saved')
+    }
+    if (spotifyClientId && spotifyClientSecret) {
+      setKeyStatus('spotify-key-status', '✓ 已儲存於你的帳號', 'saved')
+    }
   }
 }
 
@@ -148,6 +156,14 @@ async function loadWorksFromDB() {
   renderWorksList()
 }
 
+// ── Persistent status line helper ─────────────────────────
+function setKeyStatus(id, text, state) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.textContent = text
+  el.className = `api-key-status ${state}`   // state: saved | error | pending
+}
+
 // ── Save ACRCloud settings ────────────────────────────────
 async function saveSettings() {
   const keyInput    = document.getElementById('acr-api-key')
@@ -156,38 +172,43 @@ async function saveSettings() {
 
   const newKey    = keyInput?.value?.trim() ?? ''
   const newSecret = secretInput?.value?.trim() ?? ''
-  if (!newKey) return
+  if (!newKey) { setKeyStatus('acr-key-status', '請先貼上 Access Key', 'error'); return }
 
   acrAccessKey    = newKey
   if (newSecret && newSecret !== '••••••••••••') acrAccessSecret = newSecret
 
-  if (supabase && currentUser) {
-    // Surface the real DB error instead of always claiming success — a swallowed
-    // RLS/network failure would leave the key unsaved while the UI says ✓.
-    const { error } = await supabase.from('user_settings').upsert({
-      user_id:           currentUser.id,
-      acr_access_key:    acrAccessKey,
-      acr_access_secret: acrAccessSecret || undefined,
-    })
-    if (error) {
-      if (saveBtn) {
-        saveBtn.textContent = '儲存失敗'
-        setTimeout(() => { saveBtn.textContent = '儲存' }, 3000)
+  // try/catch so a thrown network rejection can never leave the UI with no
+  // feedback ("沒反應"). Every path ends in a visible status.
+  try {
+    if (supabase && currentUser) {
+      if (!acrAccessSecret) { setKeyStatus('acr-key-status', '請一併填入 Access Secret', 'error'); return }
+      setKeyStatus('acr-key-status', '儲存中…', 'pending')
+      const { error } = await supabase.from('user_settings').upsert({
+        user_id:           currentUser.id,
+        acr_access_key:    acrAccessKey,
+        acr_access_secret: acrAccessSecret,
+      })
+      if (error) {
+        setKeyStatus('acr-key-status', `儲存失敗：${error.message}`, 'error')
+        console.error('[user_settings upsert]', error)
+        return
       }
-      const statusEl = document.getElementById('scan-status-text')
-      if (statusEl) statusEl.textContent = `設定儲存失敗：${error.message}`
-      console.error('[user_settings upsert]', error)
-      return
+      setKeyStatus('acr-key-status', '✓ 已儲存至你的帳號（跨裝置同步）', 'saved')
+    } else {
+      // Guest mode → only the (non-sensitive) access key persists; the Secret
+      // stays in memory for this session only. Persisting secrets in
+      // localStorage exposes them to any XSS — never store it.
+      localStorage.setItem('acr-api-key', acrAccessKey)
+      setKeyStatus('acr-key-status', '✓ 已存於本機（訪客模式，Secret 僅此分頁有效）', 'saved')
     }
-  } else {
-    // Guest mode → only the (non-sensitive) access key persists; the Secret
-    // stays in memory for this session only. Persisting secrets in
-    // localStorage exposes them to any XSS — never store it.
-    localStorage.setItem('acr-api-key', acrAccessKey)
+  } catch (err) {
+    setKeyStatus('acr-key-status', `儲存失敗：${err.message}`, 'error')
+    console.error('[saveSettings]', err)
+    return
   }
 
   if (saveBtn) {
-    saveBtn.textContent = supabase && currentUser ? '已存至帳號 ✓' : '已儲存 ✓'
+    saveBtn.textContent = '已儲存 ✓'
     saveBtn.classList.add('saved')
     setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
   }
@@ -204,30 +225,32 @@ async function saveSpotifySettings() {
   if (newId) spotifyClientId = newId
   if (newSec && newSec !== '••••••••••••') spotifyClientSecret = newSec
 
-  if (supabase && currentUser) {
-    const { error } = await supabase.from('user_settings').upsert({
-      user_id:               currentUser.id,
-      spotify_client_id:     spotifyClientId || null,
-      spotify_client_secret: spotifyClientSecret || null,
-    })
-    if (saveBtn) {
+  try {
+    if (supabase && currentUser) {
+      setKeyStatus('spotify-key-status', '儲存中…', 'pending')
+      const { error } = await supabase.from('user_settings').upsert({
+        user_id:               currentUser.id,
+        spotify_client_id:     spotifyClientId || null,
+        spotify_client_secret: spotifyClientSecret || null,
+      })
       if (error) {
-        saveBtn.textContent = '儲存失敗'
+        setKeyStatus('spotify-key-status', `儲存失敗：${error.message}`, 'error')
         console.error('[spotify settings upsert]', error)
-        setTimeout(() => { saveBtn.textContent = '儲存' }, 3000)
         return
       }
-      saveBtn.textContent = '已存至帳號 ✓'
-      saveBtn.classList.add('saved')
-      setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+      setKeyStatus('spotify-key-status', '✓ 已儲存至你的帳號（選填增強）', 'saved')
+      if (saveBtn) {
+        saveBtn.textContent = '已儲存 ✓'
+        saveBtn.classList.add('saved')
+        setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+      }
+    } else {
+      // Spotify enrichment runs in the Edge Function → requires live mode + login.
+      setKeyStatus('spotify-key-status', '需先登入帳號才能儲存（Spotify 增強在伺服器端執行）', 'error')
     }
-  } else {
-    // Spotify enrichment runs in the Edge Function → requires live mode + login;
-    // guest mode has nowhere safe to use these, so refuse instead of pretending.
-    if (saveBtn) {
-      saveBtn.textContent = '需登入'
-      setTimeout(() => { saveBtn.textContent = '儲存' }, 2000)
-    }
+  } catch (err) {
+    setKeyStatus('spotify-key-status', `儲存失敗：${err.message}`, 'error')
+    console.error('[saveSpotifySettings]', err)
   }
 }
 

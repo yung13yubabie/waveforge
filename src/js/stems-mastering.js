@@ -347,14 +347,17 @@ export async function separateStems(fileOrBlob) {
   wrapEl?.classList.add('visible')
   startDemucsAnimation()
 
-  // Countdown timer
+  // Honest elapsed timer — CPU Demucs has no reliable ETA (cold start + file
+  // length vary wildly). Count UP, never fake a countdown that hits 0:00 while
+  // the job is still running.
+  const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
   let elapsed = 0
   const timer = setInterval(() => {
     elapsed++
-    const remaining = Math.max(0, 240 - elapsed)
-    const m = Math.floor(remaining / 60)
-    const s = remaining % 60
-    if (etaEl) etaEl.textContent = `估計剩餘 ${m}:${String(s).padStart(2, '0')}`
+    if (!etaEl) return
+    etaEl.textContent = elapsed < 240
+      ? `處理中 ${fmtClock(elapsed)}（CPU 分軌通常需 2–5 分鐘）`
+      : `處理中 ${fmtClock(elapsed)}（Space 冷啟動或檔案較長，請耐心等待）`
   }, 1000)
 
   try {
@@ -398,7 +401,7 @@ export async function separateStems(fileOrBlob) {
     stopDemucsAnimation()
     wrapEl?.classList.remove('visible')
     btnEl.classList.remove('processing')
-    btnEl.textContent = 'AI 分軌（重試）'
+    btnEl.textContent = '重試分軌'
     btnEl.disabled    = false
     console.error('[Demucs]', err)
     const bsEl = document.getElementById('bounce-status')

@@ -830,18 +830,18 @@
       <!-- AI Separation zone -->
       <div class="stems-ai-zone">
         <button class="stems-ai-btn" id="stems-ai-btn" disabled>
-          ◈ AI 分軌
+          ◈ 開始分軌
         </button>
         <div class="stems-ai-info">
-          <div class="stems-ai-title">Demucs 智慧分軌</div>
-          <div id="stems-hf-desc" class="stems-ai-desc">傳送至 Hugging Face Spaces，自動分離 4 軌（人聲 / 鼓 / 貝斯 / 其他）· 約等待 2–5 分鐘</div>
+          <div class="stems-ai-title">Demucs 分軌</div>
+          <div id="stems-hf-desc" class="stems-ai-desc">⚠ 此功能會將整首音檔上傳至你設定的 Hugging Face Space 進行分離（人聲 / 鼓 / 貝斯 / 其他），非本機處理。CPU 免費方案約需 2–5 分鐘。</div>
           <div id="stems-hf-notice" class="stems-backend-notice" hidden>
             ⚠ HF Spaces 未設定（<code>VITE_HF_ENDPOINT</code> 未填入），目前為示範模式，不會進行真實分軌。
           </div>
         </div>
         <div class="demucs-progress-wrap" id="demucs-progress-wrap">
           <canvas id="demucs-canvas" width="180" height="56"></canvas>
-          <div class="demucs-eta" id="demucs-eta">估計剩餘 —</div>
+          <div class="demucs-eta" id="demucs-eta">準備中…</div>
         </div>
       </div>
 
@@ -930,6 +930,22 @@
           </div>
         </div>
 
+        <details class="scan-howto">
+          <summary>運作方式與隱私（點開）</summary>
+          <ol class="scan-howto-list">
+            <li><strong>上傳原曲</strong>：在左側「我的作品庫」新增你的原創音檔，建立作品記錄。</li>
+            <li><strong>掃描比對</strong>：點「掃描」→ 系統擷取該曲前 30 秒 → 透過你的 Supabase Edge Function 送到你自己的 <strong>ACRCloud</strong> 帳號，比對 ACRCloud 全球商業曲庫（Spotify/YouTube 等平台的已上架曲）。</li>
+            <li><strong>看結果</strong>：若有人把你的歌上架，會列出疑似吻合曲目 + 相似度 + 平台連結，並可選擇 Email 通知。</li>
+          </ol>
+          <div class="scan-howto-privacy">
+            <strong>檔案流向（誠實說明）：</strong>
+            母帶處理與匯出<strong>完全在本機</strong>，音檔不離開瀏覽器。防盜掃描會把<strong>前 30 秒樣本</strong>送到<strong>你自己設定的</strong> ACRCloud（非 WaveForge 伺服器、非任何第三方）。分軌母帶會把<strong>整首</strong>送到<strong>你自己設定的</strong> HF Space。這三者之外，WaveForge 不對外傳送任何音訊。
+          </div>
+          <div class="scan-howto-privacy">
+            <strong>偵測能力：</strong>對轉檔 / 改位元率 / 改音量·LUFS / 改檔名<strong>天然免疫</strong>（照樣抓到）；升降 Key、改 BPM 需在 ACRCloud 專案選「Fingerprinting &amp; Cover Song」引擎；AI 重製 / 大幅頻譜破壞則所有指紋系統都可能失效（見 SETUP_GUIDE 威脅模型與防禦建議）。
+          </div>
+        </details>
+
         <div class="scan-results-head">
           <span class="scan-results-title">比對結果</span>
           <span class="scan-results-count" id="scan-results-count">0 筆</span>
@@ -956,8 +972,9 @@
                      placeholder="貼上您的 Access Secret" autocomplete="off">
               <button class="api-key-save" id="acr-key-save">儲存</button>
             </div>
+            <div class="api-key-status" id="acr-key-status" aria-live="polite">尚未儲存</div>
             <div class="api-key-hint">
-              Key 與 Secret 儲存於您的帳號（Supabase 模式）或本機（訪客模式），不會傳送至 ACRCloud 以外的地方。
+              登入後 Key/Secret 綁定你的帳號存於 Supabase（RLS 保護，跨裝置同步）；訪客模式僅 Key 存本機、Secret 不落地。掃描時憑證只在你的 Edge Function 內用於簽章呼叫 ACRCloud，不外流第三方。
             </div>
           </div>
         </div>
@@ -1003,8 +1020,10 @@
                      placeholder="貼上您的 Client Secret" autocomplete="off">
               <button class="api-key-save" id="spotify-key-save">儲存</button>
             </div>
+            <div class="api-key-status" id="spotify-key-status" aria-live="polite">尚未儲存</div>
             <div class="api-key-hint">
-              填入後，掃描結果會以 ISRC 精準比對 Spotify 曲庫，補上專輯封面、發行日與正確連結。憑證儲存於您的帳號（需登入）。
+              純選填 — 不填也能正常掃描。填入後，掃描結果會以 ISRC 精準比對 Spotify 曲庫，補上專輯封面、發行日與正確連結。
+              <strong>注意：2026-02 起 Spotify 要求新建的開發者 App 綁定 Premium 帳號</strong>；沒有 Premium 可跳過此區。
             </div>
           </div>
         </div>
@@ -1018,7 +1037,7 @@
           <div class="tutorial-body" id="spotify-tutorial-body">
             <div class="tutorial-step">
               <div class="tutorial-step-num">1</div>
-              <div>前往 <a class="tutorial-link" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>，用您的 Spotify 帳號登入（免費帳號即可）</div>
+              <div>前往 <a class="tutorial-link" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> 登入。<strong>2026-02 起新建 App 需 Spotify Premium 帳號</strong>（Client Credentials 呼叫公開曲庫本身不需 Premium，但建立 App 這關 Spotify 會擋）。沒 Premium 就跳過整個 Spotify 區塊，ACRCloud 掃描照常運作</div>
             </div>
             <div class="tutorial-step">
               <div class="tutorial-step-num">2</div>
