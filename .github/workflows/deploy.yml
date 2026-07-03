@@ -23,7 +23,14 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # Backend endpoints are baked into the bundle at build time.
+      # Set these in: repo Settings → Secrets and variables → Actions → Secrets
+      # Without them the deployed site runs in guest/demo mode.
       - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_HF_ENDPOINT: ${{ secrets.VITE_HF_ENDPOINT }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist/

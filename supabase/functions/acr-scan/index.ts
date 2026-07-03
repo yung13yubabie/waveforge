@@ -115,12 +115,15 @@ serve(async (req: Request) => {
     // ── Get ACRCloud credentials ──────────────────────────
     const { data: settings, error: settingsErr } = await supabase
       .from('user_settings')
-      .select('acr_access_key, acr_access_secret, acr_host, email_notify')
+      .select('acr_access_key, acr_access_secret, acr_host, email_notify, spotify_client_id, spotify_client_secret')
       .eq('user_id', user.id)
       .single()
 
     if (settingsErr || !settings?.acr_access_key) {
       return jsonResp({ error: '請先在設定中填入 ACRCloud API Key 與 Secret' }, 400)
+    }
+    if (!settings.acr_access_secret) {
+      return jsonResp({ error: '缺少 ACRCloud Access Secret，請在設定中補填' }, 400)
     }
 
     const {
@@ -128,6 +131,8 @@ serve(async (req: Request) => {
       acr_access_secret: accessSecret,
       acr_host: host = 'identify-eu-west-1.acrcloud.com',
       email_notify: emailNotify,
+      spotify_client_id: spotifyId,
+      spotify_client_secret: spotifySecret,
     } = settings
 
     // ── Build ACRCloud request ────────────────────────────
@@ -177,16 +182,19 @@ serve(async (req: Request) => {
       album?: string
       platform: string
       acrid?: string
+      isrc?: string
       url: string
+      albumArt?: string
+      releaseDate?: string
     }
     const results: ScanResult[] = []
 
     if (acrData.status?.code === 0 && acrData.metadata?.music) {
       for (const match of acrData.metadata.music) {
-        const spotifyId = match.external_metadata?.spotify?.track?.id
+        const spTrackId = match.external_metadata?.spotify?.track?.id
         const youtubeId = match.external_metadata?.youtube?.vid
-        const url = spotifyId
-          ? `https://open.spotify.com/track/${spotifyId}`
+        const url = spTrackId
+          ? `https://open.spotify.com/track/${spTrackId}`
           : youtubeId
             ? `https://www.youtube.com/watch?v=${youtubeId}`
             : '#'
@@ -196,10 +204,48 @@ serve(async (req: Request) => {
           title:      match.title ?? '(未知)',
           artist:     match.artists?.[0]?.name ?? '—',
           album:      match.album?.name,
-          platform:   spotifyId ? 'Spotify' : youtubeId ? 'YouTube' : 'ACRCloud',
+          platform:   spTrackId ? 'Spotify' : youtubeId ? 'YouTube' : 'ACRCloud',
           acrid:      match.acrid,
+          isrc:       match.external_ids?.isrc,
           url,
         })
+      }
+    }
+
+    // ── Spotify enrichment（可選：需在設定填入 Spotify Client ID/Secret）──
+    // Client Credentials flow → 以 ISRC 精準查詢，補上封面 / 發行日 / 正確連結。
+    // 增強失敗不影響主流程（ACRCloud 結果照常回傳）。
+    if (results.length > 0 && spotifyId && spotifySecret) {
+      try {
+        const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${btoa(`${spotifyId}:${spotifySecret}`)}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'grant_type=client_credentials',
+        })
+        if (!tokenRes.ok) throw new Error(`Spotify token HTTP ${tokenRes.status} — Client ID/Secret 可能有誤`)
+        const { access_token: spToken } = await tokenRes.json()
+
+        for (const r of results.slice(0, 10)) {
+          if (!r.isrc) continue
+          const q = encodeURIComponent(`isrc:${r.isrc}`)
+          const searchRes = await fetch(
+            `https://api.spotify.com/v1/search?q=${q}&type=track&limit=1`,
+            { headers: { 'Authorization': `Bearer ${spToken}` } },
+          )
+          if (!searchRes.ok) continue
+          const found = (await searchRes.json()).tracks?.items?.[0]
+          if (!found) continue
+          r.url         = found.external_urls?.spotify ?? r.url
+          r.platform    = 'Spotify'
+          r.albumArt    = found.album?.images?.[2]?.url ?? found.album?.images?.[0]?.url
+          r.releaseDate = found.album?.release_date
+        }
+      } catch (spErr) {
+        // 增強失敗只記 log，不吞掉 ACR 結果
+        console.error('[acr-scan] Spotify enrichment failed:', spErr instanceof Error ? spErr.message : spErr)
       }
     }
 

@@ -19,6 +19,8 @@ const supabase = SUPABASE_READY
 let currentUser = null     // { id, email } | null
 let acrAccessKey = ''
 let acrAccessSecret = ''
+let spotifyClientId = ''
+let spotifyClientSecret = ''
 let emailNotify = true
 
 // ── Works library (in-memory; synced to DB in live mode) ──
@@ -92,20 +94,26 @@ async function loadUserSettings(userId) {
   if (!supabase) return
   const { data } = await supabase
     .from('user_settings')
-    .select('acr_access_key, acr_access_secret, email_notify')
+    .select('acr_access_key, acr_access_secret, email_notify, spotify_client_id, spotify_client_secret')
     .eq('user_id', userId)
     .single()
 
   if (data) {
-    acrAccessKey    = data.acr_access_key ?? ''
-    acrAccessSecret = data.acr_access_secret ?? ''
-    emailNotify     = data.email_notify ?? true
+    acrAccessKey        = data.acr_access_key ?? ''
+    acrAccessSecret     = data.acr_access_secret ?? ''
+    spotifyClientId     = data.spotify_client_id ?? ''
+    spotifyClientSecret = data.spotify_client_secret ?? ''
+    emailNotify         = data.email_notify ?? true
 
     const keyInput   = document.getElementById('acr-api-key')
     const secretInput = document.getElementById('acr-api-secret')
+    const spIdInput  = document.getElementById('spotify-client-id')
+    const spSecInput = document.getElementById('spotify-client-secret')
     const notifyToggle = document.getElementById('email-notify-toggle')
     if (keyInput && acrAccessKey) keyInput.value = acrAccessKey
     if (secretInput && acrAccessSecret) secretInput.value = '••••••••••••'
+    if (spIdInput && spotifyClientId) spIdInput.value = spotifyClientId
+    if (spSecInput && spotifyClientSecret) spSecInput.value = '••••••••••••'
     if (notifyToggle) notifyToggle.checked = emailNotify
   }
 }
@@ -168,6 +176,38 @@ async function saveSettings() {
     saveBtn.textContent = '已儲存 ✓'
     saveBtn.classList.add('saved')
     setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+  }
+}
+
+// ── Save Spotify credentials ──────────────────────────────
+async function saveSpotifySettings() {
+  const idInput  = document.getElementById('spotify-client-id')
+  const secInput = document.getElementById('spotify-client-secret')
+  const saveBtn  = document.getElementById('spotify-key-save')
+
+  const newId  = idInput?.value?.trim() ?? ''
+  const newSec = secInput?.value?.trim() ?? ''
+  if (newId) spotifyClientId = newId
+  if (newSec && newSec !== '••••••••••••') spotifyClientSecret = newSec
+
+  if (supabase && currentUser) {
+    await supabase.from('user_settings').upsert({
+      user_id:               currentUser.id,
+      spotify_client_id:     spotifyClientId || null,
+      spotify_client_secret: spotifyClientSecret || null,
+    })
+    if (saveBtn) {
+      saveBtn.textContent = '已儲存 ✓'
+      saveBtn.classList.add('saved')
+      setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+    }
+  } else {
+    // Spotify enrichment runs in the Edge Function → requires live mode + login;
+    // guest mode has nowhere safe to use these, so refuse instead of pretending.
+    if (saveBtn) {
+      saveBtn.textContent = '需登入'
+      setTimeout(() => { saveBtn.textContent = '儲存' }, 2000)
+    }
   }
 }
 
@@ -372,7 +412,23 @@ function renderResults(work) {
     platformEl.textContent = r.platform ?? ''
 
     metaEl.append(artistEl, platformEl)
+
+    // Spotify enrichment fields (present only when user configured Spotify API)
+    if (r.releaseDate) {
+      const dateEl = document.createElement('span')
+      dateEl.textContent = `· ${r.releaseDate}`
+      metaEl.appendChild(dateEl)
+    }
     infoEl.append(titleEl, metaEl)
+
+    if (r.albumArt) {
+      const artEl = document.createElement('img')
+      artEl.src = safeHref(r.albumArt)
+      artEl.alt = ''
+      artEl.className = 'result-album-art'
+      artEl.loading = 'lazy'
+      item.appendChild(artEl)
+    }
 
     const linkEl = document.createElement('a')
     linkEl.className = 'result-link'
@@ -797,6 +853,18 @@ export function initAntiTheft() {
 
   // ACRCloud settings save button
   document.getElementById('acr-key-save')?.addEventListener('click', saveSettings)
+
+  // Spotify settings save button
+  document.getElementById('spotify-key-save')?.addEventListener('click', saveSpotifySettings)
+
+  // Spotify tutorial collapse
+  const spTutToggle = document.getElementById('spotify-tutorial-toggle')
+  const spTutBody   = document.getElementById('spotify-tutorial-body')
+  spTutToggle?.addEventListener('click', () => {
+    const open = spTutToggle.getAttribute('aria-expanded') === 'true'
+    spTutToggle.setAttribute('aria-expanded', String(!open))
+    spTutBody?.classList.toggle('open', !open)
+  })
 
   // Email notify toggle
   document.getElementById('email-notify-toggle')?.addEventListener('change', e => {

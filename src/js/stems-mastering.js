@@ -102,38 +102,74 @@ async function callHFDemucs(file) {
   const uploaded = await uploadRes.json()
   const tmpPath = Array.isArray(uploaded) ? uploaded[0] : uploaded
 
-  // Step 2: Predict — prefer the stable named endpoint (api_name="separate");
-  // fall back to fn_index 0 only for Spaces that don't expose the named route.
-  const payload = { data: [{ path: tmpPath }] }
-  let predictRes = await fetchWithTimeout(`${base}/run/separate`, {
+  // Step 2: Predict via the Gradio 4 protocol — POST /call/separate returns
+  // an event_id, then GET /call/separate/{event_id} streams the result as SSE.
+  // (api_name="separate" is declared in hf-space/app.py; never rely on fn_index.)
+  const payload = { data: [{ path: tmpPath, meta: { _type: 'gradio.FileData' } }] }
+  const submitRes = await fetchWithTimeout(`${base}/call/separate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
+  }, HF_UPLOAD_TIMEOUT_MS, 'Demucs 任務送出')
+  if (!submitRes.ok) throw new Error(`Demucs 任務送出失敗（HTTP ${submitRes.status}）— Space 可能休眠或未部署 separate API`)
+  const { event_id: eventId } = await submitRes.json()
+  if (!eventId) throw new Error('HF Space 未回傳 event_id，請確認 Gradio 版本 ≥ 4')
 
-  if (predictRes.status === 404) {
-    predictRes = await fetchWithTimeout(`${base}/api/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, fn_index: 0 }),
-    }, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
-  }
-  if (!predictRes.ok) throw new Error(`Demucs 分軌失敗（HTTP ${predictRes.status}）— Space 可能休眠或負載過高，請稍後重試`)
-  const { data } = await predictRes.json()
+  // SSE stream: lines of "event: <type>" / "data: <json>"; wait for complete.
+  const sseRes = await fetchWithTimeout(`${base}/call/separate/${eventId}`,
+    {}, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
+  if (!sseRes.ok) throw new Error(`Demucs 結果讀取失敗（HTTP ${sseRes.status}）`)
+
+  const data = await new Promise(async (resolve, reject) => {
+    const reader = sseRes.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let lastEvent = ''
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop()  // keep incomplete trailing line
+        for (const line of lines) {
+          if (line.startsWith('event:')) lastEvent = line.slice(6).trim()
+          else if (line.startsWith('data:')) {
+            const raw = line.slice(5).trim()
+            if (lastEvent === 'complete') { resolve(JSON.parse(raw)); return }
+            if (lastEvent === 'error') {
+              reject(new Error(`Demucs 分軌失敗：${raw === 'null' ? 'Space 內部錯誤（檔案過長或記憶體不足）' : raw}`))
+              return
+            }
+            // 'generating' / 'heartbeat' → keep waiting
+          }
+        }
+      }
+      reject(new Error('Demucs 串流意外結束，未收到完成事件'))
+    } catch (e) { reject(e) } finally { reader.releaseLock() }
+  })
 
   // A response with no stem data = failure; never fabricate stems
   if (!Array.isArray(data) || data.every(d => !d)) {
     throw new Error('HF Space 未回傳任何分軌資料，請確認 Space 的 separate API 輸出格式')
   }
 
-  // Step 3: Download each stem as AudioBuffer
+  // Step 3: Download each stem as AudioBuffer.
+  // Gradio 4 FileData items usually carry a full `url`; fall back to /file={path}.
   const stemKeys = ['vocals', 'drums', 'bass', 'other']
   const result = {}
   for (let i = 0; i < stemKeys.length; i++) {
     const item = data?.[i]
     if (!item) { result[stemKeys[i]] = null; continue }
-    const filePath = item.path ?? item.name ?? item
-    const arr = await fetchGradioFile(base, filePath)
+    let arr
+    if (typeof item === 'object' && item.url) {
+      const res = await fetchWithTimeout(item.url, {}, HF_UPLOAD_TIMEOUT_MS, '分軌檔下載')
+      if (!res.ok) throw new Error(`分軌檔下載失敗（HTTP ${res.status}）`)
+      arr = await res.arrayBuffer()
+    } else {
+      const filePath = item.path ?? item.name ?? item
+      arr = await fetchGradioFile(base, filePath)
+    }
     const ctx = new AudioContext()
     try {
       result[stemKeys[i]] = await ctx.decodeAudioData(arr)

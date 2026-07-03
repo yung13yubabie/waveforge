@@ -988,6 +988,50 @@
         </div>
 
         <div>
+          <div class="settings-section-title">Spotify API（選填 — 結果增強）</div>
+          <div class="api-key-field">
+            <div class="api-key-input-wrap">
+              <input type="password" class="api-key-input" id="spotify-client-id"
+                     placeholder="貼上您的 Client ID" autocomplete="off">
+            </div>
+            <div class="api-key-input-wrap" style="margin-top:6px">
+              <input type="password" class="api-key-input" id="spotify-client-secret"
+                     placeholder="貼上您的 Client Secret" autocomplete="off">
+              <button class="api-key-save" id="spotify-key-save">儲存</button>
+            </div>
+            <div class="api-key-hint">
+              填入後，掃描結果會以 ISRC 精準比對 Spotify 曲庫，補上專輯封面、發行日與正確連結。憑證儲存於您的帳號（需登入）。
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <button class="tutorial-toggle" id="spotify-tutorial-toggle" aria-expanded="false"
+                  aria-controls="spotify-tutorial-body">
+            如何申請 Spotify API？
+            <span class="tutorial-toggle-arrow" aria-hidden="true">▼</span>
+          </button>
+          <div class="tutorial-body" id="spotify-tutorial-body">
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">1</div>
+              <div>前往 <a class="tutorial-link" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>，用您的 Spotify 帳號登入（免費帳號即可）</div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">2</div>
+              <div>點「Create app」→ 填 App name / description（任意）→ Redirect URI 填 <code>https://localhost</code>（本功能不使用）→ 勾選 Web API → 同意條款 → Save</div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">3</div>
+              <div>進入 app 頁面 → Settings → 複製 <strong>Client ID</strong>，點「View client secret」複製 <strong>Client Secret</strong></div>
+            </div>
+            <div class="tutorial-step">
+              <div class="tutorial-step-num">4</div>
+              <div>貼入上方欄位並儲存。Spotify Web API 免費，速率限制內可自由使用。</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
           <div class="settings-section-title">通知設定</div>
           <div class="notify-row">
             <div>

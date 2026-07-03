@@ -2092,6 +2092,14 @@
 .url-result-note { font-size: var(--text-xs); color: var(--c-text-3); line-height: 1.4; border-top: 1px solid var(--c-border); padding-top: var(--sp-2); }
 .url-result-error { font-size: var(--text-sm); color: var(--c-primary); padding: var(--sp-1) 0; }
 
+.result-album-art {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+}
+
 /* Left column: works library */
 .works-library {
   width: 320px;

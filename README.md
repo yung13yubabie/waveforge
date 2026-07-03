@@ -138,6 +138,8 @@ Vite 8 · vanilla JS ES2022 · Web Audio API（AudioWorklet）· WaveSurfer.js 7
 
 ## 後端設定指南
 
+> 📖 **完整申請流程（ACRCloud / Spotify / HF Space / GitHub Secrets 逐步教學）見 [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)**
+
 ### HF Spaces（AI 分軌）
 1. 部署一個 Demucs Gradio Space（需暴露 `api_name="separate"` 端點，輸入音檔、輸出 vocals/drums/bass/other 四軌）
 2. `.env` 填入 `VITE_HF_ENDPOINT=https://your-space.hf.space`
