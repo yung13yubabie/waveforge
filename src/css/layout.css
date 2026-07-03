@@ -225,7 +225,39 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  position: relative;
 }
+
+.auth-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: var(--c-bg-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-2);
+  z-index: 1000;
+}
+.auth-menu-email {
+  font-size: var(--text-xs);
+  color: var(--c-text-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: var(--sp-2);
+  word-break: break-all;
+}
+.auth-menu-logout {
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--text-sm);
+  color: var(--c-text-1);
+  border-radius: var(--r-sm);
+  transition: background var(--dur-fast);
+}
+.auth-menu-logout:hover { background: var(--c-primary-dim); color: var(--c-primary); }
 
 .auth-avatar {
   width: 28px;

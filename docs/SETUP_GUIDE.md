@@ -20,9 +20,25 @@
 3. 專案設定：
    - **Project Name**：任意（如 `waveforge-scan`）
    - **Audio Source**：選 **Line-in Audio**（我們上傳的是乾淨檔案，非麥克風收音）
+   - **Audio Engine（單選 radio，只能選一個）**：選第三個 **Audio Fingerprinting & Cover Song (Humming) Identification** — 同時涵蓋原版指紋 + 翻唱/升降Key/改BPM。（不要只選第一個 Audio Fingerprinting，那樣抓不到變調版本）
    - **Buckets**：勾選 **ACRCloud Music**（內建全球商業曲庫，比對用）
    - **3rd Party Integration**：建議勾選 **Spotify** 與 **ISRC**（回傳結果會帶 Spotify track id 與 ISRC 碼，供後續增強）
-   - **偵測能力邊界（重要）**：標準音訊指紋對「轉檔（MP3/WAV/FLAC）、改位元率、改音量/LUFS、改檔名」**天然免疫** — 內容相同就會匹配。但「升降 Key、改 BPM」的版本需要加勾 **Cover Song Identification** 引擎才能偵測（專案設定內的另一個 checkbox）
+
+### 偵測能力與規避手法（誠實的威脅模型）
+
+沒有任何版權偵測系統能擋下 100% 的規避。實際能力分三層：
+
+| 盜用者的手法 | 標準指紋 | 翻唱引擎 (Cover Song) | 說明 |
+|------------|:-------:|:--------------------:|------|
+| 改檔名 / 改 file type（MP3↔WAV↔FLAC）| ✅ | ✅ | 指紋看聲音內容，不看容器 |
+| 改位元率 / 重新編碼 / 改音量·LUFS | ✅ | ✅ | 感知雜湊對這些天然免疫 |
+| 輕微 EQ / 加淡入淡出 / 剪頭尾 | ✅ 多半可 | ✅ | 只要主體聲學特徵保留 |
+| 升降 Key（變調）/ 改 BPM（變速）| ❌ | ✅ | 這就是要選 Cover Song 引擎的原因 |
+| 大幅 EQ 破壞頻譜 / 疊白噪音 / 加重殘響 | ⚠️ 可能失效 | ⚠️ 可能失效 | 破壞得夠多會逃過偵測 |
+| 段落重排 / 倒放 / 拼貼 | ❌ | ⚠️ 部分 | 已非「同一份錄音」 |
+| AI 重製 / 神經風格轉換 / 對抗式擾動（"加強神經元"）| ❌ | ❌ | 生成出的是全新音訊，指紋比對無效 |
+
+**結論：** 指紋+翻唱引擎能擋住 90% 的「懶人盜用」（轉檔、改速、改調、改音量）。但決心規避者用 AI 重製或大幅頻譜破壞仍可能逃過 — 這是所有指紋系統（含 Content ID）的共同極限，不是 WaveForge 的缺陷。對這類情況，法律證據（你的原始工程檔、上傳時間戳）比自動偵測更有效。
 4. 建立後，專案頁面會顯示三個關鍵值：
    - `host`（如 `identify-eu-west-1.acrcloud.com`）
    - `access_key`

@@ -57,6 +57,8 @@ export function checkAuthOverlay() {
     if (avatarEl)   avatarEl.hidden = true
     if (loginBtn)   loginBtn.hidden = false
     if (settingsBtn) settingsBtn.textContent = '登入 / 註冊'
+    const menu = document.getElementById('auth-menu')
+    if (menu) menu.hidden = true   // close dropdown on logout
   }
 }
 
@@ -160,11 +162,23 @@ async function saveSettings() {
   if (newSecret && newSecret !== '••••••••••••') acrAccessSecret = newSecret
 
   if (supabase && currentUser) {
-    await supabase.from('user_settings').upsert({
+    // Surface the real DB error instead of always claiming success — a swallowed
+    // RLS/network failure would leave the key unsaved while the UI says ✓.
+    const { error } = await supabase.from('user_settings').upsert({
       user_id:           currentUser.id,
       acr_access_key:    acrAccessKey,
       acr_access_secret: acrAccessSecret || undefined,
     })
+    if (error) {
+      if (saveBtn) {
+        saveBtn.textContent = '儲存失敗'
+        setTimeout(() => { saveBtn.textContent = '儲存' }, 3000)
+      }
+      const statusEl = document.getElementById('scan-status-text')
+      if (statusEl) statusEl.textContent = `設定儲存失敗：${error.message}`
+      console.error('[user_settings upsert]', error)
+      return
+    }
   } else {
     // Guest mode → only the (non-sensitive) access key persists; the Secret
     // stays in memory for this session only. Persisting secrets in
@@ -173,7 +187,7 @@ async function saveSettings() {
   }
 
   if (saveBtn) {
-    saveBtn.textContent = '已儲存 ✓'
+    saveBtn.textContent = supabase && currentUser ? '已存至帳號 ✓' : '已儲存 ✓'
     saveBtn.classList.add('saved')
     setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
   }
@@ -191,13 +205,19 @@ async function saveSpotifySettings() {
   if (newSec && newSec !== '••••••••••••') spotifyClientSecret = newSec
 
   if (supabase && currentUser) {
-    await supabase.from('user_settings').upsert({
+    const { error } = await supabase.from('user_settings').upsert({
       user_id:               currentUser.id,
       spotify_client_id:     spotifyClientId || null,
       spotify_client_secret: spotifyClientSecret || null,
     })
     if (saveBtn) {
-      saveBtn.textContent = '已儲存 ✓'
+      if (error) {
+        saveBtn.textContent = '儲存失敗'
+        console.error('[spotify settings upsert]', error)
+        setTimeout(() => { saveBtn.textContent = '儲存' }, 3000)
+        return
+      }
+      saveBtn.textContent = '已存至帳號 ✓'
       saveBtn.classList.add('saved')
       setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
     }
@@ -833,8 +853,8 @@ export function initAntiTheft() {
     // Honest boundary: browsers cannot fetch platform audio (CORS/DRM), so a
     // URL alone can never be fingerprint-scanned client-side. State the real path.
     note.textContent = '已擷取元資料（僅標題/作者，非音訊）。瀏覽器無法直接抓取平台音訊，'
-      + '如需指紋比對：上傳你的原曲至「我的作品庫」並掃描 — ACRCloud 指紋對改檔名/轉檔/改音量/改位元率天然免疫；'
-      + '升降 Key 或改 BPM 的版本需在 ACRCloud 專案勾選 Cover Song Identification 引擎才能偵測。'
+      + '要真正比對請上傳你的原曲至「我的作品庫」並掃描。ACRCloud 指紋對改檔名/轉檔/改音量/改位元率免疫；'
+      + '升降 Key、改 BPM 需選 Cover Song 引擎才抓得到；AI 重製或大幅頻譜破壞則所有指紋系統都可能失效（詳見 SETUP_GUIDE 威脅模型）。'
     urlResult.appendChild(note)
   }
 
@@ -905,6 +925,29 @@ export function initAntiTheft() {
       signOut()
     } else {
       document.getElementById('auth-modal')?.classList.add('open')
+    }
+  })
+
+  // Avatar dropdown menu (top-right) — the primary, discoverable logout
+  const avatarBtn = document.getElementById('auth-avatar')
+  const avatarMenu = document.getElementById('auth-menu')
+  const menuEmail = document.getElementById('auth-menu-email')
+  const menuLogout = document.getElementById('auth-menu-logout')
+
+  function toggleAvatarMenu(show) {
+    if (!avatarMenu || !avatarBtn) return
+    const open = show ?? avatarMenu.hidden
+    avatarMenu.hidden = !open
+    avatarBtn.setAttribute('aria-expanded', String(open))
+    if (open && menuEmail) menuEmail.textContent = currentUser?.email ?? ''
+  }
+
+  avatarBtn?.addEventListener('click', (e) => { e.stopPropagation(); toggleAvatarMenu() })
+  menuLogout?.addEventListener('click', () => { toggleAvatarMenu(false); signOut() })
+  // Click outside closes the menu
+  document.addEventListener('click', (e) => {
+    if (avatarMenu && !avatarMenu.hidden && !avatarMenu.contains(e.target) && e.target !== avatarBtn) {
+      toggleAvatarMenu(false)
     }
   })
 

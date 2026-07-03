@@ -127,7 +127,11 @@
             aria-selected="false" aria-controls="mode-antitheft">防盜偵測</button>
     <div class="mode-nav-auth">
       <button class="auth-login-pill" id="auth-login-pill">登入 / 註冊</button>
-      <div class="auth-avatar" id="auth-avatar" hidden aria-label="帳號選單">?</div>
+      <button class="auth-avatar" id="auth-avatar" hidden aria-label="帳號選單" aria-haspopup="true" aria-expanded="false">?</button>
+      <div class="auth-menu" id="auth-menu" hidden role="menu">
+        <div class="auth-menu-email" id="auth-menu-email"></div>
+        <button class="auth-menu-logout" id="auth-menu-logout" role="menuitem">登出</button>
+      </div>
     </div>
   </nav>
 
@@ -971,7 +975,7 @@
             </div>
             <div class="tutorial-step">
               <div class="tutorial-step-num">2</div>
-              <div>Console → <strong>Audio &amp; Video Recognition</strong> → Create Project：Audio Source 選 <strong>Line-in Audio</strong>、Buckets 勾 <strong>ACRCloud Music</strong>、3rd Party Integration 勾 <strong>Spotify</strong> 與 <strong>ISRC</strong>（掃描結果才能連結 Spotify）。要偵測<strong>升降 Key / 改 BPM</strong> 的盜用版本，需加勾 <strong>Cover Song Identification</strong> 引擎（一般指紋只對轉檔/改音量/改位元率免疫）</div>
+              <div>Console → <strong>Audio &amp; Video Recognition</strong> → Create Project：Audio Source 選 <strong>Line-in Audio</strong>。Audio Engine 是<strong>單選</strong>，選第三個 <strong>Audio Fingerprinting &amp; Cover Song (Humming) Identification</strong>（同時涵蓋原版指紋 + 升降 Key/改 BPM 的翻唱版本）。Buckets 勾 <strong>ACRCloud Music</strong>、3rd Party 勾 <strong>Spotify</strong> 與 <strong>ISRC</strong></div>
             </div>
             <div class="tutorial-step">
               <div class="tutorial-step-num">3</div>
