@@ -158,9 +158,10 @@ async function saveSettings() {
       acr_access_secret: acrAccessSecret || undefined,
     })
   } else {
-    // Guest mode → localStorage
-    localStorage.setItem('acr-api-key',    acrAccessKey)
-    if (acrAccessSecret) localStorage.setItem('acr-api-secret', acrAccessSecret)
+    // Guest mode → only the (non-sensitive) access key persists; the Secret
+    // stays in memory for this session only. Persisting secrets in
+    // localStorage exposes them to any XSS — never store it.
+    localStorage.setItem('acr-api-key', acrAccessKey)
   }
 
   if (saveBtn) {
@@ -208,14 +209,10 @@ async function handleWorksUpload(file) {
     if (!error && data) work.id = data.id
   }
 
-  // Simulate fingerprint extraction (Phase 3: real ACRCloud fingerprint endpoint)
-  setTimeout(() => {
-    work.fingerprint = true
-    if (supabase && currentUser) {
-      supabase.from('works').update({ fingerprint_ok: true }).eq('id', work.id)
-    }
-    renderWorksList()
-  }, 1500)
+  // NOTE: real fingerprint extraction is not implemented yet.
+  // fingerprint stays false and the UI says「已建立作品記錄」— never claim
+  // a fingerprint exists when none was extracted. When ACRCloud custom
+  // fingerprint upload lands, set fingerprint_ok=true only on API success.
 }
 
 // ── Scan a work ───────────────────────────────────────────
@@ -257,12 +254,12 @@ async function scanWork(work) {
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
       results = json.results ?? []
     } else {
-      // ── Demo mode: show stub results ──────────────────
+      // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
       const modeNote = SUPABASE_READY ? '（需登入帳號）' : '（需設定 Supabase）'
       results = [
-        { similarity: 94, title: `待 ACRCloud 回傳 ${modeNote}`, artist: '—', platform: 'ACRCloud', url: '#' },
-        { similarity: 81, title: '請完成後端設定後重試', artist: '—', platform: 'ACRCloud', url: '#' },
+        { similarity: 94, title: `[示範資料] 非真實掃描結果 ${modeNote}`, artist: '—', platform: 'Demo', url: '#' },
+        { similarity: 81, title: '[示範資料] 完成後端設定後才會執行真實 ACRCloud 比對', artist: '—', platform: 'Demo', url: '#' },
       ]
     }
 
@@ -400,7 +397,7 @@ function renderWorksList() {
     listEl.innerHTML = `
       <div class="works-empty">
         <div class="works-empty-icon">♪</div>
-        <div class="works-empty-text">點擊「+ 新增」上傳您的原創作品，WaveForge 會萃取音訊指紋存入資料庫。</div>
+        <div class="works-empty-text">點擊「+ 新增」上傳您的原創作品，建立作品記錄後即可執行 ACRCloud 比對掃描（需設定後端）。</div>
       </div>`
     return
   }
@@ -423,7 +420,9 @@ function renderWorksList() {
     const dot = document.createElement('div')
     dot.className = `fp-dot${w.fingerprint ? ' ok' : ''}`
     const fpLabel = document.createElement('span')
-    fpLabel.textContent = w.fingerprint ? '指紋已建立' : '建立中...'
+    // Honest status: fingerprint=true only after a REAL extraction succeeds
+    // (not yet implemented) — until then the record exists but no fingerprint.
+    fpLabel.textContent = w.fingerprint ? '指紋已建立' : '已建立作品記錄'
     fpDot.append(dot, fpLabel)
     const scanTime = document.createElement('span')
     scanTime.textContent = w.lastScan
@@ -707,12 +706,12 @@ export function initAntiTheft() {
   initTutorial()
   initAuthModal()
 
-  // Restore guest-mode ACR key from localStorage
+  // Restore guest-mode ACR key from localStorage (Secret is never persisted)
   if (!SUPABASE_READY) {
-    const storedKey    = localStorage.getItem('acr-api-key')
-    const storedSecret = localStorage.getItem('acr-api-secret')
-    if (storedKey)    { acrAccessKey = storedKey; const el = document.getElementById('acr-api-key'); if (el) el.value = storedKey }
-    if (storedSecret) acrAccessSecret = storedSecret
+    // Purge any Secret persisted by older builds — must not live in localStorage
+    localStorage.removeItem('acr-api-secret')
+    const storedKey = localStorage.getItem('acr-api-key')
+    if (storedKey) { acrAccessKey = storedKey; const el = document.getElementById('acr-api-key'); if (el) el.value = storedKey }
   }
 
   // ── URL detection ─────────────────────────────────────────

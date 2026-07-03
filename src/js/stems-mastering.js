@@ -61,34 +61,70 @@ async function decodeBase64Audio(dataURL) {
 
 /** Fetch a Gradio file URL and return as ArrayBuffer */
 async function fetchGradioFile(baseUrl, filePath) {
-  const res = await fetch(`${baseUrl}/file=${encodeURIComponent(filePath)}`)
-  if (!res.ok) throw new Error(`HF file fetch failed: ${res.status}`)
+  const res = await fetchWithTimeout(`${baseUrl}/file=${encodeURIComponent(filePath)}`,
+    {}, HF_UPLOAD_TIMEOUT_MS, '分軌檔下載')
+  if (!res.ok) throw new Error(`分軌檔下載失敗（HTTP ${res.status}）`)
   return res.arrayBuffer()
+}
+
+// HF Spaces limits — reject before uploading to avoid wasted minutes
+const HF_MAX_FILE_BYTES = 50 * 1024 * 1024   // 50 MB
+const HF_UPLOAD_TIMEOUT_MS  = 60_000          // 1 min for the upload leg
+const HF_PREDICT_TIMEOUT_MS = 600_000         // 10 min for Demucs inference
+
+function fetchWithTimeout(url, options, timeoutMs, label) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  return fetch(url, { ...options, signal: ctrl.signal })
+    .catch(err => {
+      if (err.name === 'AbortError') throw new Error(`${label} 逾時（${Math.round(timeoutMs / 1000)} 秒），請稍後重試`)
+      throw err
+    })
+    .finally(() => clearTimeout(t))
 }
 
 /** Call HF Spaces Gradio API — upload file then predict */
 async function callHFDemucs(file) {
   const base = HF_ENDPOINT.replace(/\/$/, '')
 
+  if (file.size > HF_MAX_FILE_BYTES) {
+    throw new Error(`檔案 ${(file.size / 1024 / 1024).toFixed(1)}MB 超過分軌上限 50MB，請先裁剪或壓縮`)
+  }
+
   // Step 1: Upload file
   const uploadForm = new FormData()
   uploadForm.append('files', file, file.name)
-  const uploadRes = await fetch(`${base}/upload`, {
+  const uploadRes = await fetchWithTimeout(`${base}/upload`, {
     method: 'POST',
     body: uploadForm,
-  })
-  if (!uploadRes.ok) throw new Error(`HF upload failed: ${uploadRes.status}`)
+  }, HF_UPLOAD_TIMEOUT_MS, 'HF 上傳')
+  if (!uploadRes.ok) throw new Error(`HF 上傳失敗（HTTP ${uploadRes.status}）— 請確認 Space 是否在執行中`)
   const uploaded = await uploadRes.json()
   const tmpPath = Array.isArray(uploaded) ? uploaded[0] : uploaded
 
-  // Step 2: Predict (fn_index 0 = separate_stems)
-  const predictRes = await fetch(`${base}/api/predict`, {
+  // Step 2: Predict — prefer the stable named endpoint (api_name="separate");
+  // fall back to fn_index 0 only for Spaces that don't expose the named route.
+  const payload = { data: [{ path: tmpPath }] }
+  let predictRes = await fetchWithTimeout(`${base}/run/separate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: [{ path: tmpPath }], fn_index: 0 }),
-  })
-  if (!predictRes.ok) throw new Error(`HF predict failed: ${predictRes.status}`)
+    body: JSON.stringify(payload),
+  }, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
+
+  if (predictRes.status === 404) {
+    predictRes = await fetchWithTimeout(`${base}/api/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, fn_index: 0 }),
+    }, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
+  }
+  if (!predictRes.ok) throw new Error(`Demucs 分軌失敗（HTTP ${predictRes.status}）— Space 可能休眠或負載過高，請稍後重試`)
   const { data } = await predictRes.json()
+
+  // A response with no stem data = failure; never fabricate stems
+  if (!Array.isArray(data) || data.every(d => !d)) {
+    throw new Error('HF Space 未回傳任何分軌資料，請確認 Space 的 separate API 輸出格式')
+  }
 
   // Step 3: Download each stem as AudioBuffer
   const stemKeys = ['vocals', 'drums', 'bass', 'other']

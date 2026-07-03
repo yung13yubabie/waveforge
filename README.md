@@ -1,10 +1,28 @@
 # WaveForge
 
-瀏覽器端母帶處理 DAW。純前端 Web Audio API，無需後端即可運作。
+瀏覽器端母帶處理 DAW。核心母帶功能純前端 Web Audio API，無需後端即可運作；分軌與防盜偵測需要外部後端（見功能矩陣）。
 
-> 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 24-bit WAV。
+> 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 WAV / MP3。
 
 **Live demo：** [yung13yubabie.github.io/waveforge](https://yung13yubabie.github.io/waveforge/)
+
+---
+
+## 功能矩陣（誠實狀態表）
+
+| 功能 | 前端狀態 | 後端需求 | 未設定後端時的行為 |
+|------|---------|---------|------------------|
+| **核心母帶處理**（EQ/壓縮/限制器/量測/輸出） | ✅ 完整可用 | 無 | 完整可用 |
+| **批量上傳 + 專輯序列** | ✅ 完整可用 | 無 | 完整可用 |
+| **WAV / MP3 輸出**（44.1/48/96kHz） | ✅ 完整可用 | 無 | 完整可用（MP3 上限 48kHz） |
+| **AI 分軌（Demucs 4 軌）** | ✅ 前端完成 | `VITE_HF_ENDPOINT`（HF Spaces + Gradio `separate` API） | **示範模式**：5 秒模擬 + 明確標示，不會真實分軌；Bounce 被阻擋 |
+| **防盜偵測（ACRCloud 掃描）** | ✅ 前端完成 | Supabase（Auth+DB+Edge Function）+ ACRCloud 帳號 | **訪客模式**：掃描回傳明確標示的 Demo 資料 |
+| **帳號登入 / Google OAuth** | ✅ 前端完成 | Supabase + Google Cloud OAuth 設定 | 登入按鈕標示不可用，modal 顯示設定指引 |
+| **作品音訊指紋** | ⚠️ **未實作** | ACRCloud custom fingerprint API | 顯示「已建立作品記錄」（誠實文案，不宣稱指紋存在） |
+| **曲風偵測** | ❌ **未實作** | ML 後端 | 顯示「—」（需後端 AI 分析） |
+| **URL 版權查詢**（oEmbed 元資料） | ✅ 完整可用 | 無 | 完整可用（SUNO 無公開 API，明示不支援） |
+
+後端設定範例見 [`.env.example`](.env.example)；Supabase schema 見 [`supabase/migrations/`](supabase/migrations/)。
 
 ---
 
@@ -21,6 +39,8 @@ npm run dev        # http://localhost:5173/
 | `npm run build` | Production build → `dist/` |
 | `npm run preview` | 預覽 production build |
 | `npm test` | 單元測試（Vitest，324 tests） |
+| `npm run verify` | 完整驗證（test + build） |
+| `npm run test:e2e` | Playwright smoke test（需 `npx playwright install chromium`） |
 | `npm run test:coverage` | 覆蓋率報告 |
 
 ---
@@ -58,10 +78,11 @@ npm run dev        # http://localhost:5173/
 
 | 項目 | 真實狀況 |
 |------|---------|
-| **曲風偵測** | 顯示「AI 後端」= **尚未實作**，需要 ML 後端服務。 |
-| **音軌分離（Stems）** | 標示「第二期」= **尚未實作**，需 GPU 後端（Demucs）。 |
-| **Peak Limiter** | 使用 `DynamicsCompressor`（ratio=20），控數位峰值；**不保證** inter-sample peak 不超 ceiling。True Peak **量測**是 4× oversampling，**限制**不是。 |
+| **曲風偵測** | **尚未實作**，需要 ML 後端服務。UI 顯示「—」。 |
+| **作品音訊指紋** | **尚未實作** ACRCloud custom fingerprint 上傳。上傳作品只建立記錄，UI 誠實顯示「已建立作品記錄」。 |
+| **即時 Peak Limiter** | 使用 `DynamicsCompressor`（ratio=20），控數位峰值；**不保證** inter-sample peak 不超 ceiling。輸出時可勾選「真 True-Peak 限幅」（4× oversampled 離線限制器）保證檔案 ISP ≤ ceiling。 |
 | **BPM / Key 分析** | 只分析前 45 秒（BPM）/ 30 秒（Key）。長前奏曲目結果可能不代表全曲。 |
+| **來源位元率偵測** | 以「檔案大小 ÷ 時長」估算，VBR 檔案顯示的是平均位元率。 |
 
 已**正確實作並驗證**：LUFS（BS.1770-4 兩段式 gating）、True Peak（4× oversampling）、24-bit WAV 編碼、即時/離線處理鏈鏡像。
 
@@ -115,8 +136,26 @@ Vite 8 · vanilla JS ES2022 · Web Audio API（AudioWorklet）· WaveSurfer.js 7
 
 ---
 
-## Phase 2 規劃
+## 後端設定指南
 
-- Demucs 音軌分離（需 GPU 後端：Modal / Replicate）
-- 曲風 / BPM AI 分析（需 ML 後端）
-- 真正的存取控制（Supabase Auth 或 Cloudflare Access）
+### HF Spaces（AI 分軌）
+1. 部署一個 Demucs Gradio Space（需暴露 `api_name="separate"` 端點，輸入音檔、輸出 vocals/drums/bass/other 四軌）
+2. `.env` 填入 `VITE_HF_ENDPOINT=https://your-space.hf.space`
+3. 限制：單檔 ≤ 50MB，推論 timeout 10 分鐘
+
+### Supabase（帳號 + 防盜偵測）
+1. 建立 Supabase 專案，依序執行 `supabase/migrations/001_init.sql`、`002_harden_schema.sql`
+2. 部署 Edge Function：`supabase functions deploy acr-scan`
+3. Google 登入：Supabase Dashboard → Authentication → Providers → Google，填入 Google Cloud OAuth Client ID/Secret
+4. Email 通知（可選）：Edge Function Secrets 設定 `RESEND_API_KEY`
+5. `.env` 填入 `VITE_SUPABASE_URL` 與 `VITE_SUPABASE_ANON_KEY`（anon key 是公開的，**絕不要**把 service role key 放進前端）
+
+### 安全原則
+- ACRCloud Secret 只存在 Supabase `user_settings`（RLS 保護）；訪客模式只在記憶體，不寫入 localStorage
+- 所有資料表有 RLS：使用者只能讀寫自己的資料
+- Edge Function 驗證 JWT + work 所有權後才寫入掃描結果
+
+## 未來規劃
+
+- ACRCloud custom fingerprint 上傳（真實作品指紋）
+- 曲風 AI 分析（需 ML 後端）

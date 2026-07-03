@@ -30,6 +30,17 @@ function jsonResp(body: unknown, status = 200) {
   })
 }
 
+// Escape untrusted text before splicing into email HTML — ACRCloud metadata
+// (titles, artist names) is external data and could contain HTML injection.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // HMAC-SHA1 for ACRCloud signature
 async function hmacSha1Base64(secret: string, message: string): Promise<string> {
   const enc = new TextEncoder()
@@ -85,6 +96,22 @@ serve(async (req: Request) => {
     const { work_id, audio_base64 } = await req.json()
     if (!audio_base64) return jsonResp({ error: '缺少 audio_base64 參數' }, 400)
 
+    // ── Verify work ownership BEFORE doing anything with it ──
+    // The service-role client bypasses RLS, so ownership must be checked
+    // explicitly — otherwise any authenticated user could attach scan
+    // results to (and read the name of) another user's work.
+    let ownedWork: { id: string; name: string } | null = null
+    if (work_id) {
+      const { data: w, error: wErr } = await supabase
+        .from('works')
+        .select('id, name')
+        .eq('id', work_id)
+        .eq('user_id', user.id)
+        .single()
+      if (wErr || !w) return jsonResp({ error: '找不到此作品，或您沒有存取權限' }, 403)
+      ownedWork = w
+    }
+
     // ── Get ACRCloud credentials ──────────────────────────
     const { data: settings, error: settingsErr } = await supabase
       .from('user_settings')
@@ -126,7 +153,21 @@ serve(async (req: Request) => {
       method: 'POST',
       body: formData,
     })
+    if (!acrRes.ok) {
+      return jsonResp({ error: `ACRCloud 回應錯誤（HTTP ${acrRes.status}）` }, 502)
+    }
     const acrData = await acrRes.json()
+
+    // Surface ACRCloud API-level errors instead of silently returning [] —
+    // code 0 = hit, 1001 = no result (both are valid outcomes); anything
+    // else (3001 invalid key, 3003 quota exceeded...) is a real failure.
+    const acrCode = acrData.status?.code
+    if (acrCode !== 0 && acrCode !== 1001) {
+      return jsonResp({
+        error: `ACRCloud 錯誤（code ${acrCode}）：${acrData.status?.msg ?? '未知錯誤'}`,
+        acrStatus: acrData.status,
+      }, 502)
+    }
 
     // ── Parse results ─────────────────────────────────────
     type ScanResult = {
@@ -163,34 +204,35 @@ serve(async (req: Request) => {
     }
 
     // ── Store results ─────────────────────────────────────
-    if (work_id) {
-      await supabase.from('scan_results').insert({
-        work_id,
+    if (ownedWork) {
+      const { error: insertErr } = await supabase.from('scan_results').insert({
+        work_id: ownedWork.id,
+        user_id: user.id,
         results,
         match_count: results.length,
         acr_raw: acrData,
       })
+      if (insertErr) console.error('[acr-scan] scan_results insert failed:', insertErr.message)
       await supabase.from('works').update({
         last_scan: new Date().toISOString(),
-      }).eq('id', work_id).eq('user_id', user.id)
+      }).eq('id', ownedWork.id).eq('user_id', user.id)
     }
 
     // ── Email notification ────────────────────────────────
     if (results.length > 0 && emailNotify && user.email) {
-      let workName = work_id ?? '您的作品'
-      if (work_id) {
-        const { data: w } = await supabase
-          .from('works').select('name').eq('id', work_id).single()
-        if (w?.name) workName = w.name
-      }
+      const workName = escapeHtml(ownedWork?.name ?? '您的作品')
 
-      const matchList = results.slice(0, 5).map(r =>
-        `<li>「${r.title}」by ${r.artist} — 相似度 ${r.similarity}% · <a href="${r.url}">${r.platform}</a></li>`
-      ).join('')
+      // All ACRCloud-derived text is untrusted — escape everything.
+      // URLs are only ever built from Spotify/YouTube IDs; still escape
+      // the attribute and drop anything that isn't https.
+      const matchList = results.slice(0, 5).map(r => {
+        const safeUrl = r.url.startsWith('https://') ? escapeHtml(r.url) : '#'
+        return `<li>「${escapeHtml(r.title)}」by ${escapeHtml(r.artist)} — 相似度 ${r.similarity}% · <a href="${safeUrl}">${escapeHtml(r.platform)}</a></li>`
+      }).join('')
 
       await sendEmail(
         user.email,
-        `WaveForge 防盜偵測：「${workName}」發現 ${results.length} 筆相似曲`,
+        `WaveForge 防盜偵測：「${ownedWork?.name ?? '您的作品'}」發現 ${results.length} 筆相似曲`,
         `<h2>WaveForge 防盜偵測通知</h2>
          <p>您的作品「<strong>${workName}</strong>」偵測到 <strong>${results.length}</strong> 筆相似曲：</p>
          <ul>${matchList}</ul>
