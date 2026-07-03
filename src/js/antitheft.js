@@ -268,15 +268,25 @@ async function scanWork(work) {
     return
   }
 
+  // Live mode with a DB-restored work: the audio only exists in the browser
+  // session that uploaded it. Refuse clearly instead of falling into demo —
+  // silently showing demo data on a real account is dishonest.
+  if (SUPABASE_READY && currentUser && !work.file) {
+    if (statusEl) statusEl.textContent = '此作品的音訊檔不在本分頁（重新整理後遺失）— 請重新上傳同一檔案再掃描'
+    return
+  }
+
   radarScanning = true
   if (statusEl) statusEl.textContent = '掃描中...'
   if (scanBtn)  { scanBtn.classList.add('scanning'); scanBtn.textContent = '掃描中...' }
 
   try {
     let results
+    let provenance   // 掃描證據：真實掃描顯示 ACR 回應碼 + 耗時；demo 明確標示
 
     if (SUPABASE_READY && currentUser && work.file) {
       // ── Live mode: call Supabase Edge Function ────────
+      const t0 = performance.now()
       const sample = await extractAudioSample(work.file, 30)
       const session = (await supabase.auth.getSession()).data.session
       const res = await fetch(ACR_EDGE_FN, {
@@ -293,6 +303,12 @@ async function scanWork(work) {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
       results = json.results ?? []
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
+      const code = json.acrStatus?.code
+      // code 0 = 有匹配；1001 = 已掃描、無匹配（都是真實掃描的證明）
+      provenance = code === 1001
+        ? `真實 ACRCloud 掃描完成（${elapsed}s）· 無匹配（code 1001）`
+        : `真實 ACRCloud 掃描完成（${elapsed}s）· code ${code ?? '?'}`
     } else {
       // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
@@ -301,11 +317,12 @@ async function scanWork(work) {
         { similarity: 94, title: `[示範資料] 非真實掃描結果 ${modeNote}`, artist: '—', platform: 'Demo', url: '#' },
         { similarity: 81, title: '[示範資料] 完成後端設定後才會執行真實 ACRCloud 比對', artist: '—', platform: 'Demo', url: '#' },
       ]
+      provenance = '⚠ 示範資料 — 非真實掃描'
     }
 
     radarScanning = false
     const now = new Date()
-    if (statusEl) statusEl.textContent = `完成 · ${now.toLocaleDateString('zh-TW')}`
+    if (statusEl) statusEl.textContent = `${provenance} · ${now.toLocaleDateString('zh-TW')}`
     if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重新掃描' }
 
     work.results  = results
@@ -813,7 +830,11 @@ export function initAntiTheft() {
 
     const note = document.createElement('div')
     note.className = 'url-result-note'
-    note.textContent = '已擷取元資料。如需音訊指紋比對，請上傳該曲目的音訊檔至「我的作品庫」。'
+    // Honest boundary: browsers cannot fetch platform audio (CORS/DRM), so a
+    // URL alone can never be fingerprint-scanned client-side. State the real path.
+    note.textContent = '已擷取元資料（僅標題/作者，非音訊）。瀏覽器無法直接抓取平台音訊，'
+      + '如需指紋比對：上傳你的原曲至「我的作品庫」並掃描 — ACRCloud 指紋對改檔名/轉檔/改音量/改位元率天然免疫；'
+      + '升降 Key 或改 BPM 的版本需在 ACRCloud 專案勾選 Cover Song Identification 引擎才能偵測。'
     urlResult.appendChild(note)
   }
 

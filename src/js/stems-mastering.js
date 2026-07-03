@@ -91,22 +91,34 @@ async function callHFDemucs(file) {
     throw new Error(`檔案 ${(file.size / 1024 / 1024).toFixed(1)}MB 超過分軌上限 50MB，請先裁剪或壓縮`)
   }
 
-  // Step 1: Upload file
+  // Gradio 5+ moved every API route under /gradio_api/ (verified live:
+  // /upload → 404, /gradio_api/upload → 200 on gradio 6.19). Probe the
+  // prefixed route first, keep the bare route as a Gradio 4 fallback.
   const uploadForm = new FormData()
   uploadForm.append('files', file, file.name)
-  const uploadRes = await fetchWithTimeout(`${base}/upload`, {
+  let apiRoot = `${base}/gradio_api`
+  let uploadRes = await fetchWithTimeout(`${apiRoot}/upload`, {
     method: 'POST',
     body: uploadForm,
   }, HF_UPLOAD_TIMEOUT_MS, 'HF 上傳')
+  if (uploadRes.status === 404) {
+    apiRoot = base   // Gradio 4: no prefix
+    const retryForm = new FormData()
+    retryForm.append('files', file, file.name)
+    uploadRes = await fetchWithTimeout(`${apiRoot}/upload`, {
+      method: 'POST',
+      body: retryForm,
+    }, HF_UPLOAD_TIMEOUT_MS, 'HF 上傳')
+  }
   if (!uploadRes.ok) throw new Error(`HF 上傳失敗（HTTP ${uploadRes.status}）— 請確認 Space 是否在執行中`)
   const uploaded = await uploadRes.json()
   const tmpPath = Array.isArray(uploaded) ? uploaded[0] : uploaded
 
-  // Step 2: Predict via the Gradio 4 protocol — POST /call/separate returns
-  // an event_id, then GET /call/separate/{event_id} streams the result as SSE.
+  // Step 2: POST /call/separate returns an event_id, then
+  // GET /call/separate/{event_id} streams the result as SSE.
   // (api_name="separate" is declared in hf-space/app.py; never rely on fn_index.)
   const payload = { data: [{ path: tmpPath, meta: { _type: 'gradio.FileData' } }] }
-  const submitRes = await fetchWithTimeout(`${base}/call/separate`, {
+  const submitRes = await fetchWithTimeout(`${apiRoot}/call/separate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -116,7 +128,7 @@ async function callHFDemucs(file) {
   if (!eventId) throw new Error('HF Space 未回傳 event_id，請確認 Gradio 版本 ≥ 4')
 
   // SSE stream: lines of "event: <type>" / "data: <json>"; wait for complete.
-  const sseRes = await fetchWithTimeout(`${base}/call/separate/${eventId}`,
+  const sseRes = await fetchWithTimeout(`${apiRoot}/call/separate/${eventId}`,
     {}, HF_PREDICT_TIMEOUT_MS, 'Demucs 分軌')
   if (!sseRes.ok) throw new Error(`Demucs 結果讀取失敗（HTTP ${sseRes.status}）`)
 
@@ -168,7 +180,7 @@ async function callHFDemucs(file) {
       arr = await res.arrayBuffer()
     } else {
       const filePath = item.path ?? item.name ?? item
-      arr = await fetchGradioFile(base, filePath)
+      arr = await fetchGradioFile(apiRoot, filePath)
     }
     const ctx = new AudioContext()
     try {

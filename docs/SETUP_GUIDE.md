@@ -22,6 +22,7 @@
    - **Audio Source**：選 **Line-in Audio**（我們上傳的是乾淨檔案，非麥克風收音）
    - **Buckets**：勾選 **ACRCloud Music**（內建全球商業曲庫，比對用）
    - **3rd Party Integration**：建議勾選 **Spotify** 與 **ISRC**（回傳結果會帶 Spotify track id 與 ISRC 碼，供後續增強）
+   - **偵測能力邊界（重要）**：標準音訊指紋對「轉檔（MP3/WAV/FLAC）、改位元率、改音量/LUFS、改檔名」**天然免疫** — 內容相同就會匹配。但「升降 Key、改 BPM」的版本需要加勾 **Cover Song Identification** 引擎才能偵測（專案設定內的另一個 checkbox）
 4. 建立後，專案頁面會顯示三個關鍵值：
    - `host`（如 `identify-eu-west-1.acrcloud.com`）
    - `access_key`
