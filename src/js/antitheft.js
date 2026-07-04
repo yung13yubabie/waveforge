@@ -949,7 +949,7 @@ export function initAntiTheft() {
     // URL alone can never be fingerprint-scanned client-side. State the real path.
     note.textContent = '已擷取元資料（僅標題/作者，非音訊）。瀏覽器無法直接抓取平台音訊，'
       + '要真正比對請上傳你的原曲至「我的作品庫」並掃描。ACRCloud 指紋對改檔名/轉檔/改音量/改位元率免疫；'
-      + '升降 Key、改 BPM 需選 Cover Song 引擎才抓得到；AI 重製或大幅頻譜破壞則所有指紋系統都可能失效（詳見 SETUP_GUIDE 威脅模型）。'
+      + '升降 Key、改 BPM 需選 Cover Song 引擎才抓得到；AI 重製或大幅頻譜破壞則所有指紋系統都可能失效。'
     urlResult.appendChild(note)
   }
 
@@ -1051,9 +1051,16 @@ export function initAntiTheft() {
     document.getElementById('auth-modal')?.classList.add('open')
   })
 
-  // Supabase auth state listener
+  // Supabase auth state listener.
+  // CRITICAL: never `await` (or even call synchronously) other Supabase
+  // methods inside this callback — it runs while auth-js holds its lock, and a
+  // reentrant call that needs the same lock DEADLOCKS. After that every later
+  // call (key save, scan getSession) hangs until timeout. Defer the DB loads
+  // out of the callback with setTimeout(0) so the lock is released first.
+  // (onAuthStateChange also emits INITIAL_SESSION on subscribe, so this covers
+  // page-load session restore — no separate getSession() needed.)
   if (supabase) {
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       currentUser = session?.user
         ? { id: session.user.id, email: session.user.email }
         : null
@@ -1061,18 +1068,11 @@ export function initAntiTheft() {
       checkAuthOverlay()
 
       if (currentUser) {
-        await loadUserSettings(currentUser.id)
-        await loadWorksFromDB()
-      }
-    })
-
-    // Restore session on page load
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        currentUser = { id: session.user.id, email: session.user.email }
-        checkAuthOverlay()
-        loadUserSettings(currentUser.id)
-        loadWorksFromDB()
+        const uid = currentUser.id
+        setTimeout(() => {
+          loadUserSettings(uid)
+          loadWorksFromDB()
+        }, 0)
       }
     })
   }

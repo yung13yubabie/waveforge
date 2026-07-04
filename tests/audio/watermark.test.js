@@ -1,12 +1,26 @@
 import { describe, it, expect } from 'vitest'
 import { embedWatermark, detectWatermark } from '../../src/js/audio/watermark.js'
 
-// Synthetic test signal: a few seconds of tone + noise (music-like, uncorrelated with PN)
-function makeSignal(seconds = 4, sr = 44100) {
+// Deterministic PRNG so the test is reproducible (Math.random made it flaky:
+// random noise occasionally correlated with the PN and spiked confidence).
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return function () {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Synthetic test signal: several seconds of tone + noise (music-like,
+// uncorrelated with PN). 8s → enough frames for a stable baseline distribution.
+function makeSignal(seconds = 8, sr = 44100, seed = 12345) {
+  const rng = mulberry32(seed)
   const n = seconds * sr
   const ch = new Float32Array(n)
   for (let i = 0; i < n; i++) {
-    ch[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / sr) + 0.2 * (Math.random() * 2 - 1)
+    ch[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / sr) + 0.2 * (rng() * 2 - 1)
   }
   return ch
 }
@@ -48,7 +62,9 @@ describe('audio watermark', () => {
   })
 
   it('does not mutate the original channels', () => {
-    const original = [makeSignal()]
+    // Short signal — a full toEqual on a multi-hundred-k Float32Array is slow
+    // enough to trip the test timeout under parallel load; 1s is plenty here.
+    const original = [makeSignal(1)]
     const snapshot = Float32Array.from(original[0])
     embedWatermark(original, 44100, 'LIN-2026-001')
     expect(original[0]).toEqual(snapshot)
