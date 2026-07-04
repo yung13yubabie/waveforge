@@ -659,6 +659,16 @@ function renderResults(work) {
 
     metaEl.append(artistEl, platformEl)
 
+    // Match type: 指紋 (exact recording) vs 翻唱 (cover/humming — same tune,
+    // different performance/pitch/tempo). Cover matches are fuzzier, so the
+    // label tells the user why similarity may be lower.
+    if (r.source) {
+      const srcEl = document.createElement('span')
+      srcEl.className = `result-source ${r.source === '翻唱' ? 'cover' : 'exact'}`
+      srcEl.textContent = r.source
+      metaEl.appendChild(srcEl)
+    }
+
     // Spotify enrichment fields (present only when user configured Spotify API)
     if (r.releaseDate) {
       const dateEl = document.createElement('span')

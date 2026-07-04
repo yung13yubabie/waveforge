@@ -2505,6 +2505,10 @@
 .result-link-chip:hover { border-color: var(--c-blue); color: var(--c-blue); }
 .result-no-link { font-size: 11px; color: var(--c-text-3); }
 
+.result-source { font-size: 10px; padding: 1px 6px; border-radius: var(--r-full); margin-left: 4px; }
+.result-source.exact { background: rgba(78, 205, 196, 0.15); color: var(--c-green, #4ECDC4); }
+.result-source.cover { background: rgba(255, 170, 0, 0.15); color: #ffaa00; }
+
 /* Scan empty state */
 .scan-empty {
   flex: 1;

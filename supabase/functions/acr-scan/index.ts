@@ -189,6 +189,7 @@ serve(async (req: Request) => {
       artist: string
       album?: string
       platform: string
+      source: string     // '指紋' (exact) | '翻唱' (cover/humming)
       acrid?: string
       isrc?: string
       url: string
@@ -199,9 +200,11 @@ serve(async (req: Request) => {
     const results: ScanResult[] = []
 
     // Build every available platform link from ACRCloud external_metadata.
-    function collectPlatforms(em: Record<string, unknown> | undefined): PlatformLink[] {
+    // (For humming/cover matches external_metadata is often an empty array.)
+    function collectPlatforms(em: unknown): PlatformLink[] {
       const links: PlatformLink[] = []
-      const meta = (em ?? {}) as Record<string, any>
+      if (!em || Array.isArray(em)) return links
+      const meta = em as Record<string, any>
       const spId = meta.spotify?.track?.id
       if (spId) links.push({ name: 'Spotify', url: `https://open.spotify.com/track/${spId}` })
       const ytId = meta.youtube?.vid
@@ -213,21 +216,36 @@ serve(async (req: Request) => {
       return links
     }
 
-    if (acrData.status?.code === 0 && acrData.metadata?.music) {
-      for (const match of acrData.metadata.music) {
+    // Parse a match list. `music` scores are 0–100; `humming` (cover) scores
+    // are 0–1 — normalize both to a 0–100 percentage.
+    function parseMatches(list: any[] | undefined, source: string): ScanResult[] {
+      const out: ScanResult[] = []
+      for (const match of list ?? []) {
         const platforms = collectPlatforms(match.external_metadata)
-        results.push({
-          similarity: Math.round(match.score ?? 0),
-          title:      match.title ?? '(未知)',
-          artist:     match.artists?.[0]?.name ?? '—',
-          album:      match.album?.name,
-          platform:   platforms[0]?.name ?? 'ACRCloud',
-          acrid:      match.acrid,
-          isrc:       match.external_ids?.isrc,
-          url:        platforms[0]?.url ?? '#',
+        const raw = Number(match.score ?? 0)
+        const similarity = raw <= 1 ? Math.round(raw * 100) : Math.round(raw)
+        out.push({
+          similarity,
+          title:    match.title ?? '(未知)',
+          artist:   match.artists?.[0]?.name ?? '—',
+          album:    match.album?.name,
+          platform: platforms[0]?.name ?? 'ACRCloud',
+          source,
+          acrid:    match.acrid,
+          isrc:     match.external_ids?.isrc,
+          url:      platforms[0]?.url ?? '#',
           platforms,
         })
       }
+      return out
+    }
+
+    // ACRCloud puts fingerprint hits in metadata.music and cover/humming hits
+    // in metadata.humming. Read BOTH — ignoring humming was why code 0 (match)
+    // still showed 0 results.
+    if (acrData.status?.code === 0) {
+      results.push(...parseMatches(acrData.metadata?.music, '指紋'))
+      results.push(...parseMatches(acrData.metadata?.humming, '翻唱'))
     }
 
     // ── Spotify enrichment（可選：需在設定填入 Spotify Client ID/Secret）──
