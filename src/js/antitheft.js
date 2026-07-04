@@ -370,6 +370,108 @@ function setProvenance(text, state) {
 // well under its size limit (code 3016 = file too large).
 const SCAN_SAMPLE_SEC = 15
 
+// POST one audio sample to the ACRCloud Edge Function. Returns the parsed
+// JSON ({ results, acrStatus }) or throws with a readable message.
+async function postAcrScan(workId, sampleDataUrl) {
+  const session = (await supabase.auth.getSession()).data.session
+  const res = await fetch(ACR_EDGE_FN, {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${session?.access_token}`,
+    },
+    body: JSON.stringify({ work_id: workId, audio_base64: sampleDataUrl }),
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
+  return json
+}
+
+// Merge scan results across segments, de-duplicating by acrid (fallback title).
+function dedupeResults(existing, incoming) {
+  const seen = new Set(existing.map(r => r.acrid || `${r.title}|${r.artist}`))
+  for (const r of incoming) {
+    const k = r.acrid || `${r.title}|${r.artist}`
+    if (!seen.has(k)) { seen.add(k); existing.push(r) }
+  }
+  return existing
+}
+
+// ── Complete scan: sweep several segments across the whole track ──
+// One 15s sample identifies a track, but a thief may lift only a section
+// (e.g. just the hook). Sampling multiple points across the song catches
+// partial reuse. De-dupes matches across segments.
+async function scanWorkComplete(work) {
+  if (radarScanning) return
+  const statusEl = document.getElementById('scan-status-text')
+  const countEl  = document.getElementById('scan-results-count')
+
+  if (!acrAccessKey) { if (statusEl) statusEl.textContent = '請先在設定中填入 ACRCloud Access Key'; return }
+  if (!(SUPABASE_READY && currentUser && work.file)) {
+    if (statusEl) statusEl.textContent = '完整掃描需登入 + 該作品音訊在本分頁（重新整理後遺失請重傳）'
+    return
+  }
+
+  radarScanning = true
+  setProvenance('完整掃描中…', 'pending')
+
+  try {
+    const t0 = performance.now()
+    // Probe the duration by decoding a tiny sample first.
+    const dur = await getAudioDuration(work.file)
+    // Segment start offsets: step through the track by SCAN_SAMPLE_SEC, capped
+    // to a sane number of segments so a long track can't burn the API quota.
+    const MAX_SEGMENTS = 8
+    const step = Math.max(SCAN_SAMPLE_SEC, dur / MAX_SEGMENTS)
+    const offsets = []
+    for (let o = 0; o < dur - 1 && offsets.length < MAX_SEGMENTS; o += step) offsets.push(Math.floor(o))
+    if (offsets.length === 0) offsets.push(0)
+
+    const merged = []
+    let lastCode = null
+    for (let i = 0; i < offsets.length; i++) {
+      if (statusEl) statusEl.textContent = `完整掃描中… 第 ${i + 1}/${offsets.length} 段（${offsets[i]}s 起）`
+      setProvenance(`完整掃描中… 第 ${i + 1}/${offsets.length} 段`, 'pending')
+      const sample = await extractAudioSample(work.file, SCAN_SAMPLE_SEC, offsets[i])
+      const json = await postAcrScan(work.id, sample)
+      lastCode = json.acrStatus?.code ?? lastCode
+      dedupeResults(merged, json.results ?? [])
+      // Update results live as segments complete
+      work.results = merged
+      if (countEl) countEl.textContent = `${merged.length} 筆`
+      renderResults(work)
+    }
+
+    radarScanning = false
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
+    const now = new Date()
+    work.lastScan = now.toISOString()
+    setProvenance(`完整掃描 ✓ 掃了 ${offsets.length} 段（覆蓋整首約 ${Math.round(dur)}s），耗時 ${elapsed}s，共 ${merged.length} 筆不重複匹配`, 'real')
+    if (statusEl) statusEl.textContent = `完成 · ${now.toLocaleDateString('zh-TW')}`
+    const matchesEl = document.getElementById('scan-matches-count')
+    const trackNameEl = document.getElementById('scan-track-name')
+    if (trackNameEl) trackNameEl.textContent = work.name
+    if (matchesEl) matchesEl.textContent = merged.length
+    renderResults(work)
+    renderWorksList()
+  } catch (err) {
+    radarScanning = false
+    const hint = /3001|Invalid Access Key/i.test(err.message)
+      ? '（金鑰有效但區域選錯 — 到設定改「ACRCloud 區域」）' : ''
+    setProvenance(`完整掃描失敗：${err.message}${hint}`, 'error')
+    if (statusEl) statusEl.textContent = `掃描失敗：${err.message}${hint}`
+    console.error('[ACRCloud complete scan]', err)
+  }
+}
+
+// Lightweight duration probe (decode header only via full decode at 8kHz mono).
+async function getAudioDuration(file) {
+  const arr = await file.arrayBuffer()
+  const ctx = new OfflineAudioContext(1, 1, 16000)
+  const decoded = await ctx.decodeAudioData(arr.slice(0))
+  return decoded.duration || SCAN_SAMPLE_SEC
+}
+
 // ── Scan a work ───────────────────────────────────────────
 async function scanWork(work) {
   if (radarScanning) return  // already scanning
@@ -408,20 +510,7 @@ async function scanWork(work) {
       // Measure only the base64 payload (strip the "data:...;base64," prefix)
       const b64 = sample.slice(sample.indexOf(',') + 1)
       const sampleKB = Math.round((b64.length * 0.75) / 1024)  // base64 → bytes
-      const session = (await supabase.auth.getSession()).data.session
-      const res = await fetch(ACR_EDGE_FN, {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          work_id:     work.id,
-          audio_base64: sample,
-        }),
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
+      const json = await postAcrScan(work.id, sample)
       results = json.results ?? []
       isReal = true
       const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
@@ -481,19 +570,21 @@ async function scanWork(work) {
  * sample was ~5.76 MB and tripped ACRCloud code 3016 ("file too large").
  * 15s mono 16kHz ≈ 480 KB.
  */
-async function extractAudioSample(file, durationSec) {
+async function extractAudioSample(file, durationSec, offsetSec = 0) {
   const SR = 16000
   const arr = await file.arrayBuffer()
   // Decode at native rate first so we can clamp the render length to the real
   // track duration (no trailing silence padding for short tracks).
   const probe = new OfflineAudioContext(1, 1, SR)
   const decoded = await probe.decodeAudioData(arr.slice(0))
-  const secs = Math.min(durationSec, decoded.duration || durationSec)
+  const dur   = decoded.duration || durationSec
+  const start = Math.max(0, Math.min(offsetSec, Math.max(0, dur - 1)))
+  const secs  = Math.min(durationSec, Math.max(0.5, dur - start))
   const ctx = new OfflineAudioContext(1, Math.max(1, Math.ceil(SR * secs)), SR)
   const src = ctx.createBufferSource()
   src.buffer = decoded
   src.connect(ctx.destination)
-  src.start(0, 0, secs)
+  src.start(0, start, secs)
   const rendered = await ctx.startRendering()
 
   // Encode to WAV
@@ -585,15 +676,32 @@ function renderResults(work) {
       item.appendChild(artEl)
     }
 
-    const linkEl = document.createElement('a')
-    linkEl.className = 'result-link'
-    linkEl.href = safeHref(r.url)
-    linkEl.target = '_blank'
-    linkEl.rel = 'noopener noreferrer'
-    linkEl.setAttribute('aria-label', r.platform ? `前往 ${r.platform}` : '前往平台')
-    linkEl.textContent = '↗'
+    // Platform link chips — one per third-party platform ACRCloud returned
+    // (Spotify / YouTube / Deezer / Apple Music). Falls back to the single url.
+    const linksEl = document.createElement('div')
+    linksEl.className = 'result-links'
+    const platforms = Array.isArray(r.platforms) && r.platforms.length
+      ? r.platforms
+      : (r.url && r.url !== '#' ? [{ name: r.platform || '前往', url: r.url }] : [])
+    if (platforms.length === 0) {
+      const none = document.createElement('span')
+      none.className = 'result-no-link'
+      none.textContent = '無平台連結'
+      linksEl.appendChild(none)
+    } else {
+      for (const p of platforms) {
+        const a = document.createElement('a')
+        a.className = 'result-link-chip'
+        a.href = safeHref(p.url)
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+        a.setAttribute('aria-label', `前往 ${p.name}`)
+        a.textContent = p.name
+        linksEl.appendChild(a)
+      }
+    }
 
-    item.append(simEl, infoEl, linkEl)
+    item.append(simEl, infoEl, linksEl)
     fragment.appendChild(item)
   })
 
@@ -647,10 +755,20 @@ function renderWorksList() {
     const scanBtn = document.createElement('button')
     scanBtn.className = 'work-scan-btn'
     scanBtn.dataset.id = w.id
-    scanBtn.textContent = w.results?.length ? '重新掃描' : '掃描'
+    scanBtn.textContent = w.results?.length ? '重新掃描' : '快速掃描'
+    scanBtn.setAttribute('data-tooltip', '取樣前 15 秒比對 ACRCloud（最快）')
     scanBtn.addEventListener('click', e => {
       e.stopPropagation()
       scanWork(w)
+    })
+
+    const fullScanBtn = document.createElement('button')
+    fullScanBtn.className = 'work-scan-btn full'
+    fullScanBtn.textContent = '完整掃描'
+    fullScanBtn.setAttribute('data-tooltip', '掃描整首多個段落，抓得到只被偷一段（副歌）的盜用')
+    fullScanBtn.addEventListener('click', e => {
+      e.stopPropagation()
+      scanWorkComplete(w)
     })
 
     const delBtn = document.createElement('button')
@@ -668,7 +786,7 @@ function renderWorksList() {
       renderWorksList()
     })
 
-    actions.append(scanBtn, delBtn)
+    actions.append(scanBtn, fullScanBtn, delBtn)
     card.append(title, meta, actions)
 
     card.addEventListener('click', () => {

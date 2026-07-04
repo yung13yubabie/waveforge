@@ -2257,6 +2257,8 @@
   transition: all var(--dur-fast);
 }
 .work-scan-btn:hover { border-color: var(--c-blue); color: var(--c-blue); }
+.work-scan-btn.full { color: var(--c-text-3); }
+.work-scan-btn.full:hover { border-color: var(--c-primary); color: var(--c-primary); }
 .work-scan-btn.scanning {
   border-color: var(--c-blue);
   color: var(--c-blue);
@@ -2478,6 +2480,30 @@
   flex-shrink: 0;
 }
 .result-link:hover { border-color: var(--c-blue); color: var(--c-blue); }
+
+.result-links {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 45%;
+}
+.result-link-chip {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  color: var(--c-text-2);
+  font-size: 11px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all var(--dur-fast);
+}
+.result-link-chip:hover { border-color: var(--c-blue); color: var(--c-blue); }
+.result-no-link { font-size: 11px; color: var(--c-text-3); }
 
 /* Scan empty state */
 .scan-empty {

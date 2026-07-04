@@ -182,6 +182,7 @@ serve(async (req: Request) => {
     }
 
     // ── Parse results ─────────────────────────────────────
+    type PlatformLink = { name: string; url: string }
     type ScanResult = {
       similarity: number
       title: string
@@ -191,30 +192,40 @@ serve(async (req: Request) => {
       acrid?: string
       isrc?: string
       url: string
+      platforms: PlatformLink[]
       albumArt?: string
       releaseDate?: string
     }
     const results: ScanResult[] = []
 
+    // Build every available platform link from ACRCloud external_metadata.
+    function collectPlatforms(em: Record<string, unknown> | undefined): PlatformLink[] {
+      const links: PlatformLink[] = []
+      const meta = (em ?? {}) as Record<string, any>
+      const spId = meta.spotify?.track?.id
+      if (spId) links.push({ name: 'Spotify', url: `https://open.spotify.com/track/${spId}` })
+      const ytId = meta.youtube?.vid
+      if (ytId) links.push({ name: 'YouTube', url: `https://www.youtube.com/watch?v=${ytId}` })
+      const dzId = meta.deezer?.track?.id
+      if (dzId) links.push({ name: 'Deezer', url: `https://www.deezer.com/track/${dzId}` })
+      const amUrl = meta.apple_music?.url ?? meta.applemusic?.url
+      if (typeof amUrl === 'string' && amUrl.startsWith('https://')) links.push({ name: 'Apple Music', url: amUrl })
+      return links
+    }
+
     if (acrData.status?.code === 0 && acrData.metadata?.music) {
       for (const match of acrData.metadata.music) {
-        const spTrackId = match.external_metadata?.spotify?.track?.id
-        const youtubeId = match.external_metadata?.youtube?.vid
-        const url = spTrackId
-          ? `https://open.spotify.com/track/${spTrackId}`
-          : youtubeId
-            ? `https://www.youtube.com/watch?v=${youtubeId}`
-            : '#'
-
+        const platforms = collectPlatforms(match.external_metadata)
         results.push({
           similarity: Math.round(match.score ?? 0),
           title:      match.title ?? '(未知)',
           artist:     match.artists?.[0]?.name ?? '—',
           album:      match.album?.name,
-          platform:   spTrackId ? 'Spotify' : youtubeId ? 'YouTube' : 'ACRCloud',
+          platform:   platforms[0]?.name ?? 'ACRCloud',
           acrid:      match.acrid,
           isrc:       match.external_ids?.isrc,
-          url,
+          url:        platforms[0]?.url ?? '#',
+          platforms,
         })
       }
     }
@@ -245,10 +256,15 @@ serve(async (req: Request) => {
           if (!searchRes.ok) continue
           const found = (await searchRes.json()).tracks?.items?.[0]
           if (!found) continue
-          r.url         = found.external_urls?.spotify ?? r.url
+          const spUrl  = found.external_urls?.spotify
+          r.url         = spUrl ?? r.url
           r.platform    = 'Spotify'
           r.albumArt    = found.album?.images?.[2]?.url ?? found.album?.images?.[0]?.url
           r.releaseDate = found.album?.release_date
+          // Ensure a Spotify link is present in the platform list
+          if (spUrl && !r.platforms.some((p) => p.name === 'Spotify')) {
+            r.platforms.unshift({ name: 'Spotify', url: spUrl })
+          }
         }
       } catch (spErr) {
         // 增強失敗只記 log，不吞掉 ACR 結果
