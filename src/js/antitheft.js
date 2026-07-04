@@ -362,6 +362,10 @@ function setProvenance(text, state) {
   el.className = `scan-provenance ${state}`   // real | demo | pending | error
 }
 
+// ACRCloud recommends 10–20s to identify; 15s mono 16kHz keeps the upload
+// well under its size limit (code 3016 = file too large).
+const SCAN_SAMPLE_SEC = 15
+
 // ── Scan a work ───────────────────────────────────────────
 async function scanWork(work) {
   if (radarScanning) return  // already scanning
@@ -396,7 +400,7 @@ async function scanWork(work) {
     if (SUPABASE_READY && currentUser && work.file) {
       // ── Live mode: call Supabase Edge Function ────────
       const t0 = performance.now()
-      const sample = await extractAudioSample(work.file, 30)
+      const sample = await extractAudioSample(work.file, SCAN_SAMPLE_SEC)
       // Measure only the base64 payload (strip the "data:...;base64," prefix)
       const b64 = sample.slice(sample.indexOf(',') + 1)
       const sampleKB = Math.round((b64.length * 0.75) / 1024)  // base64 → bytes
@@ -421,7 +425,7 @@ async function scanWork(work) {
       const msg  = json.acrStatus?.msg ?? ''
       // code 0 = 有匹配；1001 = 已掃描、無匹配（都是真實掃描的證明）
       const codeNote = code === 0 ? '有匹配' : code === 1001 ? '無匹配' : msg || '未知'
-      provenance = `真實掃描 ✓ 送出 30 秒樣本（約 ${sampleKB}KB）→ ACRCloud，耗時 ${elapsed}s，回應 code ${code ?? '?'}（${codeNote}）`
+      provenance = `真實掃描 ✓ 送出 ${SCAN_SAMPLE_SEC} 秒樣本（約 ${sampleKB}KB）→ ACRCloud，耗時 ${elapsed}s，回應 code ${code ?? '?'}（${codeNote}）`
     } else {
       // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
@@ -462,15 +466,26 @@ async function scanWork(work) {
   }
 }
 
-/** Extract first N seconds of audio as base64 WAV data URL */
+/**
+ * Extract the first N seconds as a base64 WAV data URL for ACRCloud.
+ * MONO @ 16 kHz — ACRCloud fingerprints at ~8 kHz internally, so this is
+ * plenty for matching while keeping the upload tiny. The old 30s stereo 48kHz
+ * sample was ~5.76 MB and tripped ACRCloud code 3016 ("file too large").
+ * 15s mono 16kHz ≈ 480 KB.
+ */
 async function extractAudioSample(file, durationSec) {
+  const SR = 16000
   const arr = await file.arrayBuffer()
-  const ctx = new OfflineAudioContext(2, 48000 * durationSec, 48000)
-  const decoded = await ctx.decodeAudioData(arr.slice(0))
+  // Decode at native rate first so we can clamp the render length to the real
+  // track duration (no trailing silence padding for short tracks).
+  const probe = new OfflineAudioContext(1, 1, SR)
+  const decoded = await probe.decodeAudioData(arr.slice(0))
+  const secs = Math.min(durationSec, decoded.duration || durationSec)
+  const ctx = new OfflineAudioContext(1, Math.max(1, Math.ceil(SR * secs)), SR)
   const src = ctx.createBufferSource()
   src.buffer = decoded
   src.connect(ctx.destination)
-  src.start(0, 0, durationSec)
+  src.start(0, 0, secs)
   const rendered = await ctx.startRendering()
 
   // Encode to WAV
