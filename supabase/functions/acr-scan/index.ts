@@ -129,11 +129,18 @@ serve(async (req: Request) => {
     const {
       acr_access_key: accessKey,
       acr_access_secret: accessSecret,
-      acr_host: host = 'identify-eu-west-1.acrcloud.com',
+      acr_host: host = 'identify-ap-southeast-1.acrcloud.com',
       email_notify: emailNotify,
       spotify_client_id: spotifyId,
       spotify_client_secret: spotifySecret,
     } = settings
+
+    // Only allow official ACRCloud identify hosts — the host is user-set, and
+    // this server-side fetch runs with the service role, so an arbitrary host
+    // would be an SSRF vector. Also gives a clear error on a typo.
+    if (!/^identify-[a-z0-9-]+\.acrcloud\.com$/.test(host)) {
+      return jsonResp({ error: `ACRCloud 區域主機格式不正確：${host}` }, 400)
+    }
 
     // ── Build ACRCloud request ────────────────────────────
     const timestamp = Math.floor(Date.now() / 1000)

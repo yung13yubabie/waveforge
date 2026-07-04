@@ -96,7 +96,7 @@ async function loadUserSettings(userId) {
   if (!supabase) return
   const { data } = await supabase
     .from('user_settings')
-    .select('acr_access_key, acr_access_secret, email_notify, spotify_client_id, spotify_client_secret')
+    .select('acr_access_key, acr_access_secret, acr_host, email_notify, spotify_client_id, spotify_client_secret')
     .eq('user_id', userId)
     .single()
 
@@ -109,11 +109,13 @@ async function loadUserSettings(userId) {
 
     const keyInput   = document.getElementById('acr-api-key')
     const secretInput = document.getElementById('acr-api-secret')
+    const hostSelect = document.getElementById('acr-host')
     const spIdInput  = document.getElementById('spotify-client-id')
     const spSecInput = document.getElementById('spotify-client-secret')
     const notifyToggle = document.getElementById('email-notify-toggle')
     if (keyInput && acrAccessKey) keyInput.value = acrAccessKey
     if (secretInput && acrAccessSecret) secretInput.value = '••••••••••••'
+    if (hostSelect && data.acr_host) hostSelect.value = data.acr_host
     if (spIdInput && spotifyClientId) spIdInput.value = spotifyClientId
     if (spSecInput && spotifyClientSecret) spSecInput.value = '••••••••••••'
     if (notifyToggle) notifyToggle.checked = emailNotify
@@ -206,11 +208,13 @@ async function saveSettings() {
   try {
     if (SUPABASE_READY) {
       setKeyStatus('acr-key-status', '儲存中…', 'pending')
+      const acrHost = document.getElementById('acr-host')?.value || 'identify-ap-southeast-1.acrcloud.com'
       const { error } = await withTimeout(
         supabase.from('user_settings').upsert({
           user_id:           currentUser.id,
           acr_access_key:    acrAccessKey,
           acr_access_secret: acrAccessSecret,
+          acr_host:          acrHost,
         }, { onConflict: 'user_id' }),
         SAVE_TIMEOUT_MS, '儲存',
       )
@@ -459,8 +463,12 @@ async function scanWork(work) {
 
   } catch (err) {
     radarScanning = false
-    if (statusEl) statusEl.textContent = `掃描失敗：${err.message}`
-    setProvenance(`掃描失敗：${err.message}`, 'error')
+    // code 3001 = the key is valid but sent to the wrong regional host.
+    const hint = /3001|Invalid Access Key/i.test(err.message)
+      ? '（金鑰有效但區域選錯 — 到設定把「ACRCloud 區域」改成你專案頁顯示的 Host 再存一次）'
+      : ''
+    if (statusEl) statusEl.textContent = `掃描失敗：${err.message}${hint}`
+    setProvenance(`掃描失敗：${err.message}${hint}`, 'error')
     if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重試' }
     console.error('[ACRCloud scan]', err)
   }

@@ -975,11 +975,20 @@
             <div class="api-key-input-wrap" style="margin-top:6px">
               <input type="password" class="api-key-input" id="acr-api-secret"
                      placeholder="貼上您的 Access Secret" autocomplete="off">
+            </div>
+            <div class="api-key-input-wrap" style="margin-top:6px">
+              <select id="acr-host" class="api-key-input" aria-label="ACRCloud 區域"
+                      data-tooltip="必須與你 ACRCloud 專案頁顯示的 Host 區域一致，否則會回 code 3001">
+                <option value="identify-ap-southeast-1.acrcloud.com">亞太 (ap-southeast-1)</option>
+                <option value="identify-eu-west-1.acrcloud.com">歐洲 (eu-west-1)</option>
+                <option value="identify-us-west-2.acrcloud.com">美國 (us-west-2)</option>
+              </select>
               <button class="api-key-save" id="acr-key-save">儲存</button>
             </div>
             <div class="api-key-status" id="acr-key-status" aria-live="polite">尚未儲存</div>
             <div class="api-key-hint">
-              登入後 Key/Secret 綁定你的帳號存於 Supabase（RLS 保護，跨裝置同步）；訪客模式僅 Key 存本機、Secret 不落地。掃描時憑證只在你的 Edge Function 內用於簽章呼叫 ACRCloud，不外流第三方。
+              <strong>區域必須對</strong>：金鑰只在它所屬的區域主機有效，選錯會回 code 3001。請對照 ACRCloud 專案頁的 Host 欄位。<br>
+              登入後 Key/Secret 綁定你的帳號存於 Supabase（RLS 保護）；掃描時憑證只在你的 Edge Function 內用於簽章呼叫 ACRCloud，不外流第三方。
             </div>
           </div>
         </div>
