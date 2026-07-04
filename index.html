@@ -109,6 +109,9 @@
           <option value="48000">48 kHz</option>
           <option value="96000">96 kHz</option>
         </select>
+        <input type="text" id="export-watermark" class="export-watermark" maxlength="64"
+               placeholder="浮水印 ID（選填）" aria-label="浮水印識別碼"
+               data-tooltip="輸入你的識別碼（姓名／ISRC 等），輸出時嵌入聽不見的浮水印以證明來源。基礎防護，抗轉檔/改音量；無法抵抗 AI 重製。">
         <button id="export-btn" class="header-btn primary" disabled
                 data-tooltip="輸出處理後音檔">
           ↓ 輸出
@@ -945,6 +948,8 @@
             <strong>偵測能力：</strong>對轉檔 / 改位元率 / 改音量·LUFS / 改檔名<strong>天然免疫</strong>（照樣抓到）；升降 Key、改 BPM 需在 ACRCloud 專案選「Fingerprinting &amp; Cover Song」引擎；AI 重製 / 大幅頻譜破壞則所有指紋系統都可能失效（見 SETUP_GUIDE 威脅模型與防禦建議）。
           </div>
         </details>
+
+        <div class="scan-provenance" id="scan-provenance" hidden aria-live="polite"></div>
 
         <div class="scan-results-head">
           <span class="scan-results-title">比對結果</span>

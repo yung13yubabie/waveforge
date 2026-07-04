@@ -16,6 +16,7 @@ import { detectBPM, detectKey } from './audio/analyze.js'
 import { buildExportReport, measureIntegratedLUFS } from './audio/measure.js'
 import { encodeWAV } from './audio/wav.js'
 import { encodeMP3 } from './audio/mp3.js'
+import { embedWatermark } from './audio/watermark.js'
 import { averageSpectrum, computeMatchCurve } from './audio/match-eq.js'
 import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
@@ -1385,6 +1386,14 @@ async function boot() {
 
       let channels = []
       for (let ch = 0; ch < rendered.numberOfChannels; ch++) channels.push(rendered.getChannelData(ch))
+
+      // Optional inaudible watermark — embed BEFORE the true-peak stage so any
+      // limiting accounts for the (tiny) added signal and the ceiling holds.
+      const wmId = document.getElementById('export-watermark')?.value?.trim()
+      if (wmId) {
+        setProcessing(true, '嵌入浮水印...', 55)
+        channels = embedWatermark(channels, rendered.sampleRate, wmId)
+      }
 
       if (!byp.limiter && document.getElementById('lim-truepeak')?.checked) {
         setProcessing(true, '真 True-Peak 限幅...', 60)

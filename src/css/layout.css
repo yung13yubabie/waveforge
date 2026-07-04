@@ -177,6 +177,18 @@
 .export-select:hover:not(:disabled) { border-color: var(--c-border-hover); color: var(--c-text-1); }
 .export-select:disabled, .export-select.inactive { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 
+.export-watermark {
+  width: 130px;
+  padding: 6px var(--sp-2);
+  background: var(--c-bg-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  color: var(--c-text-1);
+}
+.export-watermark::placeholder { color: var(--c-text-3); }
+.export-watermark:focus { border-color: var(--c-primary); outline: none; }
+
 /* Legacy alias kept for any CSS that referenced old class */
 .export-bitdepth { padding: 6px var(--sp-2); background: var(--c-bg-elevated); border: 1px solid var(--c-border); border-radius: var(--r-md); font-size: var(--text-sm); color: var(--c-text-2); cursor: pointer; }
 .export-bitdepth:hover { border-color: var(--c-border-hover); color: var(--c-text-1); }
@@ -2555,6 +2567,32 @@
 .api-key-status.saved   { color: var(--c-green, #4ECDC4); }
 .api-key-status.error   { color: var(--c-primary); }
 .api-key-status.pending { color: var(--c-text-2); }
+
+/* Scan provenance banner — real vs demo evidence */
+.scan-provenance {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+.scan-provenance.real {
+  color: var(--c-green, #4ECDC4);
+  background: rgba(78, 205, 196, 0.08);
+  border-color: rgba(78, 205, 196, 0.3);
+}
+.scan-provenance.demo {
+  color: #ffaa00;
+  background: rgba(255, 170, 0, 0.08);
+  border-color: rgba(255, 170, 0, 0.3);
+}
+.scan-provenance.pending { color: var(--c-text-2); background: var(--c-bg-elevated); }
+.scan-provenance.error {
+  color: var(--c-primary);
+  background: var(--c-primary-dim);
+  border-color: var(--c-primary);
+}
 
 /* Anti-theft how-it-works / privacy explainer */
 .scan-howto {

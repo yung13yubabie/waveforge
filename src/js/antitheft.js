@@ -164,6 +164,18 @@ function setKeyStatus(id, text, state) {
   el.className = `api-key-status ${state}`   // state: saved | error | pending
 }
 
+// Race a promise against a timeout so a hung request (network stall or the
+// supabase-js auth-lock deadlock) surfaces as an error instead of leaving the
+// UI pinned on "儲存中…" forever.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label}逾時，請檢查網路後重試`)), ms)),
+  ])
+}
+
+const SAVE_TIMEOUT_MS = 15000
+
 // ── Save ACRCloud settings ────────────────────────────────
 async function saveSettings() {
   const keyInput    = document.getElementById('acr-api-key')
@@ -177,40 +189,65 @@ async function saveSettings() {
   acrAccessKey    = newKey
   if (newSecret && newSecret !== '••••••••••••') acrAccessSecret = newSecret
 
-  // try/catch so a thrown network rejection can never leave the UI with no
-  // feedback ("沒反應"). Every path ends in a visible status.
+  // Live mode requires login BEFORE we touch the UI's saving state — these
+  // are synchronous guards, no need to disable the button for them.
+  if (SUPABASE_READY && !currentUser) {
+    setKeyStatus('acr-key-status', '請先登入帳號再儲存（登入後金鑰才會綁定帳號）', 'error')
+    return
+  }
+  if (SUPABASE_READY && !acrAccessSecret) {
+    setKeyStatus('acr-key-status', '請一併填入 Access Secret', 'error')
+    return
+  }
+
+  if (saveBtn) saveBtn.disabled = true   // guard against re-entry / double-click
+  // try/catch so a thrown or timed-out request can never leave the UI with no
+  // feedback ("沒反應" / stuck on "儲存中…"). Every path ends in a visible status.
   try {
-    if (supabase && currentUser) {
-      if (!acrAccessSecret) { setKeyStatus('acr-key-status', '請一併填入 Access Secret', 'error'); return }
+    if (SUPABASE_READY) {
       setKeyStatus('acr-key-status', '儲存中…', 'pending')
-      const { error } = await supabase.from('user_settings').upsert({
-        user_id:           currentUser.id,
-        acr_access_key:    acrAccessKey,
-        acr_access_secret: acrAccessSecret,
-      })
+      const { error } = await withTimeout(
+        supabase.from('user_settings').upsert({
+          user_id:           currentUser.id,
+          acr_access_key:    acrAccessKey,
+          acr_access_secret: acrAccessSecret,
+        }, { onConflict: 'user_id' }),
+        SAVE_TIMEOUT_MS, '儲存',
+      )
       if (error) {
         setKeyStatus('acr-key-status', `儲存失敗：${error.message}`, 'error')
         console.error('[user_settings upsert]', error)
         return
       }
-      setKeyStatus('acr-key-status', '✓ 已儲存至你的帳號（跨裝置同步）', 'saved')
+      // Read-after-write: prove the row is actually there (catches any
+      // silent RLS filtering) so "已儲存" is never a lie.
+      setKeyStatus('acr-key-status', '驗證中…', 'pending')
+      const { data: check, error: readErr } = await withTimeout(
+        supabase.from('user_settings').select('acr_access_key').eq('user_id', currentUser.id).single(),
+        SAVE_TIMEOUT_MS, '回讀驗證',
+      )
+      if (readErr || !check?.acr_access_key) {
+        setKeyStatus('acr-key-status', `寫入後回讀失敗，金鑰可能未存入：${readErr?.message ?? '無資料'}`, 'error')
+        console.error('[user_settings read-after-write]', readErr)
+        return
+      }
+      setKeyStatus('acr-key-status', '✓ 已確認存入你的帳號（跨裝置同步）', 'saved')
     } else {
-      // Guest mode → only the (non-sensitive) access key persists; the Secret
-      // stays in memory for this session only. Persisting secrets in
-      // localStorage exposes them to any XSS — never store it.
+      // Guest mode (no Supabase configured) → only the (non-sensitive) access
+      // key persists locally; the Secret stays in memory for this session only.
       localStorage.setItem('acr-api-key', acrAccessKey)
       setKeyStatus('acr-key-status', '✓ 已存於本機（訪客模式，Secret 僅此分頁有效）', 'saved')
+    }
+    if (saveBtn) {
+      saveBtn.textContent = '已儲存 ✓'
+      saveBtn.classList.add('saved')
+      setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
     }
   } catch (err) {
     setKeyStatus('acr-key-status', `儲存失敗：${err.message}`, 'error')
     console.error('[saveSettings]', err)
-    return
-  }
-
-  if (saveBtn) {
-    saveBtn.textContent = '已儲存 ✓'
-    saveBtn.classList.add('saved')
-    setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
+  } finally {
+    if (saveBtn) saveBtn.disabled = false
   }
 }
 
@@ -225,32 +262,39 @@ async function saveSpotifySettings() {
   if (newId) spotifyClientId = newId
   if (newSec && newSec !== '••••••••••••') spotifyClientSecret = newSec
 
+  if (!(supabase && currentUser)) {
+    // Spotify enrichment runs in the Edge Function → requires live mode + login.
+    setKeyStatus('spotify-key-status', '需先登入帳號才能儲存（Spotify 增強在伺服器端執行）', 'error')
+    return
+  }
+
+  if (saveBtn) saveBtn.disabled = true
   try {
-    if (supabase && currentUser) {
-      setKeyStatus('spotify-key-status', '儲存中…', 'pending')
-      const { error } = await supabase.from('user_settings').upsert({
+    setKeyStatus('spotify-key-status', '儲存中…', 'pending')
+    const { error } = await withTimeout(
+      supabase.from('user_settings').upsert({
         user_id:               currentUser.id,
         spotify_client_id:     spotifyClientId || null,
         spotify_client_secret: spotifyClientSecret || null,
-      })
-      if (error) {
-        setKeyStatus('spotify-key-status', `儲存失敗：${error.message}`, 'error')
-        console.error('[spotify settings upsert]', error)
-        return
-      }
-      setKeyStatus('spotify-key-status', '✓ 已儲存至你的帳號（選填增強）', 'saved')
-      if (saveBtn) {
-        saveBtn.textContent = '已儲存 ✓'
-        saveBtn.classList.add('saved')
-        setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
-      }
-    } else {
-      // Spotify enrichment runs in the Edge Function → requires live mode + login.
-      setKeyStatus('spotify-key-status', '需先登入帳號才能儲存（Spotify 增強在伺服器端執行）', 'error')
+      }, { onConflict: 'user_id' }),
+      SAVE_TIMEOUT_MS, '儲存',
+    )
+    if (error) {
+      setKeyStatus('spotify-key-status', `儲存失敗：${error.message}`, 'error')
+      console.error('[spotify settings upsert]', error)
+      return
+    }
+    setKeyStatus('spotify-key-status', '✓ 已儲存至你的帳號（選填增強）', 'saved')
+    if (saveBtn) {
+      saveBtn.textContent = '已儲存 ✓'
+      saveBtn.classList.add('saved')
+      setTimeout(() => { saveBtn.textContent = '儲存'; saveBtn.classList.remove('saved') }, 2000)
     }
   } catch (err) {
     setKeyStatus('spotify-key-status', `儲存失敗：${err.message}`, 'error')
     console.error('[saveSpotifySettings]', err)
+  } finally {
+    if (saveBtn) saveBtn.disabled = false
   }
 }
 
@@ -298,6 +342,15 @@ async function handleWorksUpload(file) {
   // fingerprint upload lands, set fingerprint_ok=true only on API success.
 }
 
+// ── Scan provenance banner (real vs demo evidence) ────────
+function setProvenance(text, state) {
+  const el = document.getElementById('scan-provenance')
+  if (!el) return
+  el.hidden = false
+  el.textContent = text
+  el.className = `scan-provenance ${state}`   // real | demo | pending | error
+}
+
 // ── Scan a work ───────────────────────────────────────────
 async function scanWork(work) {
   if (radarScanning) return  // already scanning
@@ -322,15 +375,20 @@ async function scanWork(work) {
   radarScanning = true
   if (statusEl) statusEl.textContent = '掃描中...'
   if (scanBtn)  { scanBtn.classList.add('scanning'); scanBtn.textContent = '掃描中...' }
+  setProvenance('掃描中…', 'pending')
 
   try {
     let results
     let provenance   // 掃描證據：真實掃描顯示 ACR 回應碼 + 耗時；demo 明確標示
+    let isReal = false
 
     if (SUPABASE_READY && currentUser && work.file) {
       // ── Live mode: call Supabase Edge Function ────────
       const t0 = performance.now()
       const sample = await extractAudioSample(work.file, 30)
+      // Measure only the base64 payload (strip the "data:...;base64," prefix)
+      const b64 = sample.slice(sample.indexOf(',') + 1)
+      const sampleKB = Math.round((b64.length * 0.75) / 1024)  // base64 → bytes
       const session = (await supabase.auth.getSession()).data.session
       const res = await fetch(ACR_EDGE_FN, {
         method:  'POST',
@@ -346,12 +404,13 @@ async function scanWork(work) {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
       results = json.results ?? []
+      isReal = true
       const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
       const code = json.acrStatus?.code
+      const msg  = json.acrStatus?.msg ?? ''
       // code 0 = 有匹配；1001 = 已掃描、無匹配（都是真實掃描的證明）
-      provenance = code === 1001
-        ? `真實 ACRCloud 掃描完成（${elapsed}s）· 無匹配（code 1001）`
-        : `真實 ACRCloud 掃描完成（${elapsed}s）· code ${code ?? '?'}`
+      const codeNote = code === 0 ? '有匹配' : code === 1001 ? '無匹配' : msg || '未知'
+      provenance = `真實掃描 ✓ 送出 30 秒樣本（約 ${sampleKB}KB）→ ACRCloud，耗時 ${elapsed}s，回應 code ${code ?? '?'}（${codeNote}）`
     } else {
       // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
@@ -360,12 +419,13 @@ async function scanWork(work) {
         { similarity: 94, title: `[示範資料] 非真實掃描結果 ${modeNote}`, artist: '—', platform: 'Demo', url: '#' },
         { similarity: 81, title: '[示範資料] 完成後端設定後才會執行真實 ACRCloud 比對', artist: '—', platform: 'Demo', url: '#' },
       ]
-      provenance = '⚠ 示範資料 — 非真實掃描'
+      provenance = '⚠ 示範資料 — 這不是真實掃描（未登入或未設定後端）'
     }
 
     radarScanning = false
     const now = new Date()
-    if (statusEl) statusEl.textContent = `${provenance} · ${now.toLocaleDateString('zh-TW')}`
+    setProvenance(provenance, isReal ? 'real' : 'demo')
+    if (statusEl) statusEl.textContent = `完成 · ${now.toLocaleDateString('zh-TW')}`
     if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重新掃描' }
 
     work.results  = results
@@ -385,6 +445,7 @@ async function scanWork(work) {
   } catch (err) {
     radarScanning = false
     if (statusEl) statusEl.textContent = `掃描失敗：${err.message}`
+    setProvenance(`掃描失敗：${err.message}`, 'error')
     if (scanBtn)  { scanBtn.classList.remove('scanning'); scanBtn.textContent = '重試' }
     console.error('[ACRCloud scan]', err)
   }
