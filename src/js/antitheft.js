@@ -324,16 +324,27 @@ async function handleWorksUpload(file) {
   renderWorksList()
 
   if (supabase && currentUser) {
-    // Save to DB
+    // Save to DB. Do NOT send our temp string id — works.id is a uuid column,
+    // so `work-<timestamp>` is rejected (22P02) and the work would never
+    // persist, which then makes the Edge Function's ownership check 403 and
+    // ACRCloud is never called. Let Postgres generate the uuid and read it back.
     const { data, error } = await supabase.from('works').insert({
-      id:             id,
       user_id:        currentUser.id,
       name:           work.name,
       file_size_bytes: file.size,
       fingerprint_ok: false,
     }).select('id').single()
 
-    if (!error && data) work.id = data.id
+    if (error) {
+      // Surface it — a swallowed error here is exactly why scans silently
+      // failed to reach ACRCloud (no matching works row to authorize).
+      console.error('[works insert]', error)
+      const statusEl = document.getElementById('scan-status-text')
+      if (statusEl) statusEl.textContent = `作品未存入資料庫：${error.message} — 掃描需要它，請重新登入後重試`
+    } else if (data) {
+      work.id = data.id   // swap temp string id → real uuid so scanning works
+      renderWorksList()
+    }
   }
 
   // NOTE: real fingerprint extraction is not implemented yet.
