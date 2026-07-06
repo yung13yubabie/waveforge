@@ -8,7 +8,6 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_READY } from './config.js'
-import { fetchUrlMeta, detectPlatform } from './audio/url-meta.js'
 
 // ── Supabase client (lazy init) ───────────────────────────
 const supabase = SUPABASE_READY
@@ -619,102 +618,121 @@ async function extractAudioSample(file, durationSec, offsetSec = 0) {
 }
 
 // ── Render helpers ────────────────────────────────────────
+
+// Build one result row element.
+function buildResultItem(r, i) {
+  const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
+
+  const item = document.createElement('div')
+  item.className = 'scan-result-item'
+  item.style.animationDelay = `${i * 40}ms`
+
+  const simEl = document.createElement('div')
+  simEl.className = `result-similarity ${cls}`
+  simEl.textContent = `${r.similarity}%`
+
+  if (r.albumArt) {
+    const artEl = document.createElement('img')
+    artEl.src = safeHref(r.albumArt)
+    artEl.alt = ''
+    artEl.className = 'result-album-art'
+    artEl.loading = 'lazy'
+    item.appendChild(artEl)
+  }
+
+  const infoEl = document.createElement('div')
+  infoEl.className = 'result-info'
+
+  const titleEl = document.createElement('div')
+  titleEl.className = 'result-title'
+  titleEl.textContent = r.title ?? ''
+
+  const metaEl = document.createElement('div')
+  metaEl.className = 'result-meta'
+  const artistEl = document.createElement('span')
+  artistEl.textContent = r.artist ?? ''
+  metaEl.appendChild(artistEl)
+  if (r.releaseDate) {
+    const dateEl = document.createElement('span')
+    dateEl.textContent = `· ${r.releaseDate}`
+    metaEl.appendChild(dateEl)
+  }
+  infoEl.append(titleEl, metaEl)
+
+  // Platform link chips — one per third-party platform ACRCloud returned.
+  const linksEl = document.createElement('div')
+  linksEl.className = 'result-links'
+  const platforms = Array.isArray(r.platforms) && r.platforms.length
+    ? r.platforms
+    : (r.url && r.url !== '#' ? [{ name: r.platform || '前往', url: r.url }] : [])
+  if (platforms.length === 0) {
+    const none = document.createElement('span')
+    none.className = 'result-no-link'
+    none.textContent = '無連結'
+    linksEl.appendChild(none)
+  } else {
+    for (const p of platforms) {
+      const a = document.createElement('a')
+      a.className = 'result-link-chip'
+      a.href = safeHref(p.url)
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      a.setAttribute('aria-label', `前往 ${p.name}`)
+      a.textContent = p.name
+      linksEl.appendChild(a)
+    }
+  }
+
+  item.append(simEl, infoEl, linksEl)
+  return item
+}
+
+// Section header for a match group (原曲/指紋 vs 翻唱/Cover).
+function buildResultSection(kind, count) {
+  const head = document.createElement('div')
+  head.className = `result-section-head ${kind === 'cover' ? 'cover' : 'exact'}`
+  const label = document.createElement('span')
+  label.className = 'result-section-label'
+  label.textContent = kind === 'cover' ? '翻唱比對（Cover）' : '原曲比對（指紋）'
+  const badge = document.createElement('span')
+  badge.className = 'result-section-count'
+  badge.textContent = `${count}`
+  head.append(label, badge)
+  return head
+}
+
 function renderResults(work) {
   const listEl = document.getElementById('scan-results-list')
   if (!listEl) return
 
   if (!work?.results?.length) {
-    listEl.innerHTML = `<div class="scan-empty"><div style="font-size:32px;opacity:0.2">◎</div><div>尚無比對結果</div></div>`
+    const empty = document.createElement('div')
+    empty.className = 'scan-empty'
+    const icon = document.createElement('div')
+    icon.className = 'scan-empty-icon'
+    icon.textContent = '◎'
+    const msg = document.createElement('div')
+    msg.textContent = '尚無比對結果'
+    empty.append(icon, msg)
+    listEl.replaceChildren(empty)
     return
   }
 
+  // Split into 原曲(指紋/exact) and 翻唱(cover), each sorted by similarity desc.
+  const bySim = (a, b) => b.similarity - a.similarity
+  const exact = work.results.filter(r => r.source !== '翻唱').sort(bySim)
+  const cover = work.results.filter(r => r.source === '翻唱').sort(bySim)
+
   const fragment = document.createDocumentFragment()
-  work.results.forEach((r, i) => {
-    const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
-
-    const item = document.createElement('div')
-    item.className = 'scan-result-item'
-    item.style.animationDelay = `${i * 60}ms`
-
-    const simEl = document.createElement('div')
-    simEl.className = `result-similarity ${cls}`
-    simEl.textContent = `${r.similarity}%`
-
-    const infoEl = document.createElement('div')
-    infoEl.className = 'result-info'
-
-    const titleEl = document.createElement('div')
-    titleEl.className = 'result-title'
-    titleEl.textContent = r.title ?? ''
-
-    const metaEl = document.createElement('div')
-    metaEl.className = 'result-meta'
-
-    const artistEl = document.createElement('span')
-    artistEl.textContent = r.artist ?? ''
-
-    const platformEl = document.createElement('span')
-    platformEl.className = 'result-platform'
-    platformEl.textContent = r.platform ?? ''
-
-    metaEl.append(artistEl, platformEl)
-
-    // Match type: 指紋 (exact recording) vs 翻唱 (cover/humming — same tune,
-    // different performance/pitch/tempo). Cover matches are fuzzier, so the
-    // label tells the user why similarity may be lower.
-    if (r.source) {
-      const srcEl = document.createElement('span')
-      srcEl.className = `result-source ${r.source === '翻唱' ? 'cover' : 'exact'}`
-      srcEl.textContent = r.source
-      metaEl.appendChild(srcEl)
-    }
-
-    // Spotify enrichment fields (present only when user configured Spotify API)
-    if (r.releaseDate) {
-      const dateEl = document.createElement('span')
-      dateEl.textContent = `· ${r.releaseDate}`
-      metaEl.appendChild(dateEl)
-    }
-    infoEl.append(titleEl, metaEl)
-
-    if (r.albumArt) {
-      const artEl = document.createElement('img')
-      artEl.src = safeHref(r.albumArt)
-      artEl.alt = ''
-      artEl.className = 'result-album-art'
-      artEl.loading = 'lazy'
-      item.appendChild(artEl)
-    }
-
-    // Platform link chips — one per third-party platform ACRCloud returned
-    // (Spotify / YouTube / Deezer / Apple Music). Falls back to the single url.
-    const linksEl = document.createElement('div')
-    linksEl.className = 'result-links'
-    const platforms = Array.isArray(r.platforms) && r.platforms.length
-      ? r.platforms
-      : (r.url && r.url !== '#' ? [{ name: r.platform || '前往', url: r.url }] : [])
-    if (platforms.length === 0) {
-      const none = document.createElement('span')
-      none.className = 'result-no-link'
-      none.textContent = '無平台連結'
-      linksEl.appendChild(none)
-    } else {
-      for (const p of platforms) {
-        const a = document.createElement('a')
-        a.className = 'result-link-chip'
-        a.href = safeHref(p.url)
-        a.target = '_blank'
-        a.rel = 'noopener noreferrer'
-        a.setAttribute('aria-label', `前往 ${p.name}`)
-        a.textContent = p.name
-        linksEl.appendChild(a)
-      }
-    }
-
-    item.append(simEl, infoEl, linksEl)
-    fragment.appendChild(item)
-  })
-
+  let i = 0
+  if (exact.length) {
+    fragment.appendChild(buildResultSection('exact', exact.length))
+    for (const r of exact) fragment.appendChild(buildResultItem(r, i++))
+  }
+  if (cover.length) {
+    fragment.appendChild(buildResultSection('cover', cover.length))
+    for (const r of cover) fragment.appendChild(buildResultItem(r, i++))
+  }
   listEl.replaceChildren(fragment)
 }
 
@@ -1052,91 +1070,6 @@ export function initAntiTheft() {
     const storedKey = localStorage.getItem('acr-api-key')
     if (storedKey) { acrAccessKey = storedKey; const el = document.getElementById('acr-api-key'); if (el) el.value = storedKey }
   }
-
-  // ── URL detection ─────────────────────────────────────────
-  const urlInput  = document.getElementById('url-detect-input')
-  const urlBtn    = document.getElementById('url-detect-btn')
-  const urlResult = document.getElementById('url-detect-result')
-
-  function renderUrlResult(meta) {
-    if (!urlResult) return
-    urlResult.hidden = false
-    urlResult.replaceChildren()
-
-    const row = document.createElement('div')
-    row.className = 'url-result-row'
-
-    if (meta.thumbnailUrl) {
-      const img = document.createElement('img')
-      img.src = safeHref(meta.thumbnailUrl)  // reuse existing protocol validator
-      img.alt = ''
-      img.className = 'url-result-thumb'
-      img.loading = 'lazy'
-      row.appendChild(img)
-    }
-
-    const info = document.createElement('div')
-    info.className = 'url-result-info'
-
-    const platform = document.createElement('span')
-    platform.className = 'url-result-platform'
-    platform.textContent = meta.platform
-
-    const title = document.createElement('div')
-    title.className = 'url-result-title'
-    title.textContent = meta.title ?? '（無標題）'
-
-    const author = document.createElement('div')
-    author.className = 'url-result-author'
-    author.textContent = meta.authorName ?? ''
-
-    info.append(platform, title, author)
-    row.appendChild(info)
-    urlResult.appendChild(row)
-
-    const note = document.createElement('div')
-    note.className = 'url-result-note'
-    // Honest boundary: browsers cannot fetch platform audio (CORS/DRM), so a
-    // URL alone can never be fingerprint-scanned client-side. State the real path.
-    note.textContent = '已擷取元資料（僅標題/作者，非音訊）。瀏覽器無法直接抓取平台音訊，'
-      + '要真正比對請上傳你的原曲至「我的作品庫」並掃描。ACRCloud 指紋對改檔名/轉檔/改音量/改位元率免疫；'
-      + '升降 Key、改 BPM 需選 Cover Song 引擎才抓得到；AI 重製或大幅頻譜破壞則所有指紋系統都可能失效。'
-    urlResult.appendChild(note)
-  }
-
-  function renderUrlError(msg) {
-    if (!urlResult) return
-    urlResult.hidden = false
-    urlResult.replaceChildren()
-    const err = document.createElement('div')
-    err.className = 'url-result-error'
-    err.textContent = msg
-    urlResult.appendChild(err)
-  }
-
-  async function doUrlDetect() {
-    const raw = urlInput?.value?.trim()
-    if (!raw) return
-    if (urlBtn) { urlBtn.disabled = true; urlBtn.textContent = '查詢中...' }
-    if (urlResult) urlResult.hidden = true
-
-    try {
-      const platform = detectPlatform(raw)
-      if (platform === 'SUNO') {
-        renderUrlError('SUNO 無公開 API，無法自動擷取資訊')
-        return
-      }
-      const meta = await fetchUrlMeta(raw)
-      renderUrlResult(meta)
-    } catch (err) {
-      renderUrlError(err.message)
-    } finally {
-      if (urlBtn) { urlBtn.disabled = false; urlBtn.textContent = '查詢' }
-    }
-  }
-
-  urlBtn?.addEventListener('click', doUrlDetect)
-  urlInput?.addEventListener('keydown', e => { if (e.key === 'Enter') doUrlDetect() })
 
   // ACRCloud settings save button
   document.getElementById('acr-key-save')?.addEventListener('click', saveSettings)

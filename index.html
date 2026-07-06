@@ -883,21 +883,6 @@
     <div class="antitheft-panel">
       <!-- Left: Works Library -->
       <div class="works-library">
-        <!-- URL Detection -->
-        <div class="url-detect-section">
-          <div class="url-detect-head">
-            <span class="url-detect-title">URL 版權偵測</span>
-            <span class="url-detect-subtitle">貼上 YouTube / Spotify / SoundCloud / Apple Music / Deezer 連結</span>
-          </div>
-          <div class="url-detect-input-row">
-            <input type="url" id="url-detect-input" class="url-detect-input"
-                   placeholder="https://..."
-                   autocomplete="off" spellcheck="false">
-            <button id="url-detect-btn" class="url-detect-btn">查詢</button>
-          </div>
-          <div id="url-detect-result" class="url-detect-result" hidden></div>
-        </div>
-
         <div class="works-library-head">
           <span class="works-library-title">我的作品庫</span>
           <label class="works-add-btn" id="works-add-label">
@@ -913,41 +898,26 @@
         </div>
       </div>
 
-      <!-- Center: Scan results -->
+      <!-- Center: Scan results (primary focus) -->
       <div class="scan-main">
-        <div class="scan-radar-area">
-          <canvas id="acr-radar-canvas" width="160" height="160"></canvas>
-          <div class="scan-radar-info">
-            <div class="scan-radar-title" id="scan-track-name">選擇作品開始掃描</div>
-            <div class="scan-radar-status" id="scan-status-text">等待中</div>
-            <div class="scan-radar-stats">
-              <div class="scan-stat">
-                <div class="scan-stat-value" id="scan-matches-count">—</div>
-                <div class="scan-stat-label">疑似吻合</div>
-              </div>
-              <div class="scan-stat">
-                <div class="scan-stat-value" id="scan-last-time">—</div>
-                <div class="scan-stat-label">上次掃描</div>
-              </div>
+        <!-- Compact status bar (shrunk radar) -->
+        <div class="scan-statusbar" id="scan-statusbar">
+          <canvas id="acr-radar-canvas" width="52" height="52" class="scan-radar-mini" aria-hidden="true"></canvas>
+          <div class="scan-statusbar-info">
+            <div class="scan-statusbar-title" id="scan-track-name">選擇作品開始掃描</div>
+            <div class="scan-statusbar-sub" id="scan-status-text">等待中</div>
+          </div>
+          <div class="scan-statusbar-stats">
+            <div class="scan-stat">
+              <div class="scan-stat-value" id="scan-matches-count">—</div>
+              <div class="scan-stat-label">吻合</div>
+            </div>
+            <div class="scan-stat">
+              <div class="scan-stat-value" id="scan-last-time">—</div>
+              <div class="scan-stat-label">上次</div>
             </div>
           </div>
         </div>
-
-        <details class="scan-howto">
-          <summary>運作方式與隱私（點開）</summary>
-          <ol class="scan-howto-list">
-            <li><strong>上傳原曲</strong>：在左側「我的作品庫」新增你的原創音檔，建立作品記錄。</li>
-            <li><strong>掃描比對</strong>：點「掃描」→ 系統擷取該曲前 30 秒 → 透過你的 Supabase Edge Function 送到你自己的 <strong>ACRCloud</strong> 帳號，比對 ACRCloud 全球商業曲庫（Spotify/YouTube 等平台的已上架曲）。</li>
-            <li><strong>看結果</strong>：若有人把你的歌上架，會列出疑似吻合曲目 + 相似度 + 平台連結，並可選擇 Email 通知。</li>
-          </ol>
-          <div class="scan-howto-privacy">
-            <strong>檔案流向（誠實說明）：</strong>
-            母帶處理與匯出<strong>完全在本機</strong>，音檔不離開瀏覽器。防盜掃描會把<strong>前 30 秒樣本</strong>送到<strong>你自己設定的</strong> ACRCloud（非 WaveForge 伺服器、非任何第三方）。分軌母帶會把<strong>整首</strong>送到<strong>你自己設定的</strong> HF Space。這三者之外，WaveForge 不對外傳送任何音訊。
-          </div>
-          <div class="scan-howto-privacy">
-            <strong>偵測能力：</strong>對轉檔 / 改位元率 / 改音量·LUFS / 改檔名<strong>天然免疫</strong>（照樣抓到）；升降 Key、改 BPM 需在 ACRCloud 專案選「Fingerprinting &amp; Cover Song」引擎；AI 重製 / 大幅頻譜破壞則所有指紋系統都可能失效（此時建議改用主動浮水印 + 原始工程檔與上傳時間戳作為法律證據）。
-          </div>
-        </details>
 
         <div class="scan-provenance" id="scan-provenance" hidden aria-live="polite"></div>
 
@@ -955,12 +925,28 @@
           <span class="scan-results-title">比對結果</span>
           <span class="scan-results-count" id="scan-results-count">0 筆</span>
         </div>
+        <!-- Results list = the primary, space-filling area -->
         <div class="scan-results-list" id="scan-results-list">
           <div class="scan-empty">
-            <div style="font-size:32px;opacity:0.2">◎</div>
-            <div>選擇左側作品並點擊「掃描」開始比對</div>
+            <div class="scan-empty-icon" aria-hidden="true">◎</div>
+            <div>選擇左側作品並點擊「快速掃描」或「完整掃描」開始比對</div>
           </div>
         </div>
+
+        <details class="scan-howto">
+          <summary>運作方式與隱私</summary>
+          <ol class="scan-howto-list">
+            <li><strong>上傳原曲</strong>：在左側「我的作品庫」新增你的原創音檔。</li>
+            <li><strong>掃描比對</strong>：擷取樣本 → 透過你的 Edge Function 送到你自己的 <strong>ACRCloud</strong>，比對全球商業曲庫。</li>
+            <li><strong>看結果</strong>：分「原曲（指紋）」與「翻唱（Cover）」兩類，附相似度與平台連結。</li>
+          </ol>
+          <div class="scan-howto-privacy">
+            <strong>檔案流向：</strong>母帶處理與匯出<strong>完全在本機</strong>。防盜掃描只把樣本送到<strong>你自己設定的</strong> ACRCloud，不經 WaveForge 伺服器、不給第三方。
+          </div>
+          <div class="scan-howto-privacy">
+            <strong>偵測能力：</strong>對轉檔 / 改位元率 / 改音量 / 改檔名<strong>天然免疫</strong>；升降 Key、改 BPM 靠 Cover Song 引擎；AI 重製 / 大幅頻譜破壞則所有指紋系統都可能失效。
+          </div>
+        </details>
       </div>
 
       <!-- Right: Settings -->
