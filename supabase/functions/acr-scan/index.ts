@@ -192,6 +192,8 @@ serve(async (req: Request) => {
       source: string     // '指紋' (exact) | '翻唱' (cover/humming)
       acrid?: string
       isrc?: string
+      upc?: string
+      label?: string
       url: string
       platforms: PlatformLink[]
       albumArt?: string
@@ -233,6 +235,9 @@ serve(async (req: Request) => {
           source,
           acrid:    match.acrid,
           isrc:     match.external_ids?.isrc,
+          upc:      match.external_ids?.upc,
+          label:    match.label,
+          releaseDate: match.release_date,
           url:      platforms[0]?.url ?? '#',
           platforms,
         })

@@ -1605,6 +1605,11 @@
       "platforms";
   }
   .gonio-wrap { aspect-ratio: 16 / 10; }
+
+  /* Anti-theft: tighten the side columns so the results column keeps room
+     instead of the fixed 320+280 pushing content off-screen */
+  .works-library { width: 240px; }
+  .antitheft-settings { width: 240px; }
 }
 
 @media (max-width: 680px) {
@@ -1655,6 +1660,22 @@
   }
 
   .workspace { grid-column: 1; grid-row: 4; }
+
+  /* Anti-theft: stack the 3 fixed columns vertically instead of overflowing
+     horizontally (which covered/clipped content on narrow screens). */
+  .antitheft-panel { flex-direction: column; height: auto; overflow: visible; }
+  .works-library {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--c-border);
+  }
+  .works-list { max-height: 40vh; }
+  .scan-main { min-height: 55vh; }
+  .antitheft-settings {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--c-border);
+  }
 
   :root { --stems-h: 150px; }
 

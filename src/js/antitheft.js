@@ -633,6 +633,24 @@ async function extractAudioSample(file, durationSec, offsetSec = 0) {
   return `data:audio/wav;base64,${btoa(bin)}`
 }
 
+// Interpret an ISRC's country prefix. Q-prefixes (QM/QZ/QT/QN…) are ISRC
+// "user-assigned" codes that IFPI hands to digital distributors, so they almost
+// always mean the upload came through an aggregator (DistroKid / TuneCore /
+// CD Baby / Amuse …) rather than a traditional label — a direct DMCA to that
+// distributor takes the release down across every platform at once.
+function analyzeIsrc(isrc) {
+  const clean = (isrc ?? '').replace(/[-\s]/g, '')
+  if (clean.length < 7) return ''
+  const cc = clean.slice(0, 2).toUpperCase()
+  const registrant = clean.slice(2, 5)
+  const year = clean.slice(5, 7)
+  if (/^Q/.test(cc)) {
+    return `國碼 ${cc} 為 ISRC「使用者指定碼」，幾乎都由數位發行商（DistroKid / TuneCore / CD Baby / Amuse 等 aggregator）配發，非傳統唱片公司。`
+      + `→ 建議直接對該發行商發 DMCA，一撤即全平台同步下架。登記者代碼：${registrant}，年份 20${year}。`
+  }
+  return `國碼 ${cc}、登記者代碼 ${registrant}、年份 20${year}。`
+}
+
 // ── Takedown evidence report ──────────────────────────────
 // Build a DMCA-style evidence report for one suspected-infringement match,
 // including a SHA-256 of the user's ORIGINAL file (proof of possession) and
@@ -664,12 +682,19 @@ ${ownFile}
 == 偵測到的疑似盜用 (Detected infringing upload) ==
 比對曲目：${r.title ?? '(未知)'} / ${r.artist ?? '—'}
 專輯：${r.album ?? '—'}
+發行日：${r.releaseDate ?? '—'}
+廠牌 / 發行者：${r.label ?? '—'}
 相似度：${r.similarity}%（比對方式：${matchKind}）
 ACRCloud ID：${r.acrid ?? '—'}
 ISRC：${r.isrc ?? '—'}
+UPC：${r.upc ?? '—'}
 
 上架平台與連結 (Where it is hosted)：
 ${platformLines}
+
+== 發行來源分析 (Distribution source) ==
+${analyzeIsrc(r.isrc) || 'ISRC 不明，無法分析發行來源。'}
+可用 UPC「${r.upc ?? '—'}」與廠牌「${r.label ?? '—'}」向平台或發行商回溯上架者身分。
 
 == 技術證據 (Technical evidence) ==
 比對引擎：ACRCloud Audio Fingerprinting
