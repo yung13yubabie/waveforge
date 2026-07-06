@@ -356,6 +356,17 @@ async function handleWorksUpload(file) {
   // fingerprint upload lands, set fingerprint_ok=true only on API success.
 }
 
+// Summarize a result list by type for the provenance banner.
+function summarizeResults(list) {
+  const exact = list.filter(r => r.source !== '翻唱')
+  const cover = list.filter(r => r.source === '翻唱')
+  const parts = []
+  if (exact.length) parts.push(`${exact.length} 筆原曲（指紋）`)
+  if (cover.length) parts.push(`${cover.length} 筆翻唱`)
+  const strong = exact.some(r => r.similarity >= 98)
+  return { text: parts.join(' + ') || '無匹配', strong }
+}
+
 // ── Scan provenance banner (real vs demo evidence) ────────
 function setProvenance(text, state) {
   const el = document.getElementById('scan-provenance')
@@ -445,7 +456,9 @@ async function scanWorkComplete(work) {
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1)
     const now = new Date()
     work.lastScan = now.toISOString()
-    setProvenance(`完整掃描 ✓ 掃了 ${offsets.length} 段（覆蓋整首約 ${Math.round(dur)}s），耗時 ${elapsed}s，共 ${merged.length} 筆不重複匹配`, 'real')
+    const sum = summarizeResults(merged)
+    const warn = sum.strong ? '　⚠ 有 100% 完全相同，高度疑似盜用' : ''
+    setProvenance(`完整掃描 ✓ 掃了 ${offsets.length} 段（覆蓋約 ${Math.round(dur)}s，${elapsed}s）：${sum.text}${warn}`, 'real')
     if (statusEl) statusEl.textContent = `完成 · ${now.toLocaleDateString('zh-TW')}`
     const matchesEl = document.getElementById('scan-matches-count')
     const trackNameEl = document.getElementById('scan-track-name')
@@ -516,8 +529,10 @@ async function scanWork(work) {
       const code = json.acrStatus?.code
       const msg  = json.acrStatus?.msg ?? ''
       // code 0 = 有匹配；1001 = 已掃描、無匹配（都是真實掃描的證明）
-      const codeNote = code === 0 ? '有匹配' : code === 1001 ? '無匹配' : msg || '未知'
-      provenance = `真實掃描 ✓ 送出 ${SCAN_SAMPLE_SEC} 秒樣本（約 ${sampleKB}KB）→ ACRCloud，耗時 ${elapsed}s，回應 code ${code ?? '?'}（${codeNote}）`
+      const sum = summarizeResults(results)
+      const codeNote = code === 1001 ? '無匹配' : code === 0 ? sum.text : (msg || '未知')
+      const warn = sum.strong ? '　⚠ 有 100% 完全相同，高度疑似盜用' : ''
+      provenance = `真實掃描 ✓ ${SCAN_SAMPLE_SEC}s 樣本 → ACRCloud（${elapsed}s，code ${code ?? '?'}）：${codeNote}${warn}`
     } else {
       // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
@@ -659,12 +674,24 @@ function buildResultItem(r, i) {
   }
   infoEl.append(titleEl, metaEl)
 
-  // Platform link chips — one per third-party platform ACRCloud returned.
+  // Platform link chips. Direct track links (from ACRCloud external IDs) are
+  // exact; when a match has none (common for cover/humming hits), fall back to
+  // precise SEARCH links built from title + artist so every result is findable.
   const linksEl = document.createElement('div')
   linksEl.className = 'result-links'
-  const platforms = Array.isArray(r.platforms) && r.platforms.length
-    ? r.platforms
+  let platforms = Array.isArray(r.platforms) && r.platforms.length
+    ? r.platforms.slice()
     : (r.url && r.url !== '#' ? [{ name: r.platform || '前往', url: r.url }] : [])
+  const isDirect = platforms.length > 0
+  if (platforms.length === 0) {
+    const q = encodeURIComponent(`${r.title ?? ''} ${r.artist ?? ''}`.trim())
+    if (q) {
+      platforms = [
+        { name: 'YouTube 搜尋', url: `https://www.youtube.com/results?search_query=${q}` },
+        { name: 'Spotify 搜尋',  url: `https://open.spotify.com/search/${q}` },
+      ]
+    }
+  }
   if (platforms.length === 0) {
     const none = document.createElement('span')
     none.className = 'result-no-link'
@@ -673,11 +700,11 @@ function buildResultItem(r, i) {
   } else {
     for (const p of platforms) {
       const a = document.createElement('a')
-      a.className = 'result-link-chip'
+      a.className = `result-link-chip${isDirect ? '' : ' search'}`
       a.href = safeHref(p.url)
       a.target = '_blank'
       a.rel = 'noopener noreferrer'
-      a.setAttribute('aria-label', `前往 ${p.name}`)
+      a.setAttribute('aria-label', `${isDirect ? '前往' : '搜尋'} ${p.name}`)
       a.textContent = p.name
       linksEl.appendChild(a)
     }

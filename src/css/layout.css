@@ -2532,6 +2532,7 @@
   transition: all var(--dur-fast);
 }
 .result-link-chip:hover { border-color: var(--c-blue); color: var(--c-blue); }
+.result-link-chip.search { border-style: dashed; opacity: 0.85; }
 .result-no-link { font-size: 11px; color: var(--c-text-3); }
 
 .result-source { font-size: 10px; padding: 1px 6px; border-radius: var(--r-full); margin-left: 4px; }
@@ -2573,7 +2574,22 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: var(--sp-3);
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
 }
+.settings-apply-link {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--c-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.settings-apply-link:hover { text-decoration: underline; }
 
 .api-key-field {
   display: flex;
