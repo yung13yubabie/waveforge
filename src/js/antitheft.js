@@ -8,6 +8,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_READY } from './config.js'
+import { sha256Hex } from './audio/sha256.js'
 
 // ── Supabase client (lazy init) ───────────────────────────
 const supabase = SUPABASE_READY
@@ -632,10 +633,63 @@ async function extractAudioSample(file, durationSec, offsetSec = 0) {
   return `data:audio/wav;base64,${btoa(bin)}`
 }
 
+// ── Takedown evidence report ──────────────────────────────
+// Build a DMCA-style evidence report for one suspected-infringement match,
+// including a SHA-256 of the user's ORIGINAL file (proof of possession) and
+// the exact platform links where the stolen upload is hosted.
+async function generateTakedownReport(work, r) {
+  const now = new Date()
+  let ownFile = '原始檔不在本分頁 — 請重新上傳同一檔案以加入檔案雜湊（持有證明）'
+  if (work?.file) {
+    try {
+      const hex = await sha256Hex(await work.file.arrayBuffer())
+      ownFile = `檔名：${work.file.name}\n檔案大小：${work.file.size} bytes\nSHA-256：${hex}\n（此雜湊證明我持有此原始錄音檔）`
+    } catch (e) {
+      ownFile = `檔案雜湊計算失敗：${e.message}`
+    }
+  }
+  const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : []
+  const platformLines = platforms.length
+    ? platforms.map(p => `- ${p.name}：${p.url}`).join('\n')
+    : `- （ACRCloud 未提供直接連結，請於各平台搜尋「${r.title ?? ''} ${r.artist ?? ''}」）`
+  const matchKind = r.source === '翻唱' ? '翻唱/改編（Cover）' : '音訊指紋（完全相同錄音）'
+
+  return `WaveForge 盜用取證報告 / Copyright Infringement Evidence
+產生時間：${now.toISOString()}
+
+== 我的原創作品 (My original work) ==
+作品名稱：${work?.name ?? '(未命名)'}
+${ownFile}
+
+== 偵測到的疑似盜用 (Detected infringing upload) ==
+比對曲目：${r.title ?? '(未知)'} / ${r.artist ?? '—'}
+專輯：${r.album ?? '—'}
+相似度：${r.similarity}%（比對方式：${matchKind}）
+ACRCloud ID：${r.acrid ?? '—'}
+ISRC：${r.isrc ?? '—'}
+
+上架平台與連結 (Where it is hosted)：
+${platformLines}
+
+== 技術證據 (Technical evidence) ==
+比對引擎：ACRCloud Audio Fingerprinting
+說明：相似度 ${r.similarity}% 表示上架版本與我的原始錄音在音訊指紋層級${r.similarity >= 98 ? '完全相同' : '高度相似'}。
+
+== 著作權聲明 (DMCA statement) ==
+我在此聲明，我對上述原創作品擁有著作權（或經授權代表權利人）。上述平台連結所指之內容未經我授權使用了我的錄音，構成侵權。
+我基於誠信相信此使用未經著作權人、其代理人或法律授權。本通知所載資訊正確無誤；在偽證罪責下，我聲明我有權就上述受侵權之專屬權利行事。
+我要求平台移除或停用對該侵權內容的存取。
+
+權利人簽署 (Signature)：__________________________
+日期 (Date)：${now.toLocaleDateString('zh-TW')}
+聯絡方式 (Contact)：__________________________
+`
+}
+
 // ── Render helpers ────────────────────────────────────────
 
 // Build one result row element.
-function buildResultItem(r, i) {
+function buildResultItem(r, i, work) {
   const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
 
   const item = document.createElement('div')
@@ -710,6 +764,35 @@ function buildResultItem(r, i) {
     }
   }
 
+  // Takedown evidence — generate a DMCA report .txt (+ copy to clipboard).
+  const evBtn = document.createElement('button')
+  evBtn.className = 'result-evidence-btn'
+  evBtn.textContent = '取證'
+  evBtn.setAttribute('data-tooltip', '產生下架/DMCA 證據報告（含你的檔案雜湊 + 盜用連結）')
+  evBtn.addEventListener('click', async (e) => {
+    e.stopPropagation()
+    evBtn.disabled = true
+    evBtn.textContent = '產生中…'
+    try {
+      const report = await generateTakedownReport(work, r)
+      const safeName = (r.title || 'work').replace(/[^\w一-龥-]/g, '_').slice(0, 40)
+      const blob = new Blob([report], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `takedown_${safeName}.txt`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      try { await navigator.clipboard?.writeText(report) } catch { /* clipboard optional */ }
+      evBtn.textContent = '已下載 ✓'
+    } catch (err) {
+      evBtn.textContent = '失敗'
+      console.error('[takedown report]', err)
+    } finally {
+      setTimeout(() => { evBtn.disabled = false; evBtn.textContent = '取證' }, 2500)
+    }
+  })
+  linksEl.appendChild(evBtn)
+
   item.append(simEl, infoEl, linksEl)
   return item
 }
@@ -754,11 +837,11 @@ function renderResults(work) {
   let i = 0
   if (exact.length) {
     fragment.appendChild(buildResultSection('exact', exact.length))
-    for (const r of exact) fragment.appendChild(buildResultItem(r, i++))
+    for (const r of exact) fragment.appendChild(buildResultItem(r, i++, work))
   }
   if (cover.length) {
     fragment.appendChild(buildResultSection('cover', cover.length))
-    for (const r of cover) fragment.appendChild(buildResultItem(r, i++))
+    for (const r of cover) fragment.appendChild(buildResultItem(r, i++, work))
   }
   listEl.replaceChildren(fragment)
 }

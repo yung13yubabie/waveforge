@@ -2533,6 +2533,20 @@
 }
 .result-link-chip:hover { border-color: var(--c-blue); color: var(--c-blue); }
 .result-link-chip.search { border-style: dashed; opacity: 0.85; }
+
+.result-evidence-btn {
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--c-primary);
+  background: var(--c-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.result-evidence-btn:hover:not(:disabled) { background: var(--c-primary-h); border-color: var(--c-primary-h); }
+.result-evidence-btn:disabled { opacity: 0.6; cursor: default; }
 .result-no-link { font-size: 11px; color: var(--c-text-3); }
 
 .result-source { font-size: 10px; padding: 1px 6px; border-radius: var(--r-full); margin-left: 4px; }
