@@ -68,6 +68,10 @@ class LUFSProcessor extends AudioWorkletProcessor {
     this._blocks = []
     this._tpDL[0].fill(0); this._tpDL[1].fill(0)
     this._truePeak = 0; this._reportCtr = 0
+    // The K-weighting biquads keep ringing from the previous material unless
+    // their state is cleared too, which reports a phantom level after a reset.
+    for (const s of this._preS) s.fill(0)
+    for (const s of this._rlbS) s.fill(0)
   }
 
   // Build K-weighting biquad coefficients for given sample rate
@@ -135,7 +139,9 @@ class LUFSProcessor extends AudioWorkletProcessor {
         // True peak from the un-weighted signal, 4× oversampled (BS.1770-4 A2)
         this._trackTruePeak(ch, x)
       }
-      ms /= nCh
+      // BS.1770-4 sums the weighted channel powers (G = 1.0 for L and R).
+      // Averaging instead read 3.01 LU low on every stereo source — verified
+      // against the EBU Tech 3341 calibration tones in the worklet test.
 
       this._mBuf[this._mPos % this._mBuf.length] = ms
       this._mPos++

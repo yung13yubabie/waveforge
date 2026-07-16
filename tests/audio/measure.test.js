@@ -28,6 +28,27 @@ describe('measureIntegratedLUFS', () => {
     expect(lufs).toBeLessThan(0)
   })
 
+  // The export receipt must agree with the live meter, so it is held to the
+  // same published EBU Tech 3341 calibration tones as tests/audio/lufs-worklet.
+  describe('EBU Tech 3341 calibration', () => {
+    const dbfs = (db) => Math.pow(10, db / 20)
+
+    it('reads a stereo 1kHz tone at -23 dBFS as -23.0 LUFS', () => {
+      const x = sine(1000, dbfs(-23), 2)
+      expect(measureIntegratedLUFS([x, x], SR)).toBeCloseTo(-23.0, 1)
+    })
+
+    it('reads a stereo 1kHz tone at -20 dBFS as -20.0 LUFS', () => {
+      const x = sine(1000, dbfs(-20), 2)
+      expect(measureIntegratedLUFS([x, x], SR)).toBeCloseTo(-20.0, 1)
+    })
+
+    it('reads a single-channel 1kHz tone at -20 dBFS as -23.0 LUFS', () => {
+      const x = sine(1000, dbfs(-20), 2)
+      expect(measureIntegratedLUFS([x], SR)).toBeCloseTo(-23.0, 1)
+    })
+  })
+
   it('is monotonic: louder signal → higher LUFS', () => {
     const quiet = sine(1000, 0.1, 2)
     const loud  = sine(1000, 0.6, 2)

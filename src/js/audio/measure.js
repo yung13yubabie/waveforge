@@ -49,7 +49,10 @@ export function measureIntegratedLUFS(channels, sr) {
       const rlb = biquad(pre, rlbS[ch], c.rlbB, c.rlbA)
       ms += rlb * rlb
     }
-    msBuf[i] = ms / nCh
+    // BS.1770-4 sums the weighted channel powers (G = 1.0 for L and R);
+    // averaging read 3.01 LU low on stereo. Must match lufs-worklet.js so the
+    // export receipt agrees with the live meter.
+    msBuf[i] = ms
   }
 
   // 400ms block mean-squares
