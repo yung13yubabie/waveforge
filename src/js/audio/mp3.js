@@ -1,4 +1,4 @@
-import lamejs from 'lamejs'
+import * as lamejs from '@breezystack/lamejs'
 
 const VALID_SAMPLE_RATES = new Set([8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000])
 
