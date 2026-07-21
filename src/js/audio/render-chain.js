@@ -179,6 +179,16 @@ export async function renderMasterChain({
   return off.startRendering()
 }
 
+// Frequency grid for sampling a filter's response, 0..Nyquist over n+1 points.
+// Clamped above 0Hz since a biquad's response is undefined there. Shared by
+// every linear-phase EQ call site so single-track export and album per-track
+// rendering sample the response the same way.
+export function buildFreqGrid(nyquist, n) {
+  const grid = new Float32Array(n + 1)
+  for (let k = 0; k <= n; k++) grid[k] = Math.max(1, (k / n) * nyquist)
+  return grid
+}
+
 // EQ magnitude (10-band biquad product) at the given freqs, computed from a
 // params snapshot — for designing the linear-phase FIR without touching live
 // nodes. Builds throwaway biquads in a 1-frame OfflineAudioContext.

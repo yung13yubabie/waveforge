@@ -23,7 +23,7 @@ import { averageSpectrum, computeMatchCurve } from './audio/match-eq.js'
 import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
 import { listUserPresets, saveUserPreset, getUserPreset } from './user-presets.js'
-import { renderMasterChain } from './audio/render-chain.js'
+import { renderMasterChain, eqMagnitudeFromParams, buildFreqGrid } from './audio/render-chain.js'
 import { SUPABASE_READY, HF_READY } from './config.js'
 import { truePeakLimit } from './audio/true-peak-limiter.js'
 import { assembleAlbum } from './audio/album-assembly.js'
@@ -205,6 +205,9 @@ async function boot() {
 
   const engine   = new AudioEngine()
   const stems    = new StemsPanel(document.getElementById('stems-container'))
+  // Must match render-chain.js's own FFT_N — it designs the linear-phase FIR
+  // from a magnitude array sized for this many bins.
+  const EQ_LINPHASE_FFT_N = 4096
 
   // WaveSurfer for main waveform
   let ws = null
@@ -393,7 +396,7 @@ async function boot() {
       ws.setMuted(true)
 
       // Dev-only handle for E2E assertions (Playwright reads ws/engine state)
-      if (import.meta.env.DEV) window.__wf = { ws, wsRegions, engine, album, spectrogram, gonio, loudnessGraph }
+      if (import.meta.env.DEV) window.__wf = { ws, wsRegions, engine, album, spectrogram, gonio, loudnessGraph, eqMagnitudeFromParams }
 
       ws.on('interaction', (newTime) => {
         // Guard: duration 0 (empty decode) would produce Infinity → NaN seek
@@ -1210,13 +1213,26 @@ async function boot() {
       new Promise((_, rej) => setTimeout(() => rej(new Error(`「${track.title}」解碼逾時`)), 30000)),
     ])
     const snap = track.snapshot ?? engine.serialize()
+    const bypassed = snap.bypassed ?? engine.bypassed
     // Album loudness trim folds into limInput (PRE-limiter) so the true-peak
     // ceiling still protects against clipping — never as post-limiter output gain.
     const params = { ...snap.params, limInput: (snap.params?.limInput ?? 0) + (track.gainTrimDb || 0) }
+
+    // Linear-phase EQ is a single export-time toggle shared with single-track
+    // export (matches DDP_RATE below: one setting applied uniformly across the
+    // album). Each track's OWN snapshot gains feed the FIR design — never the
+    // live engine's current gains, which reflect whichever track (if any) is
+    // loaded in the main view and would otherwise bleed into every track.
+    let linPhaseMag = null
+    if (!bypassed.eq && document.getElementById('eq-linphase')?.checked) {
+      const grid = buildFreqGrid(DDP_RATE / 2, EQ_LINPHASE_FFT_N / 2)
+      linPhaseMag = eqMagnitudeFromParams(engine, params.eqGains, grid, DDP_RATE)
+    }
+
     return renderMasterChain({
       engine, sourceBuffer: decoded, params,
-      bypassed: snap.bypassed ?? engine.bypassed,
-      sampleRate: DDP_RATE, linPhaseMag: null, dynamicsWorkletUrl,
+      bypassed,
+      sampleRate: DDP_RATE, linPhaseMag, dynamicsWorkletUrl,
     })
   }
   if (import.meta.env.DEV) window.__wf_renderAlbumTrack = renderAlbumTrack
@@ -1450,10 +1466,7 @@ async function boot() {
 
       let linPhaseMag = null
       if (!byp.eq && document.getElementById('eq-linphase')?.checked) {
-        const FFT_N = 4096
-        const grid = new Float32Array(FFT_N / 2 + 1)
-        const nyq = engine.ctx.sampleRate / 2
-        for (let k = 0; k <= FFT_N / 2; k++) grid[k] = Math.max(1, (k / (FFT_N / 2)) * nyq)
+        const grid = buildFreqGrid(engine.ctx.sampleRate / 2, EQ_LINPHASE_FFT_N / 2)
         linPhaseMag = engine.getEQResponse(grid)
       }
 
