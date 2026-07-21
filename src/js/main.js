@@ -1,4 +1,5 @@
 import WaveSurfer from 'wavesurfer.js'
+import RegionsPlugin from 'wavesurfer.js/plugins/regions'
 import { initModeNav }        from './mode-nav.js'
 import { initAntiTheft }      from './antitheft.js'
 import { initStemsMastering } from './stems-mastering.js'
@@ -16,6 +17,7 @@ import { detectBPM, detectKey } from './audio/analyze.js'
 import { buildExportReport, measureIntegratedLUFS } from './audio/measure.js'
 import { encodeWAV } from './audio/wav.js'
 import { encodeMP3 } from './audio/mp3.js'
+import { trimBuffer } from './audio/trim.js'
 import { embedWatermark } from './audio/watermark.js'
 import { averageSpectrum, computeMatchCurve } from './audio/match-eq.js'
 import { Album, loudnessTrim } from './album.js'
@@ -206,6 +208,10 @@ async function boot() {
 
   // WaveSurfer for main waveform
   let ws = null
+  let wsRegions = null
+  // Export-only trim range in seconds ({start, end} or null = export full length)
+  let trimRange = null
+  let disableTrimDrag = null
   // Loudness target of the active preset (null = no target) — used by export report
   let activeTargetLUFS = null
   // Album sequence (Phase 6) + the currently-loaded File (for per-track snapshot)
@@ -248,6 +254,67 @@ async function boot() {
     } finally {
       isLoadingFile = false
     }
+  }
+
+  // ── Trim (export-only selection) ─────────────────────────
+  // Wires the ✂ toggle, region drag-select, and the ✕ clear button. Called
+  // once per loaded file since wsRegions is recreated alongside ws.
+  function initTrimControls() {
+    const toggleBtn = document.getElementById('trim-toggle')
+    const clearBtn  = document.getElementById('trim-clear')
+    const rangeOut  = document.getElementById('trim-range')
+
+    const showRange = () => {
+      if (trimRange) {
+        rangeOut.textContent = `${fmtTime(trimRange.start)} – ${fmtTime(trimRange.end)}`
+        rangeOut.hidden = false
+        clearBtn.hidden = false
+        clearBtn.disabled = false
+      } else {
+        rangeOut.hidden = true
+        clearBtn.hidden = true
+        clearBtn.disabled = true
+      }
+    }
+
+    wsRegions.on('region-created', (region) => {
+      // Only one trim region makes sense — drop any earlier selection first.
+      for (const r of wsRegions.getRegions()) if (r !== region) r.remove()
+      trimRange = { start: region.start, end: region.end }
+      showRange()
+    })
+    wsRegions.on('region-updated', (region) => {
+      trimRange = { start: region.start, end: region.end }
+      showRange()
+    })
+    wsRegions.on('region-removed', () => {
+      // A resize can legally shrink to zero-length, which WaveSurfer reports
+      // as a removal rather than an update — clear the range either way.
+      trimRange = null
+      showRange()
+    })
+
+    toggleBtn.addEventListener('click', () => {
+      const active = toggleBtn.getAttribute('aria-pressed') === 'true'
+      if (active) {
+        disableTrimDrag?.()
+        disableTrimDrag = null
+        toggleBtn.setAttribute('aria-pressed', 'false')
+        toggleBtn.classList.remove('active')
+      } else {
+        disableTrimDrag = wsRegions.enableDragSelection({ color: 'rgba(255,75,110,0.25)' })
+        toggleBtn.setAttribute('aria-pressed', 'true')
+        toggleBtn.classList.add('active')
+      }
+    })
+
+    clearBtn.addEventListener('click', () => {
+      wsRegions.clearRegions()
+      trimRange = null
+      showRange()
+    })
+
+    showRange()
   }
 
   async function doLoadFile(file) {
@@ -298,6 +365,10 @@ async function boot() {
 
       // Load into WaveSurfer for visual display
       if (ws) ws.destroy()
+      // A new file invalidates any prior selection — never carry a trim
+      // range from one track into another track's export.
+      trimRange = null
+      disableTrimDrag = null
       ws = WaveSurfer.create({
         container:     '#waveform-main',
         waveColor:     'rgba(255,75,110,0.5)',
@@ -309,6 +380,9 @@ async function boot() {
         normalize:     true,
         interact:      true,
       })
+      wsRegions = RegionsPlugin.create()
+      ws.registerPlugin(wsRegions)
+      initTrimControls()
 
       await ws.loadBlob(new Blob([wsBuf]))
 
@@ -319,7 +393,7 @@ async function boot() {
       ws.setMuted(true)
 
       // Dev-only handle for E2E assertions (Playwright reads ws/engine state)
-      if (import.meta.env.DEV) window.__wf = { ws, engine, album, spectrogram, gonio, loudnessGraph }
+      if (import.meta.env.DEV) window.__wf = { ws, wsRegions, engine, album, spectrogram, gonio, loudnessGraph }
 
       ws.on('interaction', (newTime) => {
         // Guard: duration 0 (empty decode) would produce Infinity → NaN seek
@@ -346,6 +420,7 @@ async function boot() {
       document.getElementById('export-btn').disabled  = false
       document.getElementById('album-add-btn').disabled = false
       document.getElementById('stems-ai-btn').disabled = false
+      document.getElementById('trim-toggle').disabled = false
       for (const z of ['zoom-in','zoom-out','zoom-fit'])
         document.getElementById(z)?.removeAttribute('disabled')
 
@@ -1362,7 +1437,12 @@ async function boot() {
     setProcessing(true, '渲染處理後音訊（離線渲染）...', 0)
 
     try {
-      const dur    = engine.buffer.duration
+      // A trim selection only ever narrows the export — playback, the
+      // waveform, and the meters keep showing the full untrimmed track.
+      const sourceBuffer = trimRange
+        ? trimBuffer(engine.buffer, trimRange.start, trimRange.end)
+        : engine.buffer
+      const dur    = sourceBuffer.duration
       const p      = engine.params
       const byp    = engine.bypassed
       const format = document.getElementById('export-format')?.value ?? 'wav'
@@ -1379,7 +1459,7 @@ async function boot() {
 
       setProcessing(true, `渲染中（${fmtTime(dur)}，${exportSR / 1000} kHz）...`, 30)
       const rendered = await renderMasterChain({
-        engine, sourceBuffer: engine.buffer, params: p, bypassed: byp,
+        engine, sourceBuffer, params: p, bypassed: byp,
         sampleRate: exportSR, linPhaseMag, dynamicsWorkletUrl,
       })
       setProcessing(true, '分析輸出...', 70)

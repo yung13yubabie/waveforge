@@ -488,6 +488,25 @@
   text-align: center;
 }
 
+.waveform-trim {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.icon-btn.active {
+  color: var(--c-primary);
+  background: var(--c-bg-elevated);
+}
+
+.waveform-trim-value {
+  padding: 0 var(--sp-2);
+  color: var(--c-text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 #waveform-main {
   flex: 1;
   min-height: 0;

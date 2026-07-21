@@ -193,6 +193,11 @@
         <span class="waveform-label">主波形</span>
         <button class="icon-btn" id="undo-btn" disabled data-tooltip="復原 (Ctrl+Z)" aria-label="復原">↶</button>
         <button class="icon-btn" id="redo-btn" disabled data-tooltip="重做 (Ctrl+Shift+Z)" aria-label="重做">↷</button>
+        <div class="waveform-trim">
+          <button class="icon-btn" id="trim-toggle" disabled data-tooltip="裁剪：拖曳波形選取範圍" aria-pressed="false" aria-label="裁剪">✂</button>
+          <output class="waveform-trim-value" id="trim-range" aria-live="polite" hidden></output>
+          <button class="icon-btn" id="trim-clear" disabled data-tooltip="清除裁剪範圍" aria-label="清除裁剪" hidden>✕</button>
+        </div>
         <div class="waveform-zoom">
           <span class="waveform-zoom-label" aria-hidden="true">VIEW</span>
           <button class="icon-btn" id="zoom-out" disabled data-tooltip="縮小" aria-label="縮小">−</button>
