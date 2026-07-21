@@ -69,4 +69,9 @@ describe('scopePoints', () => {
     const pts = scopePoints(l, r, 1024)
     expect(pts.length).toBe(50)
   })
+
+  it('returns an empty array for an empty frame', () => {
+    // A freshly-reset meter can call this before any audio has been captured.
+    expect(scopePoints(new Float32Array(0), new Float32Array(0))).toEqual([])
+  })
 })

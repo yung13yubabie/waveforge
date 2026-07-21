@@ -24,7 +24,20 @@ describe('config', () => {
     expect(c.HF_ENDPOINT).toBe('https://hf.example/api')
   })
 
-  it('falls back to empty strings when the environment is unset', async () => {
+  it('falls back to empty strings when the environment variables are truly absent', async () => {
+    // Stubbing to '' (as the other case below does) sets a falsy value, but
+    // ?? only falls back on null/undefined — an explicit '' never exercises
+    // that branch. This omits stubEnv entirely so the vars are genuinely
+    // undefined, the only way to actually hit the ?? fallback.
+    vi.resetModules()
+    const c = await import('../src/js/config.js')
+
+    expect(c.SUPABASE_URL).toBe('')
+    expect(c.SUPABASE_ANON_KEY).toBe('')
+    expect(c.HF_ENDPOINT).toBe('')
+  })
+
+  it('treats an explicitly empty string the same as unset', async () => {
     const c = await loadConfig({
       VITE_SUPABASE_URL: '',
       VITE_SUPABASE_ANON_KEY: '',
