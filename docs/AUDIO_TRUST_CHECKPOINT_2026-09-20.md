@@ -43,6 +43,12 @@ Baseline: `777a30f`. Specification: the user-supplied Full DAW All-In Master Pro
 - Read-only independent review found no remaining High/Medium release blockers in the scoped source-loading, transport, stem-locking and album-trim fixes.
 - `git diff --check`: PASS. No new dependencies or separate package/asset generation step is required for this Vite deployment. Live deployment validation is recorded separately.
 
+## Live deployment verification
+
+Application commit `96d1966` deployed successfully via [GitHub Pages run 35503803554](https://github.com/yung13yubabie/waveforge/actions/runs/35503803554). Eight browser tests passed against the public site: numeric controls/reset, source upload and corrupt-file recovery, incomplete stem input, old-stem invalidation, overload rejection/explicit clipping, 96 kHz preview/download, four-stem preview/Bounce/download, and real configured Demucs separation. The synthetic 0.5-second WAV returned four decodable stems in a 27-second browser test; this verifies integration, not musical separation quality or long-file throughput.
+
+An initial live test failed because it assumed the unconfigured local backend: it expected separation to remain disabled after corrupt replacement. Production has a configured backend, so the live assertion was corrected to require restoration of the button's pre-replacement state. The repeated live suite passed all eight tests. Local live-run scripts, screenshots and failure/success evidence are under `outputs/release-96d1966/` (ignored artifacts).
+
 ## Full specification status
 
 Phase A is **IN PROGRESS**, not PASS. This change is a bug-fix checkpoint, not completion of the Full DAW specification. Remaining acceptance work includes:
@@ -53,7 +59,7 @@ Phase A is **IN PROGRESS**, not PASS. This change is a bug-fix checkpoint, not c
 - Strict post-limit ceiling verification against independent/reference inter-sample vectors, post-codec QC, iterative measured album loudness.
 - Stem/session persistence, undo and aligned multi-rate source assets; new project/timeline/recording/MIDI/WAM/automation/takes/AI phases B–M remain unimplemented.
 
-Cloud separation, real microphones/devices, long-session stress and Firefox/WebKit were not validated by this checkpoint. No fake PASS or production-ready full-DAW claim is warranted.
+Real microphones/devices, long-session stress and Firefox/WebKit were not validated by this checkpoint. Cloud integration was verified only with the short synthetic fixture described above. No fake PASS or production-ready full-DAW claim is warranted.
 
 ## Documentation grounding
 
