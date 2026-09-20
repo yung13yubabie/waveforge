@@ -23,6 +23,15 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Build and verify without backend credentials
+        run: |
+          npm run build
+          npm run lint
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:e2e -- --workers=1
+          npm run test:account
+          npm run test:production
       # Backend endpoints are baked into the bundle at build time.
       # Set these in: repo Settings → Secrets and variables → Actions → Secrets
       # Without them the deployed site runs in guest/demo mode.

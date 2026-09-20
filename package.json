@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
+    "test:account": "playwright test -c playwright.account.config.js",
     "test:production": "playwright test -c playwright.production.config.js",
     "verify": "npm test && npm run build",
     "lint": "node scripts/check-syntax.mjs"

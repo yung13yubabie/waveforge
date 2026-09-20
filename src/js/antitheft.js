@@ -2,18 +2,16 @@
  * Anti-Theft Detection — Supabase Auth + ACRCloud 音訊指紋比對
  *
  * 模式：
- *   SUPABASE_READY=false → 訪客模式（localStorage ACR key，Demo 掃描結果）
- *   SUPABASE_READY=true  → 完整模式（Supabase 帳號 + Edge Function 呼叫 ACRCloud）
+ *   SUPABASE_CONFIGURED=false → 訪客模式（localStorage ACR key，Demo 掃描結果）
+ *   SUPABASE_CONFIGURED=true  → 完整模式（Supabase 帳號 + Edge Function 呼叫 ACRCloud）
  */
 
-import { createClient } from '@supabase/supabase-js'
-import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_READY } from './config.js'
+import { createBackendConnection } from './backend-connection.js'
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_CONFIGURED } from './config.js'
 import { sha256Hex } from './audio/sha256.js'
 
-// ── Supabase client (lazy init) ───────────────────────────
-const supabase = SUPABASE_READY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null
+let supabase = null
+const backend = createBackendConnection(SUPABASE_URL, SUPABASE_ANON_KEY, renderBackendState)
 
 // ── Auth state ────────────────────────────────────────────
 let currentUser = null     // { id, email } | null
@@ -43,7 +41,7 @@ export function checkAuthOverlay() {
   const settingsBtn = document.getElementById('settings-auth-btn')
   const avatarEl = document.getElementById('auth-avatar')
 
-  const shouldBlock = SUPABASE_READY && !currentUser
+  const shouldBlock = SUPABASE_CONFIGURED && !currentUser
   if (overlay) overlay.classList.toggle('visible', shouldBlock)
 
   if (currentUser) {
@@ -53,7 +51,8 @@ export function checkAuthOverlay() {
     if (loginBtn)   loginBtn.hidden = true
     if (settingsBtn) settingsBtn.textContent = '登出'
   } else {
-    if (infoEl)     infoEl.textContent = SUPABASE_READY ? '未登入' : '訪客模式'
+    if (infoEl) infoEl.textContent = backend.state.status === 'unavailable'
+      ? '帳號服務暫時無法連線' : SUPABASE_CONFIGURED ? '未登入' : '訪客模式'
     if (avatarEl)   avatarEl.hidden = true
     if (loginBtn)   loginBtn.hidden = false
     if (settingsBtn) settingsBtn.textContent = '登入 / 註冊'
@@ -63,32 +62,53 @@ export function checkAuthOverlay() {
 }
 
 // ── Supabase auth methods ─────────────────────────────────
-async function signInEmail(email, password) {
-  if (!supabase) return { error: new Error('Supabase 未設定') }
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-  return { data, error }
-}
-
-async function signUpEmail(email, password) {
-  if (!supabase) return { error: new Error('Supabase 未設定') }
-  const { data, error } = await supabase.auth.signUp({ email, password })
-  return { data, error }
-}
-
 async function signInGoogle() {
-  if (!supabase) return
-  await supabase.auth.signInWithOAuth({
+  if (!supabase) throw new Error(backend.state.message)
+  const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.href },
   })
+  if (error) throw error
 }
 
 async function signOut() {
-  if (supabase) await supabase.auth.signOut()
-  currentUser = null
+  if (!supabase) return
+  try {
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
+  } catch (error) {
+    const info = document.getElementById('auth-user-info')
+    if (info) info.textContent = `登出失敗：${error.message}`
+  }
+}
+
+function clearAccountData() {
   acrAccessKey = ''
   acrAccessSecret = ''
-  checkAuthOverlay()
+  spotifyClientId = ''
+  spotifyClientSecret = ''
+  emailNotify = true
+  works.length = 0
+  activeWorkId = null
+  for (const id of ['acr-api-key', 'acr-api-secret', 'spotify-client-id', 'spotify-client-secret']) {
+    const input = document.getElementById(id)
+    if (input) input.value = ''
+  }
+  const notify = document.getElementById('email-notify-toggle')
+  if (notify) notify.checked = true
+  setKeyStatus('acr-key-status', '', '')
+  setKeyStatus('spotify-key-status', '', '')
+  renderWorksList()
+  renderResults(null)
+  for (const [id, text] of Object.entries({
+    'scan-track-name': '選擇作品開始掃描', 'scan-status-text': '等待中',
+    'scan-matches-count': '—', 'scan-last-time': '—', 'scan-results-count': '0 筆',
+  })) {
+    const element = document.getElementById(id)
+    if (element) element.textContent = text
+  }
+  const provenance = document.getElementById('scan-provenance')
+  if (provenance) { provenance.hidden = true; provenance.textContent = '' }
 }
 
 // ── Load user settings from Supabase ─────────────────────
@@ -100,6 +120,7 @@ async function loadUserSettings(userId) {
     .eq('user_id', userId)
     .single()
 
+  if (currentUser?.id !== userId) return
   if (data) {
     acrAccessKey        = data.acr_access_key ?? ''
     acrAccessSecret     = data.acr_access_secret ?? ''
@@ -133,13 +154,14 @@ async function loadUserSettings(userId) {
 // ── Load user's works from Supabase DB ────────────────────
 async function loadWorksFromDB() {
   if (!supabase || !currentUser) return
+  const userId = currentUser.id
   const { data, error } = await supabase
     .from('works')
     .select('id, name, fingerprint_ok, last_scan')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
 
-  if (error || !data) return
+  if (currentUser?.id !== userId || error || !data) return
 
   // Merge DB works with in-memory (avoid duplicates by id)
   for (const dbWork of data) {
@@ -193,11 +215,11 @@ async function saveSettings() {
 
   // Live mode requires login BEFORE we touch the UI's saving state — these
   // are synchronous guards, no need to disable the button for them.
-  if (SUPABASE_READY && !currentUser) {
+  if (SUPABASE_CONFIGURED && !currentUser) {
     setKeyStatus('acr-key-status', '請先登入帳號再儲存（登入後金鑰才會綁定帳號）', 'error')
     return
   }
-  if (SUPABASE_READY && !acrAccessSecret) {
+  if (SUPABASE_CONFIGURED && !acrAccessSecret) {
     setKeyStatus('acr-key-status', '請一併填入 Access Secret', 'error')
     return
   }
@@ -206,7 +228,7 @@ async function saveSettings() {
   // try/catch so a thrown or timed-out request can never leave the UI with no
   // feedback ("沒反應" / stuck on "儲存中…"). Every path ends in a visible status.
   try {
-    if (SUPABASE_READY) {
+    if (SUPABASE_CONFIGURED) {
       setKeyStatus('acr-key-status', '儲存中…', 'pending')
       const acrHost = document.getElementById('acr-host')?.value || 'identify-ap-southeast-1.acrcloud.com'
       const { error } = await withTimeout(
@@ -418,7 +440,7 @@ async function scanWorkComplete(work) {
   const countEl  = document.getElementById('scan-results-count')
 
   if (!acrAccessKey) { if (statusEl) statusEl.textContent = '請先在設定中填入 ACRCloud Access Key'; return }
-  if (!(SUPABASE_READY && currentUser && work.file)) {
+  if (!(SUPABASE_CONFIGURED && currentUser && work.file)) {
     if (statusEl) statusEl.textContent = '完整掃描需登入 + 該作品音訊在本分頁（重新整理後遺失請重傳）'
     return
   }
@@ -501,7 +523,7 @@ async function scanWork(work) {
   // Live mode with a DB-restored work: the audio only exists in the browser
   // session that uploaded it. Refuse clearly instead of falling into demo —
   // silently showing demo data on a real account is dishonest.
-  if (SUPABASE_READY && currentUser && !work.file) {
+  if (SUPABASE_CONFIGURED && currentUser && !work.file) {
     if (statusEl) statusEl.textContent = '此作品的音訊檔不在本分頁（重新整理後遺失）— 請重新上傳同一檔案再掃描'
     return
   }
@@ -516,7 +538,7 @@ async function scanWork(work) {
     let provenance   // 掃描證據：真實掃描顯示 ACR 回應碼 + 耗時；demo 明確標示
     let isReal = false
 
-    if (SUPABASE_READY && currentUser && work.file) {
+    if (SUPABASE_CONFIGURED && currentUser && work.file) {
       // ── Live mode: call Supabase Edge Function ────────
       const t0 = performance.now()
       const sample = await extractAudioSample(work.file, SCAN_SAMPLE_SEC)
@@ -537,7 +559,7 @@ async function scanWork(work) {
     } else {
       // ── Demo mode: stub results, clearly labelled as Demo ─
       await new Promise(r => setTimeout(r, 3000))
-      const modeNote = SUPABASE_READY ? '（需登入帳號）' : '（需設定 Supabase）'
+      const modeNote = SUPABASE_CONFIGURED ? '（需登入帳號）' : '（需設定 Supabase）'
       results = [
         { similarity: 94, title: `[示範資料] 非真實掃描結果 ${modeNote}`, artist: '—', platform: 'Demo', url: '#' },
         { similarity: 81, title: '[示範資料] 完成後端設定後才會執行真實 ACRCloud 比對', artist: '—', platform: 'Demo', url: '#' },
@@ -1125,13 +1147,8 @@ function initAuthModal() {
   const tabSignIn  = document.getElementById('auth-tab-signin')
   const tabSignUp  = document.getElementById('auth-tab-signup')
 
-  // Show backend status notice when Supabase is not configured
-  if (!SUPABASE_READY) {
-    const notice = document.getElementById('auth-backend-notice')
-    if (notice) notice.hidden = false
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.setAttribute('data-tooltip', '後端未設定，無法登入') }
-    if (googleBtn) { googleBtn.disabled = true; googleBtn.setAttribute('data-tooltip', '後端未設定，無法登入') }
-  }
+  renderBackendState(backend.state)
+  document.getElementById('auth-retry')?.addEventListener('click', connectAccount)
 
   let isSignUp = false
 
@@ -1166,25 +1183,66 @@ function initAuthModal() {
     submitBtn.textContent = isSignUp ? '註冊中...' : '登入中...'
     setMsg('')
 
-    const fn = isSignUp ? signUpEmail : signInEmail
-    const { error } = await fn(email, pass)
-
-    if (error) {
-      setMsg(error.message, true)
-    } else {
+    try {
+      if (!supabase) throw new Error(backend.state.message)
+      const { error } = await supabase.auth[isSignUp ? 'signUp' : 'signInWithPassword']({ email, password: pass })
+      if (error) throw error
       setMsg(isSignUp ? '已寄出驗證信，請確認後再登入' : '登入成功！')
       if (!isSignUp) setTimeout(() => modal?.classList.remove('open'), 1000)
+    } catch (error) {
+      setMsg(error.message, true)
+    } finally {
+      submitBtn.disabled = backend.state.status !== 'ready'
+      submitBtn.textContent = isSignUp ? '註冊' : '登入'
     }
-
-    submitBtn.disabled = false
-    submitBtn.textContent = isSignUp ? '註冊' : '登入'
   })
 
-  googleBtn?.addEventListener('click', () => signInGoogle())
+  googleBtn?.addEventListener('click', async () => {
+    googleBtn.disabled = true
+    setMsg('正在開啟 Google 登入…')
+    try { await signInGoogle() }
+    catch (error) { setMsg(error.message, true) }
+    finally { googleBtn.disabled = backend.state.status !== 'ready' }
+  })
 
   closeBtn?.addEventListener('click', () => modal?.classList.remove('open'))
   modal?.addEventListener('click', e => {
     if (e.target === modal) modal.classList.remove('open')
+  })
+}
+
+function renderBackendState({ status, message }) {
+  const notice = document.getElementById('auth-backend-notice')
+  if (notice) { notice.hidden = status === 'ready'; notice.textContent = message }
+  for (const id of ['auth-submit', 'auth-google']) {
+    const button = document.getElementById(id)
+    if (button) button.disabled = status !== 'ready'
+  }
+  const retry = document.getElementById('auth-retry')
+  if (retry) { retry.hidden = status !== 'unavailable'; retry.disabled = status === 'checking' }
+  const info = document.getElementById('auth-user-info')
+  if (info && status === 'unavailable') info.textContent = '帳號服務暫時無法連線'
+}
+
+async function connectAccount() {
+  const client = await backend.connect()
+  if (!client || supabase === client) return
+  supabase = client
+  // Auth callbacks hold the SDK lock. Defer database work until it is released,
+  // and load account data only when the user changes, not on every token refresh.
+  supabase.auth.onAuthStateChange((event, session) => {
+    const previousId = currentUser?.id
+    currentUser = session?.user ? { id: session.user.id, email: session.user.email } : null
+    if (previousId && previousId !== currentUser?.id) clearAccountData()
+    checkAuthOverlay()
+    if (currentUser && currentUser.id !== previousId) {
+      const uid = currentUser.id
+      setTimeout(() => {
+        if (currentUser?.id !== uid) return
+        loadUserSettings(uid)
+        loadWorksFromDB()
+      }, 0)
+    }
   })
 }
 
@@ -1199,7 +1257,7 @@ export function initAntiTheft() {
   initAuthModal()
 
   // Restore guest-mode ACR key from localStorage (Secret is never persisted)
-  if (!SUPABASE_READY) {
+  if (!SUPABASE_CONFIGURED) {
     // Purge any Secret persisted by older builds — must not live in localStorage
     localStorage.removeItem('acr-api-secret')
     const storedKey = localStorage.getItem('acr-api-key')
@@ -1270,39 +1328,9 @@ export function initAntiTheft() {
     document.getElementById('auth-modal')?.classList.add('open')
   })
 
-  // Supabase auth state listener.
-  // CRITICAL: never `await` (or even call synchronously) other Supabase
-  // methods inside this callback — it runs while auth-js holds its lock, and a
-  // reentrant call that needs the same lock DEADLOCKS. After that every later
-  // call (key save, scan getSession) hangs until timeout. Defer the DB loads
-  // out of the callback with setTimeout(0) so the lock is released first.
-  // (onAuthStateChange also emits INITIAL_SESSION on subscribe, so this covers
-  // page-load session restore — no separate getSession() needed.)
-  if (supabase) {
-    supabase.auth.onAuthStateChange((event, session) => {
-      currentUser = session?.user
-        ? { id: session.user.id, email: session.user.email }
-        : null
+  connectAccount()
 
-      checkAuthOverlay()
-
-      if (currentUser) {
-        const uid = currentUser.id
-        setTimeout(() => {
-          loadUserSettings(uid)
-          loadWorksFromDB()
-        }, 0)
-      }
-    })
-  }
-
-  // Show mode note if Supabase not configured
-  if (!SUPABASE_READY) {
-    const modeNote = document.getElementById('auth-user-info')
-    if (modeNote) modeNote.textContent = '訪客模式 — 掃描為 Demo 結果'
-  }
-
-  if (!SUPABASE_READY) {
+  if (!SUPABASE_CONFIGURED) {
     const panel = document.querySelector('#mode-antitheft .antitheft-panel')
     const banner = document.createElement('div')
     banner.className = 'guest-mode-banner'

@@ -10,6 +10,6 @@ export const ACR_EDGE_FN = SUPABASE_URL
   ? `${SUPABASE_URL}/functions/v1/acr-scan`
   : ''
 
-// Feature flags — true only when the relevant service is configured
-export const SUPABASE_READY = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
+// Configuration presence is not proof that a backend is reachable.
+export const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
 export const HF_READY       = Boolean(HF_ENDPOINT)

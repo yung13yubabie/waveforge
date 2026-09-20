@@ -1,7 +1,7 @@
 /**
  * Smoke test — Demo/Live 邊界誠實性驗證
  *
- * 前提：以「無 .env」狀態執行（SUPABASE_READY=false, HF_READY=false）。
+ * 前提：以「無 .env」狀態執行（SUPABASE_CONFIGURED=false, HF_READY=false）。
  * 驗證：後端未設定時，UI 必須誠實標示示範/訪客狀態，不得假裝功能可用。
  *
  * 執行：npx playwright install chromium && npm run test:e2e

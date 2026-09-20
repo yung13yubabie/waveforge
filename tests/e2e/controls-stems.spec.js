@@ -4,6 +4,20 @@ import { encodeWAV } from '../../src/js/audio/wav.js'
 
 const audio = name => ({ name, mimeType: 'audio/wav', buffer: readFileSync('tests/fixtures/test-tone.wav') })
 
+test('built-in presets synchronize numeric controls across compressor bands', async ({ page }) => {
+  await page.goto('/')
+  await page.setInputFiles('#file-input', audio('預設測試.wav'))
+  await expect(page.locator('#export-btn')).toBeEnabled()
+  for (const [preset, threshold, ratio, eq] of [['warm', '-20', '3', '1.5'], ['balanced', '-24', '2', '0']]) {
+    await page.selectOption('#preset-select', preset)
+    for (const band of ['low', 'mid', 'high']) {
+      await expect(page.locator(`[data-param="mbc-${band}-thresh"] input[type="number"]`)).toHaveValue(threshold)
+      await expect(page.locator(`[data-param="mbc-${band}-ratio"] input[type="number"]`)).toHaveValue(ratio)
+    }
+    await expect(page.locator('[data-param="eq-0"] input[type="number"]')).toHaveValue(eq)
+  }
+})
+
 test('parameters have horizontal sliders, exact numeric entry and reset', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', err => errors.push(err.message))
   await page.goto('/')

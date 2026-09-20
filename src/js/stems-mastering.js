@@ -187,7 +187,6 @@ export async function separateStems(fileOrBlob) {
   const wrapEl   = document.getElementById('demucs-progress-wrap')
   const etaEl    = document.getElementById('demucs-eta')
   const gridEl   = document.getElementById('stems-processing-grid')
-  const bounceEl = document.getElementById('bounce-btn')
 
   if (!btnEl || stemBusy) return
   if (!HF_READY || !fileOrBlob) {
@@ -218,21 +217,18 @@ export async function separateStems(fileOrBlob) {
   }, 1000)
 
   try {
-    if (HF_READY) {
-      // ── Live mode: call HF Spaces ────────────────────────
-      if (etaEl) etaEl.textContent = '上傳至 HF Spaces...'
-      const file = fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], 'audio.wav')
-      const encoded = await runDemucsJob(file, HF_ENDPOINT)
+    if (etaEl) etaEl.textContent = '上傳至 HF Spaces...'
+    const file = fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], 'audio.wav')
+    const encoded = await runDemucsJob(file, HF_ENDPOINT)
 
-      const next = {}
-      for (const m of STEM_META) {
-        if (!encoded[m.key]) throw new Error(`分軌結果缺少 ${m.label}`)
-        next[m.key] = await decodeStem(encoded[m.key])
-      }
-      if (generation !== loadGeneration) return
-      resetStemParams()
-      Object.assign(stemBuffers, next)
+    const next = {}
+    for (const m of STEM_META) {
+      if (!encoded[m.key]) throw new Error(`分軌結果缺少 ${m.label}`)
+      next[m.key] = await decodeStem(encoded[m.key])
     }
+    if (generation !== loadGeneration) return
+    resetStemParams()
+    Object.assign(stemBuffers, next)
 
     clearInterval(timer)
     stopDemucsAnimation()
@@ -250,8 +246,6 @@ export async function separateStems(fileOrBlob) {
     if (generation !== loadGeneration) return
     setStemBusy(false)
 
-    if (bounceEl) bounceEl.disabled = !HF_READY
-    document.getElementById('stems-preview-btn').disabled = !HF_READY
     const statusEl = document.getElementById('bounce-status')
     if (statusEl) statusEl.textContent = '各軌調整完成後點擊 Bounce'
 

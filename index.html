@@ -1162,8 +1162,9 @@
     <div class="modal-title" id="modal-title">WaveForge 帳號</div>
     <div class="modal-sub">登入後可同步作品庫 · 儲存 ACRCloud Key · 接收 Email 通知</div>
     <div id="auth-backend-notice" class="auth-backend-notice" hidden>
-      ⚠ 後端尚未設定（Supabase 未連線）。請在 <code>.env</code> 中設定 <code>VITE_SUPABASE_URL</code> 與 <code>VITE_SUPABASE_ANON_KEY</code> 後重新部署。
+      帳號服務尚未設定，母帶與分軌功能仍可使用。
     </div>
+    <button id="auth-retry" class="modal-google-btn" type="button" hidden>重新連線帳號服務</button>
 
     <!-- Tabs -->
     <div class="auth-tabs" role="tablist">

@@ -24,7 +24,7 @@ import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
 import { listUserPresets, saveUserPreset, getUserPreset } from './user-presets.js'
 import { eqMagnitudeFromParams } from './audio/render-chain.js'
-import { SUPABASE_READY, HF_READY } from './config.js'
+import { SUPABASE_CONFIGURED, HF_READY } from './config.js'
 import { assembleAlbum } from './audio/album-assembly.js'
 import { generateCue } from './audio/cue.js'
 import { createZip } from './audio/zip.js'
@@ -193,7 +193,7 @@ async function boot() {
   // ── Auth pill: open modal + show backend status in tooltip ──
   const loginPill = document.getElementById('auth-login-pill')
   if (loginPill) {
-    if (!SUPABASE_READY) {
+    if (!SUPABASE_CONFIGURED) {
       loginPill.setAttribute('data-tooltip', '尚未設定 Supabase 後端（.env 缺少 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY），登入功能無法使用')
       loginPill.classList.add('backend-unavailable')
     }
@@ -1032,31 +1032,7 @@ async function boot() {
     const preset = PRESETS[key]
     engine.applyPreset(preset)
 
-    // Sync knobs to reflect new values
-    if (preset.eqGains) {
-      preset.eqGains.forEach((g, i) => knobs[`eq-${i}`]?.setValue(g, true))
-    }
-    const PRESET_KNOB_MAP = [
-      ['compAttack',    'comp-attack'],
-      ['compRelease',   'comp-release'],
-      ['compMakeup',    'comp-makeup'],
-      ['limCeiling',    'lim-ceiling'],
-      ['limInput',      'lim-input'],
-      ['satDrive',      'sat-drive'],
-      ['satMix',        'sat-mix'],
-      ['hpFreq',        'hp-freq'],
-      ['lpFreq',        'lp-freq'],
-    ]
-    for (const [presetKey, knobId] of PRESET_KNOB_MAP) {
-      if (preset[presetKey] != null) knobs[knobId]?.setValue(preset[presetKey], true)
-    }
-    // Global comp threshold/ratio seed all 3 MBC bands → sync every band knob
-    if (preset.compThreshold != null) {
-      for (const b of ['low', 'mid', 'high']) knobs[`mbc-${b}-thresh`]?.setValue(preset.compThreshold, true)
-    }
-    if (preset.compRatio != null) {
-      for (const b of ['low', 'mid', 'high']) knobs[`mbc-${b}-ratio`]?.setValue(preset.compRatio, true)
-    }
+    syncUIFromEngine()
 
     // Vinyl mode auto-enable
     const vinylCard = document.getElementById('mod-vinyl')

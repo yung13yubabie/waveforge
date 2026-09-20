@@ -69,27 +69,27 @@ describe('config', () => {
     expect(c.ACR_EDGE_FN).toBe('')
   })
 
-  it('reports SUPABASE_READY only when both URL and key are present', async () => {
+  it('reports SUPABASE_CONFIGURED only when both URL and key are present', async () => {
     const both = await loadConfig({
       VITE_SUPABASE_URL: 'https://example.supabase.co',
       VITE_SUPABASE_ANON_KEY: 'anon-key',
       VITE_HF_ENDPOINT: '',
     })
-    expect(both.SUPABASE_READY).toBe(true)
+    expect(both.SUPABASE_CONFIGURED).toBe(true)
 
     const keyOnly = await loadConfig({
       VITE_SUPABASE_URL: '',
       VITE_SUPABASE_ANON_KEY: 'anon-key',
       VITE_HF_ENDPOINT: '',
     })
-    expect(keyOnly.SUPABASE_READY).toBe(false)
+    expect(keyOnly.SUPABASE_CONFIGURED).toBe(false)
 
     const urlOnly = await loadConfig({
       VITE_SUPABASE_URL: 'https://example.supabase.co',
       VITE_SUPABASE_ANON_KEY: '',
       VITE_HF_ENDPOINT: '',
     })
-    expect(urlOnly.SUPABASE_READY).toBe(false)
+    expect(urlOnly.SUPABASE_CONFIGURED).toBe(false)
   })
 
   it('reports HF_READY only when the endpoint is configured', async () => {
