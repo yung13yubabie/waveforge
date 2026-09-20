@@ -1,6 +1,6 @@
 // Shared native Web Audio graph for realtime monitoring and export.
 // EQ band centre frequencies (Hz) and types
-const EQ_BANDS = [
+export const EQ_BANDS = [
   { freq: 32,    type: 'lowshelf',  label: '32Hz'  },
   { freq: 64,    type: 'peaking',   label: '64Hz'  },
   { freq: 125,   type: 'peaking',   label: '125Hz' },
@@ -24,10 +24,10 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
 
     // ── HP / LP filters ──────────────────────────────────
     const hp = ctx.createBiquadFilter()
-    hp.type = 'highpass'; hp.frequency.value = byp.hplp ? 1 : p.hpFreq; hp.Q.value = 0.707
+    hp.type = 'highpass'; hp.frequency.value = p.hpFreq; hp.Q.value = 0.707
 
     const lp = ctx.createBiquadFilter()
-    lp.type = 'lowpass'; lp.frequency.value = byp.hplp ? ctx.sampleRate / 2 : Math.min(p.lpFreq, ctx.sampleRate / 2); lp.Q.value = 0.707
+    lp.type = 'lowpass'; lp.frequency.value = Math.min(p.lpFreq, ctx.sampleRate / 2); lp.Q.value = 0.707
 
     // ── 10-band EQ ────────────────────────────────────────
     const eqBands = EQ_BANDS.map((b, i) => {
@@ -121,6 +121,10 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
     // ── MBC parallel mix (wet = compressed, dry = pre-MBC) ──
     // mbcMix 100 = fully compressed (default); 0 = fully dry (parallel comp off)
     const mbcDryTap  = ctx.createGain()   // unity-gain tap before mbcIn
+    const mbcDryDelay = ctx.createDelay(0.1)
+    // W3C compressor pre-delay, quantized to the implementation's sample grid.
+    const mbcLatencySamples = Math.floor(0.006 * ctx.sampleRate)
+    mbcDryDelay.delayTime.value = byp.comp ? 0 : mbcLatencySamples / ctx.sampleRate
     const mbcWetGain = ctx.createGain()   // weighted compressed+makeup
     const mbcDryGain = ctx.createGain()   // weighted uncompressed dry
     const mbcParallelOut = ctx.createGain()
@@ -154,24 +158,27 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
 
     // ── Output gain ───────────────────────────────────────
     const outputGain = ctx.createGain()
-    outputGain.gain.value = engine.params.masterVol
+    outputGain.gain.value = Math.pow(10, (p.masterOutputGainDb ?? 20 * Math.log10(p.masterVol ?? 1)) / 20)
 
-    // ── Analyser (for spectrum canvas) ────────────────────
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 4096
-    analyser.smoothingTimeConstant = 0.8
+    // Monitoring nodes are never allocated for export graphs.
+    const analyser = metering ? ctx.createAnalyser() : null
+    if (analyser) { analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.8 }
     engine.analyser = analyser
-
-    // ── Stereo correlation analysers (per-channel time domain) ──
-    const corrSplit = ctx.createChannelSplitter(2)
-    const corrL = ctx.createAnalyser(); corrL.fftSize = 2048
-    const corrR = ctx.createAnalyser(); corrR.fftSize = 2048
-    corrSplit.connect(corrL, 0)
-    corrSplit.connect(corrR, 1)
-    engine._corrL = corrL
-    engine._corrR = corrR
-    engine._corrBufL = new Float32Array(2048)
-    engine._corrBufR = new Float32Array(2048)
+    const corrSplit = metering ? ctx.createChannelSplitter(2) : null
+    const corrL = metering ? ctx.createAnalyser() : null
+    const corrR = metering ? ctx.createAnalyser() : null
+    if (corrSplit) {
+      corrL.fftSize = 2048; corrR.fftSize = 2048
+      corrSplit.connect(corrL, 0); corrSplit.connect(corrR, 1)
+    }
+    engine._corrL = corrL; engine._corrR = corrR
+    engine._corrBufL = metering ? new Float32Array(2048) : null
+    engine._corrBufR = metering ? new Float32Array(2048) : null
+    const monitorGain = metering ? ctx.createGain() : null
+    const monitorBus = metering ? ctx.createGain() : null
+    const abDelay = metering ? ctx.createDelay(0.1) : null
+    if (abDelay) abDelay.delayTime.value = ((byp.comp ? 0 : mbcLatencySamples) + (byp.limiter ? 0 : mbcLatencySamples)) / ctx.sampleRate
+    if (monitorGain) monitorGain.gain.value = engine.monitorGain ?? 1
 
     // ── LUFS WorkletNode ──────────────────────────────────
     const lufsNode = metering ? new AudioWorkletNode(ctx, 'lufs-processor', {
@@ -186,8 +193,8 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
     engine.lufsNode = lufsNode
 
     // ── A/B bypass path ───────────────────────────────────
-    const bypassGain = ctx.createGain()
-    bypassGain.gain.value = 0  // starts on B (processed)
+    const bypassGain = metering ? ctx.createGain() : null
+    if (bypassGain) bypassGain.gain.value = 0  // starts on B (processed)
 
     const processedGain = ctx.createGain()
     processedGain.gain.value = 1
@@ -196,9 +203,15 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
     // source → inputGain → hp → lp → eq[0] → ... → eq[9]
     //        → comp → makeupGain → lim → processedGain → outputGain
     //        → analyser → lufsNode → destination
-    inputGain.connect(hp)
+    const filterOut = ctx.createGain()
     hp.connect(lp)
-    let prev = lp
+    function routeFilters(bypass) {
+      inputGain.disconnect(); lp.disconnect()
+      if (bypass) inputGain.connect(filterOut)
+      else { inputGain.connect(hp); lp.connect(filterOut) }
+    }
+    routeFilters(byp.hplp)
+    let prev = filterOut
     for (const band of eqBands) { prev.connect(band); prev = band }
 
     // Phase-2 insert: eq → dyneq → M/S → deesser → comp
@@ -235,7 +248,8 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
     // MBC parallel mix: wet (compressed+makeup) and dry blend at mbcParallelOut
     makeupGain.connect(mbcWetGain)
     mbcWetGain.connect(mbcParallelOut)
-    mbcDryTap.connect(mbcDryGain)
+    mbcDryTap.connect(mbcDryDelay)
+    mbcDryDelay.connect(mbcDryGain)
     mbcDryGain.connect(mbcParallelOut)
     // Saturator: parallel dry/wet around the waveshaper
     mbcParallelOut.connect(satDry)
@@ -243,23 +257,27 @@ export function buildProcessingGraph(engine, { metering = true } = {}) {
     shaper.connect(satWet)
     satDry.connect(satSum)
     satWet.connect(satSum)
-    satSum.connect(limInput)
     limInput.connect(lim)
-    lim.connect(processedGain)
+    function routeLimiter(bypass) {
+      satSum.disconnect(); lim.disconnect()
+      if (bypass) satSum.connect(processedGain)
+      else { satSum.connect(limInput); lim.connect(processedGain) }
+    }
+    routeLimiter(byp.limiter)
     processedGain.connect(outputGain)
-    outputGain.connect(analyser)
-    outputGain.connect(corrSplit)   // stereo correlation tap (no effect on signal)
-    if (lufsNode) { analyser.connect(lufsNode); lufsNode.connect(ctx.destination) }
-    else analyser.connect(ctx.destination)
-
-    // ── Wire bypass ───────────────────────────────────────
-    // source → bypassGain → outputGain (merges into same output)
-    bypassGain.connect(outputGain)
+    if (metering) {
+      outputGain.connect(monitorBus)
+      monitorBus.connect(analyser)
+      monitorBus.connect(corrSplit)
+      analyser.connect(lufsNode); lufsNode.connect(monitorGain)
+      monitorGain.connect(ctx.destination)
+      bypassGain.connect(abDelay); abDelay.connect(monitorBus)
+    } else outputGain.connect(ctx.destination)
 
     engine.nodes = {
-      inputGain, hp, lp, comp, compBands, makeupGain,
+      inputGain, hp, lp, filterOut, routeFilters, routeLimiter, monitorGain, monitorBus, abDelay, comp, compBands, makeupGain,
       mbcIn, mbcSum, lp1, lp2,
-      mbcDryTap, mbcWetGain, mbcDryGain, mbcParallelOut,
+      mbcDryTap, mbcDryDelay, mbcLatencySamples, mbcWetGain, mbcDryGain, mbcParallelOut,
       shaper, satWet, satDry, satSum, limInput,
       lim, outputGain, bypassGain, processedGain, analyser,
       msIn, msDry, msWet, msSum, msMid, msSide, msSideInv,

@@ -1,3 +1,7 @@
+# 2026-09-20 architecture updates
+
+`asset-decode.js` preserves native WAV rate, `export-safety.js` gates integer delivery, and `processing-graph.js` only builds monitoring nodes for realtime use. `AudioEngine` owns separate monitor gain and master output dB, with v1 snapshot migration. See [current checkpoint and remaining scope](AUDIO_TRUST_CHECKPOINT_2026-09-20.md).
+
 # WaveForge 漸進式架構
 
 產品方向：線上 Web DAW。前端負責互動與播放／匯出；外部 worker 執行耗時 AI。Native / 本機模型不是此次要求。

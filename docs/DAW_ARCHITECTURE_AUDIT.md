@@ -1,3 +1,7 @@
+# Updated audit (2026-09-20)
+
+The [new checkpoint](AUDIO_TRUST_CHECKPOINT_2026-09-20.md) supersedes the historical findings below: WAV now retains source rate, monitoring is separate, snapshot schema is v2, and the legacy stem UI is removed. Full DAW acceptance remains IN PROGRESS.
+
 # WaveForge 音訊架構稽核
 
 本輪範圍：Master Prompt §60 的 Phase 0 與人聲偵測架構。產品是線上網頁服務；`OfflineAudioContext` 指非即時匯出計算，不代表離線 App。既有 `src/css/layout.css` 工作區修改保留。

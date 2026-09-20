@@ -1,4 +1,4 @@
-import { buildProcessingGraph } from './processing-graph.js'
+import { buildProcessingGraph, EQ_BANDS } from './processing-graph.js'
 // Offline mastering render — the single source of truth for the processing
 // chain, shared by single-track export AND album per-track rendering. Keeping
 // ONE copy avoids the export-vs-realtime drift the pre-launch audit warned of.
@@ -90,11 +90,11 @@ export function eqMagnitudeFromParams(engine, eqGains, freqs, sampleRate) {
   const mag = new Float32Array(freqs.length).fill(1)
   const tmpMag = new Float32Array(freqs.length)
   const phase = new Float32Array(freqs.length)
-  engine.eqBands.forEach((band, i) => {
+  EQ_BANDS.forEach((band, i) => {
     const n = off.createBiquadFilter()
     n.type = band.type
-    n.frequency.value = band.frequency.value
-    n.Q.value = band.Q.value
+    n.frequency.value = Math.min(band.freq, sampleRate / 2)
+    n.Q.value = 1
     n.gain.value = eqGains[i] ?? 0
     n.getFrequencyResponse(freqs, tmpMag, phase)
     for (let k = 0; k < mag.length; k++) mag[k] *= tmpMag[k]

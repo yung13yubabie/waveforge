@@ -1,3 +1,7 @@
+# Current checkpoint (2026-09-20)
+
+See [controls, stems and Audio Trust repairs](AUDIO_TRUST_CHECKPOINT_2026-09-20.md). The Full DAW All-In specification supersedes the earlier scope below. Phase A remains IN PROGRESS; earlier DONE labels refer to the previous limited milestone and do not satisfy the new production-ready criteria. Baseline 777a30f was deployed to GitHub Pages after that milestone.
+
 # WaveForge 進度
 
 本輪按照兩份 prompt 的「第一輪實際任務」執行。使用者補充：產品維持線上網頁，不做離線 App／安裝包／本機模型要求。

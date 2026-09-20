@@ -1,189 +1,77 @@
-// Custom rotary knob — drag vertically to change value
-// Double-click to reset. Shift+drag for fine control (10x slower).
-const KNOB_START_ANGLE = 225  // degrees (start of arc from top)
-const KNOB_SWEEP       = 270  // degrees total sweep
-
+// Historical public name retained for preset/history callers; controls are native inputs.
 export class Knob {
   constructor(el, onChange) {
-    this.el      = el
+    this.el = el
     this.onChange = onChange
-    this.min     = parseFloat(el.dataset.min     ?? 0)
-    this.max     = parseFloat(el.dataset.max     ?? 1)
-    this.def     = parseFloat(el.dataset.default ?? 0)
-    this.unit    = el.dataset.unit ?? ''
-    this.param   = el.dataset.param ?? ''
-    this.value   = this.def
-
-    this._svg   = el.querySelector('svg')
-    this._label = el.querySelector('.knob-value')
-    this._dragging = false
-    this._dragStartY = 0
-    this._dragStartVal = 0
-
-    // Accessibility: a knob is a slider. Make it focusable and announce state.
-    el.setAttribute('role', 'slider')
-    el.setAttribute('tabindex', '0')
-    el.setAttribute('aria-valuemin', String(this.min))
-    el.setAttribute('aria-valuemax', String(this.max))
-    const labelText = el.querySelector('.knob-label')?.textContent?.trim()
-    if (labelText) el.setAttribute('aria-label', labelText)
-    el.setAttribute('title', '拖曳調整 · 雙擊重設 · 方向鍵微調')
-
-    this._render()
-    this._bind()
-  }
-
-  _normalise(v) {
-    return (v - this.min) / (this.max - this.min)
-  }
-
-  _denormalise(n) {
-    return this.min + n * (this.max - this.min)
-  }
-
-  _clamp(v) {
-    return Math.min(this.max, Math.max(this.min, v))
-  }
-
-  _render() {
-    const svg = this._svg
-    const norm = this._normalise(this.value)
-    const size = parseInt(svg.getAttribute('width')) || 40
-    const cx = size / 2
-    const cy = size / 2
-    const r  = size * 0.38
-
-    // Arc path from start to current angle
-    const startRad = (KNOB_START_ANGLE - 90) * Math.PI / 180
-    const sweepRad = KNOB_SWEEP * Math.PI / 180
-    const endRad   = startRad - sweepRad * norm
-
-    function polar(angle, radius) {
-      return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]
+    this.min = Number(el.dataset.min ?? 0)
+    this.max = Number(el.dataset.max ?? 1)
+    this.def = Number(el.dataset.default ?? 0)
+    this.unit = el.dataset.unit ?? ''
+    this.param = el.dataset.param ?? ''
+    this.value = this.def
+    const label = el.querySelector('.knob-label')?.textContent?.trim() || this.param || '參數'
+    const context = el.closest('.mbc-band')?.querySelector('.mbc-band-label')?.textContent?.trim()
+      || el.closest('.module-card')?.querySelector('.module-name')?.textContent?.trim() || ''
+    const name = `${context} ${label}`.trim()
+    el.replaceChildren()
+    el.classList.add('parameter-control')
+    el.setAttribute('role', 'group')
+    el.setAttribute('aria-label', name)
+    const caption = document.createElement('span')
+    caption.className = 'knob-label'
+    caption.textContent = `${label}${this.unit ? ' (' + this.unit + ')' : ''}`
+    this.slider = document.createElement('input')
+    this.slider.type = 'range'
+    this.slider.className = 'parameter-slider'
+    this.input = document.createElement('input')
+    this.input.type = 'number'
+    this.input.className = 'parameter-number'
+    const step = el.dataset.step ?? (this.unit === 's' ? '0.001' : this.unit === 'Hz' || this.unit === '%' ? '1' : '0.1')
+    for (const input of [this.slider, this.input]) {
+      input.min = String(this.min); input.max = String(this.max); input.step = step
+      input.setAttribute('aria-label', `${name}${input === this.input ? ' 數值' : ''}`)
     }
-
-    const [sx, sy] = polar(startRad, r)
-    const [ex, ey] = polar(endRad, r)
-
-    // Determine large-arc-flag
-    const delta = ((startRad - endRad) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
-    const largeArc = delta > Math.PI ? 1 : 0
-
-    svg.innerHTML = `
-      <circle cx="${cx}" cy="${cy}" r="${r}"
-              fill="none" stroke="var(--c-bg-overlay)" stroke-width="3"/>
-      ${norm > 0 ? `<path d="M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 0 ${ex} ${ey}"
-              fill="none" stroke="var(--c-primary)" stroke-width="3"
-              stroke-linecap="round"/>` : ''}
-      <circle cx="${ex}" cy="${ey}" r="2.5"
-              fill="${norm > 0 ? 'var(--c-primary)' : 'var(--c-text-3)'}"/>
-      <line x1="${cx}" y1="${cy}" x2="${ex}" y2="${ey}"
-            stroke="var(--c-text-3)" stroke-width="1.5" stroke-linecap="round"
-            opacity="0.4"/>
-    `
-
-    this._label.textContent = this._format(this.value)
-
-    // Keep screen readers in sync with the visual value
-    this.el.setAttribute('aria-valuenow', String(parseFloat(this.value.toFixed(4))))
-    this.el.setAttribute('aria-valuetext', `${this._format(this.value)}${this.unit ? ' ' + this.unit : ''}`)
-  }
-
-  _format(v) {
-    const u = this.unit
-    if (u === 'Hz') {
-      if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`
-      return `${Math.round(v)}`
+    this.reset = document.createElement('button')
+    this.reset.type = 'button'
+    this.reset.className = 'parameter-reset'
+    this.reset.textContent = '↺'
+    this.reset.title = `重設為 ${this.def} ${this.unit}`
+    this.reset.setAttribute('aria-label', `重設 ${name}`)
+    const row = document.createElement('div')
+    row.className = 'parameter-entry'
+    row.append(this.input, this.reset)
+    el.append(caption, this.slider, row)
+    this.slider.addEventListener('input', () => this.setValue(this.slider.valueAsNumber))
+    const commit = () => {
+      const value = this.input.valueAsNumber
+      if (!Number.isFinite(value) || value < this.min || value > this.max) {
+        this.input.setAttribute('aria-invalid', 'true')
+        this.input.setCustomValidity(`請輸入 ${this.min} 到 ${this.max} ${this.unit}`)
+        this.input.reportValidity()
+        return
+      }
+      this.setValue(value)
     }
-    if (u === 'dB' || u === 'dBTP') return `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
-    if (u === 'dBFS') return `${v.toFixed(1)}`
-    if (u === 's') {
-      if (v < 0.1) return `${Math.round(v * 1000)}ms`
-      return `${v.toFixed(2)}s`
-    }
-    if (u === ':1') return `${v.toFixed(1)}:1`
-    if (u === '%') return `${Math.round(v)}%`
-    return `${parseFloat(v.toFixed(2))}`
+    this.input.addEventListener('input', () => this.input.setCustomValidity(''))
+    this.input.addEventListener('change', commit)
+    this.input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit() }
+      if (e.key === 'Escape') { e.preventDefault(); this.setValue(this.value, true) }
+    })
+    this.reset.addEventListener('click', () => this.setValue(this.def))
+    this.setValue(this.def, true)
   }
-
-  setValue(v, silent = false) {
-    this.value = this._clamp(v)
-    this._render()
+  setValue(value, silent = false) {
+    if (!Number.isFinite(value)) return
+    this.value = Math.min(this.max, Math.max(this.min, value))
+    this.slider.value = String(this.value)
+    this.input.value = String(Number(this.value.toFixed(6)))
+    this.input.setCustomValidity('')
+    this.input.setAttribute('aria-invalid', 'false')
     if (!silent) this.onChange?.(this.param, this.value)
-  }
-
-  _bind() {
-    const el = this.el
-
-    // Mouse
-    el.addEventListener('mousedown', e => this._startDrag(e))
-    window.addEventListener('mousemove', e => this._drag(e))
-    window.addEventListener('mouseup',   () => this._endDrag())
-
-    // Touch
-    el.addEventListener('touchstart', e => this._startDrag(e.touches[0]), { passive: true })
-    window.addEventListener('touchmove', e => { if (this._dragging) { e.preventDefault(); this._drag(e.touches[0]) } }, { passive: false })
-    window.addEventListener('touchend', () => this._endDrag())
-
-    // Double-click to reset
-    el.addEventListener('dblclick', () => this.setValue(this.def))
-
-    // Scroll wheel fine control
-    el.addEventListener('wheel', e => {
-      e.preventDefault()
-      const step = (this.max - this.min) / 200
-      this.setValue(this.value + (e.deltaY < 0 ? step : -step))
-    }, { passive: false })
-
-    // Keyboard control (WCAG): arrows fine, PageUp/Down coarse, Home/End limits
-    el.addEventListener('keydown', e => this._key(e))
-  }
-
-  _key(e) {
-    const range = this.max - this.min
-    const fine = range / 100
-    const coarse = range / 20
-    let next = null
-    switch (e.key) {
-      case 'ArrowUp': case 'ArrowRight':   next = this.value + fine;   break
-      case 'ArrowDown': case 'ArrowLeft':  next = this.value - fine;   break
-      case 'PageUp':                       next = this.value + coarse; break
-      case 'PageDown':                     next = this.value - coarse; break
-      case 'Home':                         next = this.min;            break
-      case 'End':                          next = this.max;            break
-      case 'Backspace': case 'Delete':     next = this.def;            break  // reset
-      default: return
-    }
-    e.preventDefault()
-    this.setValue(this._clamp(next))
-  }
-
-  _startDrag(e) {
-    this._dragging = true
-    this._dragStartY = e.clientY
-    this._dragStartVal = this.value
-    this.el.style.cursor = 'ns-resize'
-    document.body.style.userSelect = 'none'
-  }
-
-  _drag(e) {
-    if (!this._dragging) return
-    const dy = this._dragStartY - e.clientY  // up = positive
-    const range = this.max - this.min
-    // Shift = fine control (100px = full range); normal = coarser (50px = full range)
-    const sensitivity = e.shiftKey ? range / 300 : range / 100
-    const newVal = this._clamp(this._dragStartVal + dy * sensitivity)
-    if (newVal !== this.value) this.setValue(newVal)
-  }
-
-  _endDrag() {
-    this._dragging = false
-    this.el.style.cursor = ''
-    document.body.style.userSelect = ''
   }
 }
 
-// Initialise all .knob-wrap elements in a container
 export function initKnobs(container, onChange) {
   const knobs = {}
   container.querySelectorAll('.knob-wrap[data-param]').forEach(el => {

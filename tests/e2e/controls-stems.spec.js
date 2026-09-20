@@ -1,0 +1,86 @@
+import { readFileSync } from 'node:fs'
+import { test, expect } from '@playwright/test'
+import { encodeWAV } from '../../src/js/audio/wav.js'
+
+const audio = name => ({ name, mimeType: 'audio/wav', buffer: readFileSync('tests/fixtures/test-tone.wav') })
+
+test('parameters have horizontal sliders, exact numeric entry and reset', async ({ page }, testInfo) => {
+  const errors = []; page.on('pageerror', err => errors.push(err.message))
+  await page.goto('/')
+  await page.locator('#mod-hplp .module-head').click()
+  const control = page.locator('[data-param="hp-freq"]')
+  await expect(control.locator('input[type="range"]')).toBeVisible()
+  const number = control.locator('input[type="number"]')
+  await number.fill('127')
+  await number.press('Enter')
+  await expect(control.locator('input[type="range"]')).toHaveValue('127')
+  await number.fill('999999')
+  await number.press('Enter')
+  await expect(number).toHaveAttribute('aria-invalid', 'true')
+  await control.getByRole('button', { name: /重設/ }).click()
+  await expect(number).toHaveValue('20')
+  expect(errors).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('linear-controls.png'), fullPage: true })
+})
+
+test('source upload is visible in stems tab and corrupt replacement reports failure', async ({ page }, testInfo) => {
+  await page.goto('/')
+  await page.locator('[data-mode="stems"]').click()
+  await page.setInputFiles('#file-input', audio('中文歌曲.wav'))
+  await expect(page.locator('#stems-source-status')).toContainText('中文歌曲.wav')
+  await expect(page.locator('#stems-source-status')).toContainText('已載入')
+  await expect(page.locator('#stems-source-wave')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('stems-source.png'), fullPage: true })
+  await page.setInputFiles('#file-input', { name: '損壞.wav', mimeType: 'audio/wav', buffer: Buffer.from('bad') })
+  await expect(page.locator('#stems-source-status')).toContainText('失敗')
+  await expect(page.locator('#stems-ai-btn')).toBeDisabled()
+  await expect(page.locator('#export-btn')).toBeEnabled()
+  await expect(page.locator('#stems-source-status')).toContainText('保留來源：中文歌曲.wav')
+  await expect(page.locator('#upload-text-wrap')).toContainText('中文歌曲.wav')
+})
+
+test('missing stem import is visible and never shows success', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('[data-mode="stems"]').click()
+  await page.setInputFiles('#stems-local-files', [audio('人聲.wav')])
+  await expect(page.locator('#bounce-status')).toContainText('缺少 鼓組')
+  await expect(page.locator('#bounce-btn')).toBeDisabled()
+})
+
+test('replacing the source invalidates the old stem set', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('[data-mode="stems"]').click()
+  await page.setInputFiles('#stems-local-files', ['人聲', '鼓組', '貝斯', '其他'].map(name => audio(`${name}.wav`)))
+  await expect(page.locator('#bounce-btn')).toBeEnabled()
+  await page.getByRole('slider', { name: '人聲 低頻 EQ', exact: true }).fill('6')
+  await page.setInputFiles('#file-input', { name: '不能解碼.wav', mimeType: 'audio/wav', buffer: Buffer.from('invalid') })
+  await expect(page.locator('#stems-source-status')).toContainText('失敗')
+  await expect(page.locator('#bounce-btn')).toBeEnabled()
+  await expect(page.locator('#eq-val-vocals-lowGain')).toHaveText('+6 dB')
+  await page.setInputFiles('#file-input', audio('另一首歌曲.wav'))
+  await expect(page.locator('#stems-source-status')).toContainText('已載入：另一首歌曲.wav')
+  await expect(page.locator('#bounce-btn')).toBeDisabled()
+  await expect(page.locator('#stems-preview-btn')).toBeDisabled()
+  await expect(page.locator('.stem-proc-card')).toHaveCount(0)
+})
+
+test('overload blocks download with a visible correction path', async ({ page }) => {
+  await page.goto('/')
+  const loud = Float32Array.from({ length: 48000 }, (_, i) => 0.7 * Math.sin(2 * Math.PI * 440 * i / 48000))
+  await page.setInputFiles('#file-input', { name: '超峰值測試.wav', mimeType: 'audio/wav', buffer: Buffer.from(encodeWAV([loud, loud], 48000)) })
+  await expect(page.locator('#export-btn')).toBeEnabled()
+  // Use the real controls to bypass dynamics and amplify the master.
+  await page.locator('#mod-limiter .module-toggle').click()
+  await page.locator('#mod-mbc .module-toggle').click()
+  const gain = page.locator('[data-param="master-output"] input[type="number"]')
+  await gain.fill('12'); await gain.press('Enter')
+  const downloads = []; page.on('download', d => downloads.push(d))
+  await page.click('#export-btn')
+  await expect(page.locator('#status-text')).toContainText('成品超峰值', { timeout: 20000 })
+  expect(downloads).toHaveLength(0)
+  await page.check('#export-allow-clip')
+  const download = page.waitForEvent('download')
+  await page.click('#export-btn')
+  await download
+  await expect(page.locator('#status-text')).toContainText('允許硬削波')
+})

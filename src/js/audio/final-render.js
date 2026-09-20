@@ -20,6 +20,8 @@ export async function renderFinalMaster({ engine, sourceBuffer, snapshot, sample
   const report = { ...buildExportReport(channels, sampleRate, {
     targetLUFS, ceilingDb: bypassed.limiter ? 0 : params.limCeiling,
   }), sampleRate, duration: buffer.duration, linearPhase: !!linPhaseMag,
-  watermark: !!watermark, truePeakLimiter: limited }
+  watermark: !!watermark, truePeakLimiter: limited,
+  sourcePCMRate: sourceBuffer.sampleRate, rendererBackend: 'native-web-audio',
+  sampleRateConverter: sourceBuffer.sampleRate === sampleRate ? 'none' : 'browser-native' }
   return { buffer, channels, report }
 }

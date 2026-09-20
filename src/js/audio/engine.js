@@ -1,4 +1,5 @@
 import { buildProcessingGraph } from './processing-graph.js'
+import { decodeSourceAsset } from './asset-decode.js'
 import lufsWorkletUrl from './lufs-worklet.js?url'
 import dynamicsWorkletUrl from './dynamics-worklet.js?url'
 
@@ -22,7 +23,7 @@ export class AudioEngine {
     this.params = {
       hpFreq: 20, lpFreq: 22000,
       eqGains: new Array(10).fill(0),
-      compThreshold: -24, compKnee: 30, compRatio: 4,
+      compKnee: 30,
       compAttack: 0.003, compRelease: 0.25, compMakeup: 0,
       // True multiband compressor: 2 crossovers + per-band [low, mid, high].
       // Global comp params above seed all bands (back-compat with 39 presets).
@@ -34,8 +35,20 @@ export class AudioEngine {
       dyneqFreq: 2000, dyneqThresh: -24, dyneqRatio: 3,
       satDrive: 0.2, satMix: 0.5, satType: 'tape',
       mbcMix: 100,
-      masterVol: 0.8,
+      masterOutputGainDb: 0,
     }
+
+    this.monitorGain = 0.8
+    // Legacy API alias, excluded from serialized canonical state.
+    Object.defineProperty(this.params, 'masterVol', {
+      get() { return Math.pow(10, this.masterOutputGainDb / 20) },
+      set(value) { this.masterOutputGainDb = value > 0 ? 20 * Math.log10(value) : -120 },
+    })
+    // Read-only legacy views are not a second serialized source of truth.
+    Object.defineProperties(this.params, {
+      compThreshold: { get() { return this.mbcThresh[0] } },
+      compRatio: { get() { return this.mbcRatio[0] } },
+    })
 
     // Module bypass states
     this.bypassed = {
@@ -53,6 +66,7 @@ export class AudioEngine {
     this._onLufs = null  // callback(m, s, i, tp)
     this._lufsWorkletReady = false
     this._playGen = 0    // invalidates stale play() calls after stop/seek
+    this._loadGen = 0
   }
 
   async init() {
@@ -110,15 +124,22 @@ export class AudioEngine {
   }
 
   async loadFile(arrayBuffer) {
+    const generation = ++this._loadGen
     await this.init()
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     this.stop()
-    this.buffer = await this.ctx.decodeAudioData(arrayBuffer)
+    const asset = await decodeSourceAsset(arrayBuffer, this.ctx)
+    if (generation !== this._loadGen) throw new Error('已取消過期的音訊載入')
+    this.stop() // also invalidate playback restarted while decode was pending
+    this.buffer = asset.buffer
+    this.sourceAsset = asset
     this.duration = this.buffer.duration
     this.pauseOffset = 0
     this.lufsNode?.port.postMessage('reset')
     return this.buffer
   }
+
+  cancelPendingLoad() { this._loadGen++ }
 
   async play() {
     if (!this.buffer || this.isPlaying) return
@@ -228,6 +249,11 @@ export class AudioEngine {
   // ── Module enable/disable ─────────────────────────────
   setModuleBypassed(mod, bypassed) {
     this.bypassed[mod] = bypassed
+    if (!this.ctx) return
+    if (this.nodes.abDelay) {
+      const samples = (this.bypassed.comp ? 0 : this.nodes.mbcLatencySamples) + (this.bypassed.limiter ? 0 : this.nodes.mbcLatencySamples)
+      this.nodes.abDelay.delayTime.setValueAtTime(samples / this.ctx.sampleRate, this.ctx.currentTime)
+    }
     // For EQ: gain all bands to 0 vs restore
     if (mod === 'eq') {
       this.eqBands.forEach((b, i) => {
@@ -237,7 +263,8 @@ export class AudioEngine {
     // True bypass uses the direct dry route: compressors have lookahead latency.
     if (mod === 'comp') {
       const t = this.ctx.currentTime
-      this.nodes.makeupGain.gain.setTargetAtTime(bypassed ? 1 : Math.pow(10, this.params.compMakeup / 20), t, 0.01)
+      this.nodes.mbcDryDelay.delayTime.setValueAtTime(bypassed ? 0 : this.nodes.mbcLatencySamples / this.ctx.sampleRate, t)
+      this.nodes.makeupGain?.gain.setTargetAtTime(bypassed ? 1 : Math.pow(10, this.params.compMakeup / 20), t, 0.01)
       this.setMBCMix(this.params.mbcMix)
       this.nodes.compBands.forEach((c, i) =>
         c.ratio.setTargetAtTime(bypassed ? 1 : this.params.mbcRatio[i], t, 0.01))
@@ -245,12 +272,18 @@ export class AudioEngine {
         c.threshold.setTargetAtTime(this.params.mbcThresh[i], t, 0.01))
     }
     if (mod === 'limiter') {
-      const n = this.nodes.lim
-      n.ratio.setTargetAtTime(bypassed ? 1 : 20, this.ctx.currentTime, 0.01)
+      const n = this.nodes.lim, t = this.ctx.currentTime
+      this.nodes.routeLimiter(bypassed)
+      n.ratio.setTargetAtTime(bypassed ? 1 : 20, t, 0.01)
+      n.threshold.setTargetAtTime(this.params.limCeiling, t, 0.005)
+      n.attack.setTargetAtTime(0.001, t, 0.01)
+      n.release.setTargetAtTime(this.params.limRelease, t, 0.01)
+      this.setLimInput(this.params.limInput)
     }
     if (mod === 'hplp') {
-      this.nodes.hp.frequency.setTargetAtTime(bypassed ? 1 : this.params.hpFreq, this.ctx.currentTime, 0.01)
-      this.nodes.lp.frequency.setTargetAtTime(bypassed ? this.ctx.sampleRate / 2 : Math.min(this.params.lpFreq, this.ctx.sampleRate / 2), this.ctx.currentTime, 0.01)
+      this.nodes.routeFilters(bypassed)
+      this.nodes.hp?.frequency.setTargetAtTime(this.params.hpFreq, this.ctx.currentTime, 0.01)
+      this.nodes.lp?.frequency.setTargetAtTime(Math.min(this.params.lpFreq, this.ctx.sampleRate / 2), this.ctx.currentTime, 0.01)
     }
     if (mod === 'sat') {
       const t = this.ctx.currentTime
@@ -273,12 +306,12 @@ export class AudioEngine {
   // ── Parameter setters (all use setTargetAtTime for zero-click) ─
   setHPFreq(hz) {
     this.params.hpFreq = hz
-    if (!this.bypassed.hplp) this.nodes.hp.frequency.setTargetAtTime(hz, this.ctx?.currentTime ?? 0, 0.005)
+    if (!this.bypassed.hplp) this.nodes.hp?.frequency.setTargetAtTime(hz, this.ctx?.currentTime ?? 0, 0.005)
   }
 
   setLPFreq(hz) {
     this.params.lpFreq = hz
-    if (!this.bypassed.hplp) this.nodes.lp.frequency.setTargetAtTime(hz, this.ctx?.currentTime ?? 0, 0.005)
+    if (!this.bypassed.hplp) this.nodes.lp?.frequency.setTargetAtTime(hz, this.ctx?.currentTime ?? 0, 0.005)
   }
 
   setEQBand(index, gainDb) {
@@ -290,7 +323,6 @@ export class AudioEngine {
 
   // Global comp threshold/ratio seed ALL bands (back-compat with 39 presets).
   setCompThreshold(db) {
-    this.params.compThreshold = db
     this.params.mbcThresh = [db, db, db]
     if (!this.bypassed.comp) this._eachBand(c => c.threshold.setTargetAtTime(db, this.ctx?.currentTime ?? 0, 0.01))
   }
@@ -301,7 +333,6 @@ export class AudioEngine {
   }
 
   setCompRatio(r) {
-    this.params.compRatio = r
     this.params.mbcRatio = [r, r, r]
     if (!this.bypassed.comp) this._eachBand(c => c.ratio.setTargetAtTime(r, this.ctx?.currentTime ?? 0, 0.01))
   }
@@ -319,12 +350,12 @@ export class AudioEngine {
   // ── True MBC per-band + crossover setters ─────────────────
   setMBCBandThresh(i, db) {
     this.params.mbcThresh[i] = db
-    if (!this.bypassed.comp) this.nodes.compBands[i]?.threshold.setTargetAtTime(db, this.ctx?.currentTime ?? 0, 0.01)
+    if (!this.bypassed.comp) this.nodes.compBands?.[i]?.threshold.setTargetAtTime(db, this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setMBCBandRatio(i, r) {
     this.params.mbcRatio[i] = r
-    if (!this.bypassed.comp) this.nodes.compBands[i]?.ratio.setTargetAtTime(r, this.ctx?.currentTime ?? 0, 0.01)
+    if (!this.bypassed.comp) this.nodes.compBands?.[i]?.ratio.setTargetAtTime(r, this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setMBCXover(i, hz) {
@@ -342,23 +373,23 @@ export class AudioEngine {
   setCompMakeup(db) {
     this.params.compMakeup = db
     const gain = Math.pow(10, db / 20)
-    if (!this.bypassed.comp) this.nodes.makeupGain.gain.setTargetAtTime(gain, this.ctx?.currentTime ?? 0, 0.01)
+    if (!this.bypassed.comp) this.nodes.makeupGain?.gain.setTargetAtTime(gain, this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setLimCeiling(dbtp) {
     this.params.limCeiling = dbtp
     // Threshold = ceiling (we can't truly do True Peak in DynamicsCompressor, honest limitation)
-    if (!this.bypassed.limiter) this.nodes.lim.threshold.setTargetAtTime(dbtp, this.ctx?.currentTime ?? 0, 0.005)
+    if (!this.bypassed.limiter) this.nodes.lim?.threshold.setTargetAtTime(dbtp, this.ctx?.currentTime ?? 0, 0.005)
   }
 
   setLimRelease(s) {
     this.params.limRelease = s
-    if (!this.bypassed.limiter) this.nodes.lim.release.setTargetAtTime(s, this.ctx?.currentTime ?? 0, 0.01)
+    if (!this.bypassed.limiter) this.nodes.lim?.release.setTargetAtTime(s, this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setLimInput(db) {
     this.params.limInput = db
-    this.nodes.limInput?.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx?.currentTime ?? 0, 0.01)
+    this.nodes.limInput?.gain.setTargetAtTime(this.bypassed.limiter ? 1 : Math.pow(10, db / 20), this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setSatDrive(drive) {
@@ -380,6 +411,18 @@ export class AudioEngine {
   setSatType(type) {
     this.params.satType = type
     if (this.nodes.shaper) this.nodes.shaper.curve = this._makeSatCurve(this.params.satDrive, type)
+  }
+
+  setMonitorGain(v) {
+    if (!Number.isFinite(v)) return
+    this.monitorGain = Math.max(0, Math.min(1, v))
+    this.nodes.monitorGain?.gain.setTargetAtTime(this.monitorGain, this.ctx?.currentTime ?? 0, 0.01)
+  }
+
+  setMasterOutputGainDb(db) {
+    if (!Number.isFinite(db)) return
+    this.params.masterOutputGainDb = db
+    this.nodes.outputGain?.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx?.currentTime ?? 0, 0.01)
   }
 
   setMasterVolume(v) {
@@ -435,8 +478,7 @@ export class AudioEngine {
     const t = this.ctx.currentTime
     const fade = 0.02
     if (mode === 'A') {
-      // Hear dry signal — gain 1, NOT masterVol: outputGain downstream already
-      // applies master volume to both paths (masterVol here = applied twice)
+      // Original bypasses master output gain; both paths share monitor gain.
       this.nodes.processedGain.gain.setTargetAtTime(0, t, fade)
       this.nodes.bypassGain.gain.setTargetAtTime(1, t, fade)
     } else {
@@ -501,7 +543,7 @@ export class AudioEngine {
   // (linear-phase toggle, export bit depth) — those live in the album/UI layer.
   serialize() {
     return {
-      version: 1,
+      version: 2,
       params: JSON.parse(JSON.stringify(this.params)),
       bypassed: { ...this.bypassed },
       abMode: this.abMode,
@@ -524,7 +566,9 @@ export class AudioEngine {
     if (p.mbcXover1 != null) this.setMBCXover(0, p.mbcXover1)
     if (p.mbcXover2 != null) this.setMBCXover(1, p.mbcXover2)
     if (Array.isArray(p.mbcThresh)) p.mbcThresh.forEach((v, i) => this.setMBCBandThresh(i, v))
+    else if (p.compThreshold != null) this.setCompThreshold(p.compThreshold)
     if (Array.isArray(p.mbcRatio)) p.mbcRatio.forEach((v, i) => this.setMBCBandRatio(i, v))
+    else if (p.compRatio != null) this.setCompRatio(p.compRatio)
     if (p.limCeiling != null) this.setLimCeiling(p.limCeiling)
     if (p.limInput != null) this.setLimInput(p.limInput)
     if (p.limRelease != null) this.setLimRelease(p.limRelease)
@@ -540,7 +584,8 @@ export class AudioEngine {
     if (p.deessFreq != null) this.setDeessFreq(p.deessFreq)
     if (p.deessThresh != null) this.setDeessThresh(p.deessThresh)
     if (p.mbcMix != null) this.setMBCMix(p.mbcMix)
-    if (p.masterVol != null) this.setMasterVolume(p.masterVol)
+    if (p.masterOutputGainDb != null) this.setMasterOutputGainDb(p.masterOutputGainDb)
+    else if (p.masterVol != null) this.setMasterVolume(p.masterVol)
     // Bypass + A/B touch nodes directly (no ?. guard) — only when graph exists
     if (this.ctx) {
       if (snap.bypassed) {

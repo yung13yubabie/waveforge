@@ -1,4 +1,5 @@
 import { renderFinalMaster } from './audio/final-render.js'
+import { assertIntegerHeadroom } from './audio/export-safety.js'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/plugins/regions'
 import { initModeNav }        from './mode-nav.js'
@@ -12,7 +13,6 @@ import { Goniometer }      from './ui/goniometer.js'
 import { LoudnessHistory } from './audio/loudness-history.js'
 import { LoudnessGraph }   from './ui/loudness-graph.js'
 import { Spectrogram }     from './ui/spectrogram.js'
-import { StemsPanel }     from './ui/stems.js'
 import { PRESETS }        from './presets.js'
 import { detectBPM, detectKey } from './audio/analyze.js'
 import { measureIntegratedLUFS } from './audio/measure.js'
@@ -203,7 +203,6 @@ async function boot() {
   }
 
   const engine   = new AudioEngine()
-  const stems    = new StemsPanel(document.getElementById('stems-container'))
 
   // WaveSurfer for main waveform
   let ws = null
@@ -218,7 +217,7 @@ async function boot() {
   let currentFile = null
 
   // ── Stems mastering ──────────────────────────────────────
-  initStemsMastering(() => currentFile)
+  const stemController = initStemsMastering()
 
   // ── Stem Bounce → load mixed buffer into master chain ────
   document.addEventListener('wf:stem-bounce', async (e) => {
@@ -232,24 +231,54 @@ async function boot() {
       const file = new File([wav], 'stems-bounce.wav', { type: 'audio/wav' })
       // Switch to master mode so the user sees the waveform
       document.querySelector('.mode-tab[data-mode="master"]')?.click()
-      await loadFile(file)
+      const loaded = await loadFile(file, { preserveStems: true })
+      e.detail.complete?.(loaded ? null : new Error('母帶載入失敗，請檢查來源檔案'))
     } catch (err) {
       setStatus(`Bounce 載入失敗：${err.message}`, false)
       console.error('[wf:stem-bounce]', err)
+      e.detail.complete?.(err)
     }
   })
 
   // ── File loading ────────────────────────────────────────
   let isLoadingFile = false
-  async function loadFile(file) {
+  async function loadFile(file, { preserveStems = false } = {}) {
     if (!file) return
     if (isLoadingFile) {
       setStatus('正在載入中，請稍候再試', false)
       return
     }
     isLoadingFile = true
+    const previous = { file: currentFile, buffer: engine.buffer, asset: engine.sourceAsset, ws,
+      offset: Math.min(engine.duration, Math.max(0, engine.currentTime)), upload: [...document.getElementById('upload-text-wrap').childNodes].map(n => n.cloneNode(true)) }
+    const buttons = ['analyze-btn', 'export-btn', 'album-add-btn'].map(id => document.getElementById(id))
+    const disabled = buttons.map(button => button.disabled)
+    buttons.forEach(button => { button.disabled = true })
+    if (!preserveStems) stemController.sourceLoading(file)
     try {
-      await doLoadFile(file)
+      await doLoadFile(file, preserveStems)
+      clearPreview()
+      return true
+    } catch (err) {
+      // Preserve the accepted session on failed replacement. A failed waveform
+      // construction may already have disposed the old view, so rebuild it.
+      if (ws !== previous.ws && previous.file) {
+        try { await doLoadFile(previous.file, true) } catch { ws?.destroy(); ws = null }
+      }
+      engine.stop()
+      engine.buffer = previous.buffer
+      engine.sourceAsset = previous.asset
+      engine.duration = previous.buffer?.duration ?? 0
+      engine.pauseOffset = previous.offset
+      currentFile = previous.file
+      ws?.pause()
+      if (engine.duration) ws?.seekTo(previous.offset / engine.duration)
+      updatePlayBtn(false)
+      document.getElementById('upload-text-wrap').replaceChildren(...previous.upload)
+      buttons.forEach((button, i) => { button.disabled = disabled[i] })
+      if (!preserveStems) stemController.sourceFailed(err)
+      setStatus(`讀取失敗：${err.message}${previous.file ? `；已保留 ${previous.file.name}` : ''}`, false)
+      return false
     } finally {
       isLoadingFile = false
     }
@@ -316,7 +345,7 @@ async function boot() {
     showRange()
   }
 
-  async function doLoadFile(file) {
+  async function doLoadFile(file, preserveStems = false) {
 
     const validTypes = ['audio/mpeg','audio/wav','audio/x-wav','audio/flac','audio/x-flac','audio/aac','audio/mp4','audio/x-m4a','audio/ogg']
     const ext = file.name.split('.').pop().toLowerCase()
@@ -325,12 +354,12 @@ async function boot() {
     // Accept by known extension OR exact MIME type — not just any audio/* prefix
     if (!validExts.includes(ext) && !validTypes.includes(file.type)) {
       setStatus(`不支援的格式：${ext}（支援 MP3 / WAV / FLAC / AAC / M4A / OGG）`, false)
-      return
+      throw new Error(`不支援的格式：${ext}`)
     }
 
     if (file.size > 200 * 1024 * 1024) {
       setStatus('檔案超過 200MB 上限', false)
-      return
+      throw new Error('檔案超過 200MB 上限')
     }
 
     // Update upload zone label — textContent, NOT innerHTML: file.name is
@@ -354,11 +383,17 @@ async function boot() {
       const engineBuf = wsBuf.slice(0)
       // Bound the decode: a malformed-but-valid-header file can hang
       // decodeAudioData indefinitely, freezing the tab with no feedback.
-      const buffer = await Promise.race([
-        engine.loadFile(engineBuf),
-        new Promise((_, rej) => setTimeout(
-          () => rej(new Error('解碼逾時（檔案可能損毀或過大）')), 30000)),
-      ])
+      let decodeTimeout
+      let buffer
+      try {
+        buffer = await Promise.race([
+          engine.loadFile(engineBuf),
+          new Promise((_, reject) => { decodeTimeout = setTimeout(() => {
+            engine.cancelPendingLoad()
+            reject(new Error('解碼逾時，請重新選擇音檔'))
+          }, 30000) }),
+        ])
+      } finally { clearTimeout(decodeTimeout) }
 
       setProcessing(true, '渲染波形...', 30)
 
@@ -413,12 +448,12 @@ async function boot() {
 
       // Remember the source File so "add to album" can snapshot it
       currentFile = file
+      if (!preserveStems) stemController.sourceLoaded(file, buffer)
 
       // Enable buttons
       document.getElementById('analyze-btn').disabled = false
       document.getElementById('export-btn').disabled  = false
       document.getElementById('album-add-btn').disabled = false
-      document.getElementById('stems-ai-btn').disabled = false
       document.getElementById('trim-toggle').disabled = false
       for (const z of ['zoom-in','zoom-out','zoom-fit'])
         document.getElementById(z)?.removeAttribute('disabled')
@@ -467,6 +502,7 @@ async function boot() {
       setProcessing(false, '', 0)
       setStatus(`讀取失敗：${err.message}`, false)
       console.error('[WaveForge] loadFile error', err)
+      throw err
     }
   }
 
@@ -536,6 +572,7 @@ async function boot() {
     if (i) { engine.setEQBand(parseInt(i[1]), value); recordEdit(); return }
 
     switch(param) {
+      case 'master-output': engine.setMasterOutputGainDb(value); break
       case 'hp-freq':       engine.setHPFreq(value); break
       case 'lp-freq':       engine.setLPFreq(value); break
       case 'comp-threshold':engine.setCompThreshold(value); break
@@ -597,6 +634,7 @@ async function boot() {
   function syncUIFromEngine() {
     const p = engine.params
     const set = (id, v) => knobs[id]?.setValue(v, true)
+    set('master-output', p.masterOutputGainDb)
     set('hp-freq', p.hpFreq); set('lp-freq', p.lpFreq)
     p.eqGains.forEach((g, i) => set(`eq-${i}`, g))
     set('comp-attack', p.compAttack); set('comp-release', p.compRelease); set('comp-makeup', p.compMakeup)
@@ -610,7 +648,7 @@ async function boot() {
     set('ms-width', p.msWidth); set('ms-mid-gain', p.msMidGain); set('ms-side-gain', p.msSideGain)
     set('mbc-mix', p.mbcMix ?? 100)
     const vol = document.getElementById('master-vol')
-    if (vol) { vol.value = String(p.masterVol); const vl = document.getElementById('master-vol-label'); if (vl) vl.textContent = `${Math.round(p.masterVol * 100)}%` }
+    if (vol) { vol.value = String(engine.monitorGain); const vl = document.getElementById('master-vol-label'); if (vl) vl.textContent = `${Math.round(engine.monitorGain * 100)}%` }
     // Bypass checkboxes (set silently — no change event → no history feedback)
     const cbMap = { hplp: 'hplp', eq: 'eq', dyneq: 'dyneq', ms: 'ms', comp: 'mbc', sat: 'sat', limiter: 'limiter', deesser: 'deesser' }
     for (const [mod, cbId] of Object.entries(cbMap)) {
@@ -734,6 +772,7 @@ async function boot() {
   }
 
   btnPlay.addEventListener('click', async () => {
+    if (isLoadingFile) { setStatus('正在載入音檔，完成後即可播放', false); return }
     document.dispatchEvent(new Event('wf:stop-stem-preview'))
     if (engine.isPlaying) {
       engine.pause()
@@ -787,9 +826,8 @@ async function boot() {
   const volLabel = document.getElementById('master-vol-label')
   volInput?.addEventListener('input', () => {
     const v = parseFloat(volInput.value)
-    engine.setMasterVolume(v)
+    engine.setMonitorGain(v)
     if (volLabel) volLabel.textContent = `${Math.round(v * 100)}%`
-    recordEdit()
   })
 
   // Progress bar
@@ -1214,7 +1252,14 @@ async function boot() {
     const bypassed = snap.bypassed ?? engine.bypassed
     // Album loudness trim folds into limInput (PRE-limiter) so the true-peak
     // ceiling still protects against clipping — never as post-limiter output gain.
-    const params = { ...snap.params, limInput: (snap.params?.limInput ?? 0) + (track.gainTrimDb || 0) }
+    const params = { ...snap.params }
+    const trim = track.gainTrimDb || 0
+    if (bypassed.limiter) {
+      // A true limiter bypass skips its input gain too; retain album trim.
+      params.masterOutputGainDb = (params.masterOutputGainDb ?? 20 * Math.log10(params.masterVol ?? 1)) + trim
+    } else {
+      params.limInput = (params.limInput ?? 0) + trim
+    }
 
     // Linear-phase EQ is a single export-time toggle shared with single-track
     // export (matches DDP_RATE below: one setting applied uniformly across the
@@ -1284,6 +1329,7 @@ async function boot() {
       const asm = assembleAlbum(rendered, 44100)
 
       setProcessing(true, '編碼 16-bit WAV image...', 88)
+      assertIntegerHeadroom([asm.left, asm.right])
       const wavBytes = new Uint8Array(encodeWAV([asm.left, asm.right], 44100, 16))
       const cue = generateCue({ imageFile: 'album.wav', markers: asm.markers })
       const checksum = `${md5(wavBytes)} *album.wav\n`
@@ -1406,6 +1452,7 @@ async function boot() {
       sampleRate: Number(document.getElementById('export-samplerate').value),
       linearPhase: document.getElementById('eq-linphase').checked,
       truePeak: document.getElementById('lim-truepeak').checked,
+      allowHardClip: document.getElementById('export-allow-clip').checked,
       watermark: document.getElementById('export-watermark').value.trim(),
       targetLUFS: activeTargetLUFS,
       format: document.getElementById('export-format').value,
@@ -1454,9 +1501,11 @@ async function boot() {
       const count = Math.round(duration * options.sampleRate)
       const channels = result.channels.map(ch => ch.slice(0, count))
       // Preview is the final PCM master; MP3 encoding is explicitly excluded.
+      assertIntegerHeadroom(channels, options.allowHardClip)
       const finalBlob = new Blob([encodeWAV(channels, options.sampleRate, 24)], { type: 'audio/wav' })
       const raw = trimBuffer(sourceBuffer, 0, duration, { fadeMs: 0 })
       const rawChannels = Array.from({ length: raw.numberOfChannels }, (_, ch) => raw.getChannelData(ch))
+      assertIntegerHeadroom(rawChannels, options.allowHardClip)
       const originalBlob = new Blob([encodeWAV(rawChannels, raw.sampleRate, 24)], { type: 'audio/wav' })
       previewUrls = [URL.createObjectURL(finalBlob), URL.createObjectURL(originalBlob)]
       finalAudio.src = previewUrls[0]; originalAudio.src = previewUrls[1]
@@ -1526,6 +1575,8 @@ async function boot() {
       const { format, bitDepth, kbps } = options
       const { buffer: rendered, channels, report } = await renderFinalMaster({ ...options, sourceBuffer })
       report.trimRange = savedRange
+      report.hardClipped = assertIntegerHeadroom(channels, options.allowHardClip)
+      if (report.hardClipped) report.warnings.push('已依使用者選擇允許硬削波；量測為削波前數值')
       report.format = format; report.bitDepth = bitDepth; report.kbps = kbps
 
       const baseName = (savedName

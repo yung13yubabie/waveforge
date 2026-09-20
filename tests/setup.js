@@ -65,6 +65,8 @@ class MockAudioContext {
     return makeNode({ curve: null, oversample: 'none' })
   }
 
+  createDelay() { return makeNode({ delayTime: makeAudioParam(0) }) }
+
   createStereoPanner() {
     return makeNode({ pan: makeAudioParam(0) })
   }

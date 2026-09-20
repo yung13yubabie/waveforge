@@ -25,13 +25,13 @@ test.describe('WaveForge smoke (no backend configured)', () => {
     await expect(page.locator('#mode-antitheft')).toBeHidden()
   })
 
-  test('stems mode shows HF demo notice when VITE_HF_ENDPOINT is unset', async ({ page }) => {
+  test('stems mode honestly disables unavailable separation', async ({ page }) => {
     await page.goto('/')
     await page.click('.mode-tab[data-mode="stems"]')
     const notice = page.locator('#stems-hf-notice')
     await expect(notice).toBeVisible()
-    await expect(notice).toContainText('VITE_HF_ENDPOINT')
-    await expect(notice).toContainText('示範模式')
+    await expect(notice).toContainText('分軌服務尚未設定')
+    await expect(page.locator('#stems-ai-btn')).toBeDisabled()
   })
 
   test('antitheft mode shows guest banner when Supabase is unset', async ({ page }) => {

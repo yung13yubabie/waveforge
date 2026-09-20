@@ -51,14 +51,26 @@ export function createStemGraph(ctx, params, volume = 1) {
   gain.gain.value = volume
   const pan = ctx.createStereoPanner()
   pan.pan.value = params.pan ?? 0
+  const input = ctx.createGain()
+  let eqEnabled, compEnabled
+  function route(p) {
+    const eq = p.eqEnabled === true, dynamics = p.compEnabled === true
+    if (eq === eqEnabled && dynamics === compEnabled) return
+    eqEnabled = eq; compEnabled = dynamics
+    input.disconnect(); high.disconnect(); comp.disconnect()
+    let tail = input
+    if (eq) { tail.connect(low); tail = high }
+    if (dynamics) { tail.connect(comp); tail = comp }
+    tail.connect(pan)
+  }
 
   low.connect(mid)
   mid.connect(high)
-  high.connect(comp)
-  comp.connect(pan)
   pan.connect(gain)
-  return { input: low, output: gain, low, mid, high, comp, gain, pan,
+  route(params)
+  return { input, output: gain, low, mid, high, comp, gain, pan,
     update(p, v) {
+      route(p)
       const t = ctx.currentTime
       for (const [param, value] of [[low.gain, p.lowGain], [mid.gain, p.midGain], [high.gain, p.highGain],
         [comp.threshold, p.thresh], [comp.ratio, p.ratio], [pan.pan, p.pan ?? 0], [gain.gain, v]]) {
@@ -66,7 +78,7 @@ export function createStemGraph(ctx, params, volume = 1) {
         param.setTargetAtTime(value, t, 0.01)
       }
     },
-    disconnect() { [low, mid, high, comp, pan, gain].forEach(n => n.disconnect()) },
+    disconnect() { [input, low, mid, high, comp, pan, gain].forEach(n => n.disconnect()) },
   }
 }
 

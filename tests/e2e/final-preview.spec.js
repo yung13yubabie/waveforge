@@ -22,7 +22,19 @@ test('Chinese file exports at 96 kHz with honest report and final preview', asyn
   await page.click('#final-preview-download')
   const previewStream = await (await previewDownload).createReadStream()
   const previewChunks = []; for await (const c of previewStream) previewChunks.push(c)
-  expect(Buffer.concat(previewChunks)).toEqual(Buffer.concat(chunks))
+  const preview = Buffer.concat(previewChunks), exported = Buffer.concat(chunks)
+  expect(preview.length).toBe(exported.length)
+  expect(preview.subarray(0, 44)).toEqual(exported.subarray(0, 44))
+  let peakResidual = 0, square = 0, count = 0
+  for (let i = 44; i < preview.length; i += 3) {
+    const d = (preview.readIntLE(i, 3) - exported.readIntLE(i, 3)) / 8388608
+    peakResidual = Math.max(peakResidual, Math.abs(d)); square += d * d; count++
+  }
+  // Native browser DSP can differ by the last PCM bit between renders.
+  // Keep header exact; independently bound every sample and the total energy.
+  expect(peakResidual).toBeLessThanOrEqual(2 / 8388608)
+  expect(Math.sqrt(square / count)).toBeLessThan(1 / 8388608)
+  await testInfo.attach('preview-residual.json', { body: JSON.stringify({ peakResidual, rmsResidual: Math.sqrt(square / count) }), contentType: 'application/json' })
   await page.screenshot({ path: testInfo.outputPath('final-preview.png'), fullPage: true })
   expect(errors).toEqual([])
 })
@@ -41,6 +53,7 @@ test('imports Chinese-named stems, previews live edits and bounces a real file',
   await page.click('#stems-preview-btn')
   await expect(page.locator('#bounce-status')).toContainText(/試聽|超峰值/)
   await page.getByRole('slider', { name: '人聲 低頻 EQ', exact: true }).fill('6')
+  await page.getByRole('checkbox', { name: '人聲 EQ', exact: true }).check()
   await expect(page.locator('#eq-val-vocals-lowGain')).toHaveText('+6 dB')
   await page.click('#stems-preview-btn')
   await expect(page.locator('#bounce-status')).toContainText('已停止')

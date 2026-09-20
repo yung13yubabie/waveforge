@@ -56,6 +56,15 @@ describe('initModeNav', () => {
     expect(document.querySelector('.chain-panel').getAttribute('aria-hidden')).toBe('true')
   })
 
+  it('gives the stems mixer the full workspace', () => {
+    const { switchMode } = initModeNav()
+    switchMode('stems')
+    expect(document.getElementById('app').classList.contains('mode-stems')).toBe(true)
+    expect(document.querySelector('.chain-panel').getAttribute('aria-hidden')).toBe('true')
+    switchMode('master')
+    expect(document.getElementById('app').classList.contains('mode-stems')).toBe(false)
+  })
+
   it('restores the chain panel when leaving anti-theft mode', () => {
     const { switchMode } = initModeNav()
     switchMode('antitheft')

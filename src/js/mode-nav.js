@@ -33,6 +33,9 @@ export function initModeNav() {
       chainPanel?.removeAttribute('aria-hidden')
     }
 
+    app.classList.toggle('mode-stems', mode === 'stems')
+    if (mode === 'stems') chainPanel?.setAttribute('aria-hidden', 'true')
+
     // Show auth overlay in anti-theft if not logged in
     if (mode === 'antitheft') {
       document.dispatchEvent(new CustomEvent('wf:check-auth'))

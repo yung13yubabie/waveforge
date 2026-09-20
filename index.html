@@ -339,6 +339,12 @@
     </div>
 
     <div class="chain-modules" role="list" aria-label="母帶處理模組">
+      <article class="module-card" role="listitem" style="padding:12px">
+        <div class="knob-wrap" data-param="master-output" data-min="-24" data-max="12" data-default="0" data-unit="dB">
+          <div class="knob-label">母帶輸出增益</div>
+        </div>
+        <label style="font-size:11px"><input id="export-allow-clip" type="checkbox"> 輸出時允許硬削波（可能失真）</label>
+      </article>
 
       <!-- [1] High Pass / Low Pass -->
       <article class="module-card" id="mod-hplp" role="listitem">
@@ -851,6 +857,11 @@
   <section class="workspace mode-panel" id="mode-stems" role="tabpanel"
            aria-labelledby="tab-stems" hidden>
     <div class="stems-mode-panel">
+      <div class="stems-source">
+        <label for="file-input">＋ 選擇要分軌的歌曲</label>
+        <p id="stems-source-status" role="status">尚未載入來源歌曲。選擇歌曲後，再按「開始分軌」；已有四軌可使用下方匯入。</p>
+        <canvas id="stems-source-wave" width="800" height="64" role="img" aria-label="来源歌曲波形" hidden style="width:100%;height:64px"></canvas>
+      </div>
       <!-- AI Separation zone -->
       <div class="stems-ai-zone">
         <button class="stems-ai-btn" id="stems-ai-btn" disabled>
@@ -860,7 +871,7 @@
           <div class="stems-ai-title">Demucs 分軌</div>
           <div id="stems-hf-desc" class="stems-ai-desc">⚠ 此功能會將整首音檔上傳至你設定的 Hugging Face Space 進行分離（人聲 / 鼓 / 貝斯 / 其他），非本機處理。CPU 免費方案約需 2–5 分鐘。</div>
           <div id="stems-hf-notice" class="stems-backend-notice" hidden>
-            ⚠ HF Spaces 未設定（<code>VITE_HF_ENDPOINT</code> 未填入），目前為示範模式，不會進行真實分軌。
+            分軌服務尚未設定，暫時無法自動分軌。仍可匯入現有四軌，試聽、調整並合成母帶。
           </div>
         </div>
         <div class="demucs-progress-wrap" id="demucs-progress-wrap">
@@ -871,6 +882,7 @@
 
       <label class="stems-import-label">載入現有四軌（檔名含 vocals／drums／bass／other 或 人聲／鼓組／貝斯／其他）
         <input id="stems-local-files" type="file" accept="audio/*" multiple>
+        <span id="stems-set-status" role="status">尚未匯入分軌。</span>
       </label>
       <!-- Per-stem processing grid -->
       <div class="stems-processing-grid" id="stems-processing-grid">
@@ -1133,9 +1145,9 @@
 
     <div class="transport-right">
       <div class="vol-knob-wrap">
-        <span>音量</span>
+        <span>監聽音量</span>
         <input type="range" id="master-vol" min="0" max="1" step="0.01" value="0.8"
-               style="width:70px;accent-color:var(--c-primary)" aria-label="主音量">
+               style="width:70px;accent-color:var(--c-primary)" aria-label="監聽音量（不影響輸出）">
         <span id="master-vol-label">80%</span>
       </div>
     </div>

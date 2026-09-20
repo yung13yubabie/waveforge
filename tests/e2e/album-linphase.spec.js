@@ -18,6 +18,22 @@ const SR = 44100
 const BAND_1K_INDEX = 5 // { freq: 1000, type: 'peaking' } in engine.js's EQ_BANDS
 const BAND_COUNT = 10
 
+test('album gain trim remains effective with limiter bypassed', async ({ page }) => {
+  await loadAnyFile(page)
+  const db = await page.evaluate(async (bytes) => {
+    const snapshot = window.__wf.engine.serialize()
+    for (const key in snapshot.bypassed) snapshot.bypassed[key] = true
+    const file = new File([new Uint8Array(bytes)], '專輯音量.wav', { type: 'audio/wav' })
+    const rms = async gainTrimDb => {
+      const out = await window.__wf_renderAlbumTrack({ file, title: '專輯音量', snapshot, gainTrimDb })
+      const x = out.getChannelData(0)
+      return Math.sqrt(x.reduce((sum, v) => sum + v * v, 0) / x.length)
+    }
+    return 20 * Math.log10(await rms(-6) / await rms(0))
+  }, Array.from(toneWav(1000)))
+  expect(db).toBeCloseTo(-6, 3)
+})
+
 function toneWav(hz, seconds = 0.3, sampleRate = SR) {
   const frames = Math.round(seconds * sampleRate)
   const dataBytes = frames * 2 * 2

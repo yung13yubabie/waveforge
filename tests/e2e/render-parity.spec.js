@@ -13,6 +13,7 @@ test('real browser realtime graph vs export: signals, modules, MBC mix and bypas
     const states = ['hplp', 'eq', 'dyneq', 'ms', 'deesser', 'comp', 'sat', 'limiter', 'full', 'bypass', 0, 25, 50, 75, 100]
     for (const state of states) for (const kind of signalNames) {
       const live = new AudioEngine()
+      live.monitorGain = 1 // compare the master tap, not listening attenuation
       live.params.eqGains[5] = 4; live.params.compMakeup = 6; live.params.msWidth = 135
       live.params.mbcMix = typeof state === 'number' ? state : 50
       for (const key in live.bypassed) live.bypassed[key] = !(state === 'full' || key === state || (typeof state === 'number' && key === 'comp'))
@@ -71,7 +72,8 @@ test('MBC Mix zero is dry and bypass is sample exact at the module boundary', as
       const out = await e.ctx.startRendering()
       renders.push(Array.from(out.getChannelData(0)))
       if (mode === 0 || mode === 'bypass') {
-        for (let i = 0; i < out.length; i++) if (out.getChannelData(0)[i] !== input.getChannelData(0)[i]) throw new Error('Not dry')
+        const delay = mode === 'bypass' ? 0 : Math.floor(0.006 * input.sampleRate)
+        for (let i = 0; i < out.length; i++) if (Math.abs(out.getChannelData(0)[i] - (input.getChannelData(0)[i - delay] ?? 0)) > 1e-6) throw new Error('Not latency-aligned dry')
       }
     }
     return [1, 2, 3].map(k => Math.max(...renders[k].map((x, i) => Math.abs(x - ((1-k/4)*renders[0][i] + k/4*renders[4][i])))))

@@ -2,7 +2,7 @@
  * Stems Mastering — Demucs 分軌 + 每軌 EQ/壓縮 + Bounce 回主鏈
  *
  * 模式：
- *   HF_READY=false → 5 秒模擬分軌（UI 展示）
+ *   HF_READY=false → 停用雲端分軌，仍可載入現有四軌
  *   HF_READY=true  → 呼叫 HF Spaces Gradio API（真實 Demucs htdemucs）
  *
  * Bounce 流程：
@@ -29,14 +29,46 @@ const STEM_META = [
 // ── Per-stem DSP params ───────────────────────────────────
 const stemParams = {}
 const stemVolumes = {}
-STEM_META.forEach(m => {
-  stemParams[m.key]  = { lowGain: 0, midGain: 0, highGain: 0, thresh: -24, ratio: 4, pan: 0 }
+function resetStemParams() { STEM_META.forEach(m => {
+  stemParams[m.key]  = { lowGain: 0, midGain: 0, highGain: 0, thresh: -24, ratio: 4, pan: 0, eqEnabled: false, compEnabled: false, mute: false, solo: false }
   stemVolumes[m.key] = 1.0
-})
+}) }
+resetStemParams()
 
 // ── Stem audio buffers (set after Demucs returns) ─────────
 const stemBuffers = {}          // AudioBuffer per stem key
 const stemWaveSurfers = {}      // WaveSurfer per stem key
+
+let loadGeneration = 0
+let separationTimer = null
+let stemBusy = false
+let sourceReady = false
+let sourceFile = null
+
+function setStemBusy(busy) {
+  stemBusy = busy
+  const ready = STEM_META.every(m => stemBuffers[m.key])
+  document.getElementById('bounce-btn').disabled = busy || !ready
+  document.getElementById('stems-preview-btn').disabled = busy || !ready
+  document.getElementById('stems-ai-btn').disabled = busy || !HF_READY || !sourceReady
+  document.getElementById('stems-processing-grid').inert = busy
+  document.getElementById('stems-local-files').disabled = busy
+}
+function destroyStemWaves() {
+  for (const key of Object.keys(stemWaveSurfers)) { stemWaveSurfers[key].destroy(); delete stemWaveSurfers[key] }
+}
+function invalidateStemJob() {
+  loadGeneration++
+  clearInterval(separationTimer)
+  stopDemucsAnimation()
+  document.getElementById('demucs-progress-wrap')?.classList.remove('visible')
+  const btn = document.getElementById('stems-ai-btn')
+  btn?.classList.remove('processing')
+  if (btn) btn.textContent = '◈ 開始分軌'
+  document.getElementById('bounce-btn').textContent = 'Bounce & Master →'
+  stopStemPreview()
+  setStemBusy(false)
+}
 
 let previewContext = null
 let previewSources = []
@@ -55,7 +87,11 @@ function stopStemPreview() {
   if (btn) btn.textContent = '▶ 試聽分軌混音'
 }
 function updateStemPreview(key) {
-  previewGraphs[key]?.update(stemParams[key], stemVolumes[key])
+  for (const m of STEM_META) previewGraphs[m.key]?.update(stemParams[m.key], effectiveVolume(m.key))
+}
+function effectiveVolume(key) {
+  const solo = STEM_META.some(m => stemParams[m.key].solo)
+  return stemParams[key].mute || (solo && !stemParams[key].solo) ? 0 : stemVolumes[key]
 }
 async function toggleStemPreview() {
   const status = document.getElementById('bounce-status')
@@ -75,7 +111,7 @@ async function toggleStemPreview() {
     const start = ctx.currentTime + 0.05
     let ended = 0
     for (const m of STEM_META) {
-      const graph = createStemGraph(ctx, stemParams[m.key], stemVolumes[m.key])
+      const graph = createStemGraph(ctx, stemParams[m.key], effectiveVolume(m.key))
       const src = ctx.createBufferSource(); src.buffer = stemBuffers[m.key]
       src.connect(graph.input); graph.output.connect(bus)
       previewGraphs[m.key] = graph; previewSources.push(src)
@@ -93,6 +129,10 @@ async function toggleStemPreview() {
       const overload = peak >= 1
       status.classList.toggle('status-error', overload)
       status.textContent = overload ? '⚠ 混音超峰值，請降低各軌音量' : '試聽中 · EQ／壓縮／音量即時生效'
+      for (const m of STEM_META) {
+        const meter = document.getElementById(`stem-gr-${m.key}`)
+        if (meter) meter.textContent = `GR ${stemParams[m.key].compEnabled ? previewGraphs[m.key].comp.reduction.toFixed(1) : '0.0'} dB`
+      }
     }, 100)
   } catch (err) { stopStemPreview(); status.textContent = `試聽失敗：${err.message}` }
 }
@@ -137,11 +177,8 @@ function loadStemWaveSurfer(stemKey, buffer) {
     normalize:     true,
     interact:      false,
   })
-  ws.loadBlob(wavBlob).catch(err => {
-    const status = document.getElementById('bounce-status')
-    if (status) status.textContent = `波形載入失敗：${err.message}`
-  })
   stemWaveSurfers[stemKey] = ws
+  return ws.loadBlob(wavBlob, pcm, buffer.duration)
 }
 
 // ── Main separation flow ──────────────────────────────────
@@ -152,7 +189,13 @@ export async function separateStems(fileOrBlob) {
   const gridEl   = document.getElementById('stems-processing-grid')
   const bounceEl = document.getElementById('bounce-btn')
 
-  if (!btnEl) return
+  if (!btnEl || stemBusy) return
+  if (!HF_READY || !fileOrBlob) {
+    document.getElementById('bounce-status').textContent = !HF_READY ? '分軌服務尚未設定，可匯入現有四軌' : '請先載入來源歌曲'
+    return
+  }
+  const generation = ++loadGeneration
+  setStemBusy(true)
 
   stopStemPreview()
   btnEl.classList.add('processing')
@@ -166,7 +209,7 @@ export async function separateStems(fileOrBlob) {
   // the job is still running.
   const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
   let elapsed = 0
-  const timer = setInterval(() => {
+  const timer = separationTimer = setInterval(() => {
     elapsed++
     if (!etaEl) return
     etaEl.textContent = elapsed < 240
@@ -186,10 +229,9 @@ export async function separateStems(fileOrBlob) {
         if (!encoded[m.key]) throw new Error(`分軌結果缺少 ${m.label}`)
         next[m.key] = await decodeStem(encoded[m.key])
       }
+      if (generation !== loadGeneration) return
+      resetStemParams()
       Object.assign(stemBuffers, next)
-    } else {
-      // ── Demo mode: simulate 5-second wait ────────────────
-      await new Promise(r => setTimeout(r, 5000))
     }
 
     clearInterval(timer)
@@ -198,16 +240,15 @@ export async function separateStems(fileOrBlob) {
     btnEl.classList.remove('processing')
     btnEl.textContent = '重新分軌'
     btnEl.disabled    = false
-    if (etaEl) etaEl.textContent = HF_READY ? '分軌完成' : '分軌完成（示範）'
+    if (etaEl) etaEl.textContent = '分軌完成'
+    document.getElementById('stems-set-status').textContent = `分軌來源：${fileOrBlob.name || '音訊'} · 四軌已載入`
 
     renderStemCards(gridEl)
 
     // Load WaveSurfer per stem if we have real buffers
-    if (HF_READY) {
-      STEM_META.forEach(m => {
-        if (stemBuffers[m.key]) loadStemWaveSurfer(m.key, stemBuffers[m.key])
-      })
-    }
+    await Promise.all(STEM_META.map(m => loadStemWaveSurfer(m.key, stemBuffers[m.key])))
+    if (generation !== loadGeneration) return
+    setStemBusy(false)
 
     if (bounceEl) bounceEl.disabled = !HF_READY
     document.getElementById('stems-preview-btn').disabled = !HF_READY
@@ -215,6 +256,8 @@ export async function separateStems(fileOrBlob) {
     if (statusEl) statusEl.textContent = '各軌調整完成後點擊 Bounce'
 
   } catch (err) {
+    if (generation !== loadGeneration) return
+    setStemBusy(false)
     clearInterval(timer)
     stopDemucsAnimation()
     wrapEl?.classList.remove('visible')
@@ -230,6 +273,7 @@ export async function separateStems(fileOrBlob) {
 // ── Render per-stem processing cards ─────────────────────
 function renderStemCards(container) {
   if (!container) return
+  destroyStemWaves()
   container.innerHTML = ''
   STEM_META.forEach(meta => container.appendChild(buildStemCard(meta)))
 }
@@ -258,6 +302,10 @@ function buildStemCard(meta) {
         </div>`}
     </div>
     <div class="stem-proc-body">
+      <div class="stem-switches">
+        ${[['eqEnabled', 'EQ'], ['compEnabled', '壓縮'], ['mute', '靜音'], ['solo', '獨奏']].map(([key, label]) => `<label><input type="checkbox" data-toggle="${key}" aria-label="${meta.label} ${label}" ${stemParams[meta.key][key] ? 'checked' : ''}>${label}</label>`).join('')}
+        <output id="stem-gr-${meta.key}">GR 0.0 dB</output>
+      </div>
       <div style="font-size:9px;color:var(--c-text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">EQ — 三頻段</div>
       <div class="stem-mini-eq">
         ${['低', '中', '高'].map((band, i) => {
@@ -300,6 +348,10 @@ function buildStemCard(meta) {
     </div>
   `
 
+  card.querySelectorAll('[data-toggle]').forEach(input => input.addEventListener('change', () => {
+    stemParams[meta.key][input.dataset.toggle] = input.checked
+    updateStemPreview(meta.key)
+  }))
   card.querySelector('.stem-pan').addEventListener('input', e => {
     stemParams[meta.key].pan = Number(e.target.value); updateStemPreview(meta.key)
   })
@@ -342,30 +394,42 @@ export async function bounce() {
   const statusEl = document.getElementById('bounce-status')
   const bounceEl = document.getElementById('bounce-btn')
 
-  const hasRealBuffers = STEM_META.some(m => stemBuffers[m.key])
+  if (stemBusy) return
+  const hasRealBuffers = STEM_META.every(m => stemBuffers[m.key])
   if (!hasRealBuffers) {
     if (statusEl) statusEl.textContent = '需先完成 AI 分軌才能 Bounce（請設定 VITE_HF_ENDPOINT）'
     return
   }
 
   if (bounceEl) { bounceEl.disabled = true; bounceEl.textContent = 'Bounce 中...' }
+  setStemBusy(true)
+  const generation = loadGeneration
+  const normalize = document.getElementById('normalize-bounce').checked
+  const snapshot = STEM_META.map(m => ({ buffer: stemBuffers[m.key], params: { ...stemParams[m.key] }, volume: effectiveVolume(m.key) }))
   if (statusEl) statusEl.textContent = '處理各軌 EQ + 壓縮...'
 
   try {
     const processed = await Promise.all(
-      STEM_META.map(m => processStem(stemBuffers[m.key], stemParams[m.key], stemVolumes[m.key]))
+      snapshot.map(s => processStem(s.buffer, s.params, s.volume))
     )
+    if (generation !== loadGeneration) return
 
     if (statusEl) statusEl.textContent = '混音中...'
     let mixed = mixBuffers(processed)
     if (!mixed) throw new Error('無可用的分軌音訊')
 
     const peak = bufferPeak(mixed)
-    if (document.getElementById('normalize-bounce').checked) mixed = normalizeBuffer(mixed)
+    if (normalize) mixed = normalizeBuffer(mixed)
     else if (peak >= 1) throw new Error('混音超峰值：請降低音量，或明確勾選 Normalize Bounce 後重試（未載入母帶）')
     stopStemPreview()
     // Dispatch to main.js for loading into master chain
-    document.dispatchEvent(new CustomEvent('wf:stem-bounce', { detail: { buffer: mixed } }))
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('母帶載入逾時')), 35000)
+      document.dispatchEvent(new CustomEvent('wf:stem-bounce', { detail: {
+        buffer: mixed,
+        complete(error) { clearTimeout(timeout); error ? reject(error) : resolve() },
+      } }))
+    })
 
     if (statusEl) statusEl.textContent = '✓ Bounce 完成 → 已載入母帶處理鏈'
     if (bounceEl) { bounceEl.disabled = false; bounceEl.textContent = '重新 Bounce' }
@@ -373,32 +437,47 @@ export async function bounce() {
     console.error('[Bounce]', err)
     if (statusEl) statusEl.textContent = `Bounce 失敗：${err.message}`
     if (bounceEl) { bounceEl.disabled = false; bounceEl.textContent = 'Bounce (重試)' }
+  } finally {
+    if (generation === loadGeneration) setStemBusy(false)
   }
 }
 
 // ── Public init ───────────────────────────────────────────
-export function initStemsMastering(getAudioFile) {
+export function initStemsMastering() {
   document.getElementById('stems-preview-btn').addEventListener('click', toggleStemPreview)
   document.addEventListener('wf:stop-stem-preview', stopStemPreview)
   window.addEventListener('pagehide', stopStemPreview)
   document.getElementById('stems-local-files').addEventListener('change', async e => {
     const files = Array.from(e.target.files), status = document.getElementById('bounce-status')
-    stopStemPreview(); status.textContent = '讀取四軌音訊…'
+    if (!files.length) return
+    invalidateStemJob()
+    const generation = ++loadGeneration
+    setStemBusy(true)
+    status.textContent = '讀取四軌音訊…'
     try {
       const next = {}
+      const used = new Set()
       for (const m of STEM_META) {
-        const file = files.find(f => f.name.toLowerCase().includes(m.key) || f.name.includes(m.label))
+        const matches = files.filter(f => f.name.toLowerCase().includes(m.key) || f.name.includes(m.label))
+        if (matches.length > 1) throw new Error(`${m.label} 檔案重複，請每軌只選一個檔案`)
+        const file = matches[0]
         if (!file) throw new Error(`缺少 ${m.label}（${m.key}）檔案`)
+        if (used.has(file)) throw new Error('一個檔案只能對應一個樂器軌，請檢查檔名')
+        used.add(file)
         next[m.key] = await decodeStem(await file.arrayBuffer())
       }
+      if (generation !== loadGeneration) return
+      resetStemParams()
       Object.assign(stemBuffers, next)
       renderStemCards(document.getElementById('stems-processing-grid'))
-      STEM_META.forEach(m => loadStemWaveSurfer(m.key, stemBuffers[m.key]))
+      await Promise.all(STEM_META.map(m => loadStemWaveSurfer(m.key, stemBuffers[m.key])))
+      if (generation !== loadGeneration) return
       document.getElementById('bounce-btn').disabled = false
       document.getElementById('stems-preview-btn').disabled = false
-      status.textContent = '已載入四軌，可試聽並即時調整'
-    } catch (err) { status.textContent = `載入失敗：${err.message}` }
-    finally { e.target.value = '' }
+      status.textContent = `已載入四軌：${files.map(f => f.name).join('、')}；可試聽並即時調整`
+      document.getElementById('stems-set-status').textContent = `目前四軌：${files.map(f => f.name).join('、')}`
+    } catch (err) { if (generation === loadGeneration) status.textContent = `載入失敗：${err.message}。${STEM_META.every(m => stemBuffers[m.key]) ? '保留原有四軌。' : ''}` }
+    finally { if (generation === loadGeneration) setStemBusy(false); e.target.value = '' }
   })
   // Show backend notice if HF not configured
   if (!HF_READY) {
@@ -410,10 +489,55 @@ export function initStemsMastering(getAudioFile) {
 
   const btn = document.getElementById('stems-ai-btn')
   btn?.addEventListener('click', () => {
-    const file = getAudioFile()
+    const file = sourceFile
     if (!file) return
     separateStems(file)
   })
 
   document.getElementById('bounce-btn')?.addEventListener('click', bounce)
+  window.addEventListener('pagehide', () => { invalidateStemJob(); destroyStemWaves() })
+  return {
+    sourceLoading(file) {
+      sourceReady = false
+      invalidateStemJob()
+      setStemBusy(true)
+      document.getElementById('stems-source-status').textContent = `正在載入：${file.name}…`
+      document.getElementById('stems-source-wave').hidden = true
+    },
+    sourceLoaded(file, buffer) {
+      {
+        destroyStemWaves()
+        for (const m of STEM_META) delete stemBuffers[m.key]
+        resetStemParams()
+        const message = document.createElement('p')
+        message.className = 'stems-source'
+        message.textContent = '新歌曲尚未分軌。可使用上方分軌服務，或匯入現有四軌。'
+        document.getElementById('stems-processing-grid').replaceChildren(message)
+        document.getElementById('stems-set-status').textContent = '新歌曲尚未載入分軌。'
+        document.getElementById('bounce-status').textContent = '請先分軌或匯入四軌'
+      }
+      sourceReady = true
+      sourceFile = file
+      setStemBusy(false)
+      document.getElementById('stems-source-status').textContent = `已載入：${file.name} · ${buffer.duration.toFixed(1)} 秒。${HF_READY ? '按「開始分軌」送出處理。' : '分軌服務尚未設定，可匯入現有四軌。'}`
+      const canvas = document.getElementById('stems-source-wave'), ctx = canvas.getContext('2d')
+      canvas.hidden = false
+      canvas.setAttribute('aria-label', `來源歌曲波形：${file.name}`)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = '#ff4b6e'
+      const data = buffer.getChannelData(0), step = Math.max(1, Math.ceil(data.length / canvas.width))
+      for (let x = 0; x < canvas.width; x++) {
+        let peak = 0
+        for (let i = x * step; i < Math.min(data.length, (x + 1) * step); i++) peak = Math.max(peak, Math.abs(data[i]))
+        const h = Math.max(1, Math.min(1, peak) * canvas.height)
+        ctx.fillRect(x, (canvas.height - h) / 2, 1, h)
+      }
+    },
+    sourceFailed(err) {
+      sourceReady = !!sourceFile
+      setStemBusy(false)
+      document.getElementById('stems-source-wave').hidden = !sourceFile
+      document.getElementById('stems-source-status').textContent = `來源載入失敗：${err.message}。${sourceFile ? `保留來源：${sourceFile.name}。` : ''}原有分軌與調整已保留。`
+    },
+  }
 }
