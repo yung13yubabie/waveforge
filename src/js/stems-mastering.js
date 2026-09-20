@@ -12,7 +12,7 @@
  */
 
 import WaveSurfer from 'wavesurfer.js'
-import { startDemucsAnimation, stopDemucsAnimation } from './antitheft.js'
+import { startDemucsAnimation, stopDemucsAnimation } from './ui/demucs-animation.js'
 import { HF_ENDPOINT, HF_READY } from './config.js'
 import { runDemucsJob } from './audio/hf-demucs.js'
 import { processStem, mixBuffers, createStemGraph, bufferPeak, normalizeBuffer } from './audio/stem-mix.js'
@@ -491,6 +491,23 @@ export function initStemsMastering() {
   document.getElementById('bounce-btn')?.addEventListener('click', bounce)
   window.addEventListener('pagehide', () => { invalidateStemJob(); destroyStemWaves() })
   return {
+    get busy() { return stemBusy },
+    clear() {
+      sourceReady = false
+      sourceFile = null
+      invalidateStemJob()
+      destroyStemWaves()
+      for (const key of Object.keys(stemBuffers)) delete stemBuffers[key]
+      resetStemParams()
+      setStemBusy(false)
+      document.getElementById('stems-local-files').value = ''
+      document.getElementById('stems-processing-grid').replaceChildren()
+      document.getElementById('stems-source-wave').hidden = true
+      document.getElementById('stems-source-wave').removeAttribute('aria-label')
+      document.getElementById('stems-source-status').textContent = '來源音檔已清除，請重新選取。'
+      document.getElementById('stems-set-status').textContent = '分軌已清除。'
+      document.getElementById('bounce-status').textContent = '請先分軌或匯入四軌'
+    },
     sourceLoading(file) {
       sourceReady = false
       invalidateStemJob()

@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: ['final-preview.spec.js', 'smoke.spec.js', 'controls-stems.spec.js'],
+  testMatch: ['final-preview.spec.js', 'smoke.spec.js', 'controls-stems.spec.js', 'session-cleanup.spec.js', 'studio-layout.spec.js'],
   outputDir: './test-results-production',
   timeout: 30000,
   workers: 1,

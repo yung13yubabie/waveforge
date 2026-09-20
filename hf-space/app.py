@@ -1,79 +1,49 @@
-"""
-WaveForge Demucs Stem Separator
-部署到 HuggingFace Spaces — 使用 htdemucs 4 軌模型分離音訊
-
-部署步驟：
-1. 在 HuggingFace 建立新 Space (SDK: Gradio, Hardware: CPU Basic 免費)
-2. 上傳此目錄的所有檔案
-3. 等待 Space 建置完成（首次約 5 分鐘）
-4. 將 Space URL 填入 WaveForge 的 VITE_HF_ENDPOINT 環境變數
-"""
+"""WaveForge's deployed Demucs CLI pipeline with bounded temporary storage."""
+from pathlib import Path
+import tempfile
 
 import gradio as gr
-import tempfile
-import os
-import torch
-from demucs.api import Separator, save_audio
+import demucs.separate
 
-# 預載模型（Space 啟動時只載入一次）
-print("[WaveForge] 載入 Demucs htdemucs 模型...")
-separator = Separator("htdemucs")
-print("[WaveForge] 模型載入完成")
+STEMS = ("vocals", "drums", "bass", "other")
 
 
-def separate_stems(audio_path: str):
-    """
-    接收音訊檔路徑，回傳 4 個分軌的路徑（vocals / drums / bass / other）
-    Gradio 會自動把回傳的 filepath 轉換為 Audio widget。
-    """
+def separate_stems(audio_path):
     if audio_path is None:
-        return None, None, None, None
+        raise gr.Error("請先上傳音訊檔。")
+    input_path = Path(audio_path)
+    if not input_path.is_file():
+        raise gr.Error("找不到上傳的音訊檔，請重新上傳。")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            origin, separated = separator.separate_audio_file(audio_path)
-            stem_order = ["vocals", "drums", "bass", "other"]
-            paths = []
-            for stem in stem_order:
-                if stem not in separated:
-                    paths.append(None)
-                    continue
-                out_path = os.path.join(tmpdir, f"{stem}.wav")
-                save_audio(separated[stem], out_path, samplerate=44100)
-                # 複製到一個不會被 tmpdir 刪除的位置
-                import shutil
-                dest = out_path.replace(tmpdir, tempfile.mkdtemp())
-                shutil.copy(out_path, dest)
-                paths.append(dest)
-            return tuple(paths)
-        except Exception as e:
-            raise gr.Error(f"分軌失敗：{str(e)}")
+    # Keep the production CPU/htdemucs pipeline. Both failures and success remove
+    # its working directory; Gradio owns caching and expiry of returned WAV bytes.
+    try:
+        with tempfile.TemporaryDirectory(prefix="waveforge-demucs-") as work_dir:
+            out_dir = Path(work_dir) / "out"
+            demucs.separate.main([
+                "-n", "htdemucs", "-d", "cpu", "--out", str(out_dir), str(input_path),
+            ])
+            outputs = []
+            for stem in STEMS:
+                matches = list(out_dir.rglob(f"{stem}.wav"))
+                if len(matches) != 1:
+                    raise gr.Error(f"分軌輸出不完整：{stem}，請重新處理。")
+                # Bytes preserve PCM exactly; numpy output would be peak-normalized by Gradio.
+                outputs.append(matches[0].read_bytes())
+            return tuple(outputs)
+    except gr.Error:
+        raise
+    except Exception as exc:
+        raise gr.Error("分軌失敗，請稍後重試或重新選取音檔。") from exc
 
 
-with gr.Blocks(title="WaveForge Stem Separator") as demo:
-    gr.Markdown("## WaveForge Demucs 分軌引擎\n上傳音檔，AI 自動分離人聲 / 鼓組 / 貝斯 / 其他")
-
-    with gr.Row():
-        with gr.Column(scale=1):
-            audio_input = gr.Audio(
-                type="filepath",
-                label="上傳音訊（MP3 / WAV / FLAC，建議 ≤ 5 分鐘）",
-            )
-            btn = gr.Button("開始分軌", variant="primary")
-        with gr.Column(scale=2):
-            with gr.Row():
-                out_vocals = gr.Audio(label="人聲 (Vocals)", type="filepath")
-                out_drums  = gr.Audio(label="鼓組 (Drums)",  type="filepath")
-            with gr.Row():
-                out_bass   = gr.Audio(label="貝斯 (Bass)",   type="filepath")
-                out_other  = gr.Audio(label="其他 (Other)",  type="filepath")
-
-    btn.click(
-        fn=separate_stems,
-        inputs=[audio_input],
-        outputs=[out_vocals, out_drums, out_bass, out_other],
-        api_name="separate",
-    )
+with gr.Blocks(title="WaveForge Demucs Stem Separator", delete_cache=(300, 3600), analytics_enabled=False) as demo:
+    gr.Markdown("## WaveForge 分軌引擎\n音檔會上傳至此 Space。工作目錄於處理結束後移除；輸入與輸出快取每五分鐘檢查，清除超過一小時的檔案。")
+    audio = gr.Audio(label="上傳音訊", type="filepath", sources=["upload"])
+    run_btn = gr.Button("開始分軌")
+    outputs = [gr.Audio(label=stem, type="filepath") for stem in STEMS]
+    run_btn.click(fn=separate_stems, inputs=audio, outputs=outputs, api_name="separate")
 
 if __name__ == "__main__":
+    demo.queue()
     demo.launch()

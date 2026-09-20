@@ -3,6 +3,7 @@
 Updated 2026-09-20. This replaces the obsolete June handoff (old password gate, mirrored render chain and test counts no longer apply).
 
 - Online Vite/Web Audio app. Production: https://yung13yubabie.github.io/waveforge/
+- Studio refresh, audio cleanup and module ownership: `docs/SESSION_PRIVACY_AND_STUDIO.md`.
 - Current audio/control work and remaining Full DAW scope: `docs/AUDIO_TRUST_CHECKPOINT_2026-09-20.md`.
 - Account incident and cleanup: `docs/ACCOUNT_RECOVERY.md`.
 - Build configuration is public `VITE_*` data, injected in GitHub Actions; never put service-role or management keys in client code.
@@ -12,4 +13,4 @@ Updated 2026-09-20. This replaces the obsolete June handoff (old password gate, 
 
 Verification: `npm run build` → `npm run lint` → `npm test` → `npm run test:e2e -- --workers=1` → `npm run test:account` → `npm run test:production`. Browser suites run sequentially. Account tests use a fake endpoint with the real Supabase SDK and test-only sessions.
 
-Remaining: full DAW phases are not complete; see checkpoint. `antitheft.js` still combines account UI, settings and scanning; further extraction needs behavior tests. This fix prevents startup-outage refresh storms; a service that fails after successful initialization still uses the SDK's normal retry behavior. Real Google OAuth and musical-quality evaluation are not covered by mocked account tests.
+Remaining: full DAW phases are not complete; see checkpoint. `antitheft.js` still coordinates account/settings/scanning; audio sampling, report rendering and progress animation are extracted. `main.js` delegates album UI/export to `ui/album-panel.js`. Manual and opt-in post-export cleanup release mastering audio; HF cache cleanup deployed separately to GalaxyU/demucs-waveforge at a0af4d0; Demucs uses the production CLI pipeline, cleans temporary work directories and returns exact WAV bytes to Gradio-managed cache (300-second sweep, one-hour age). This fix prevents startup-outage refresh storms; a service that fails after successful initialization still uses the SDK's normal retry behavior. Real Google OAuth and musical-quality evaluation are not covered by mocked account tests.

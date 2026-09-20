@@ -1,3 +1,4 @@
+import { getAudioDuration, extractAudioSample } from './antitheft/scan-audio.js'
 /**
  * Anti-Theft Detection — Supabase Auth + ACRCloud 音訊指紋比對
  *
@@ -8,7 +9,7 @@
 
 import { createBackendConnection } from './backend-connection.js'
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ACR_EDGE_FN, SUPABASE_CONFIGURED } from './config.js'
-import { sha256Hex } from './audio/sha256.js'
+import { renderResults } from './antitheft/results-view.js'
 
 let supabase = null
 const backend = createBackendConnection(SUPABASE_URL, SUPABASE_ANON_KEY, renderBackendState)
@@ -26,13 +27,6 @@ const works = []   // [{ id, name, file, fingerprint, lastScan, results }]
 let activeWorkId = null
 
 // ── Helpers ───────────────────────────────────────────────
-function safeHref(url) {
-  try {
-    const u = new URL(url)
-    return (u.protocol === 'https:' || u.protocol === 'http:') ? url : '#'
-  } catch { return '#' }
-}
-
 // ── Auth overlay ──────────────────────────────────────────
 export function checkAuthOverlay() {
   const overlay  = document.getElementById('auth-required-overlay')
@@ -499,14 +493,6 @@ async function scanWorkComplete(work) {
   }
 }
 
-// Lightweight duration probe (decode header only via full decode at 8kHz mono).
-async function getAudioDuration(file) {
-  const arr = await file.arrayBuffer()
-  const ctx = new OfflineAudioContext(1, 1, 16000)
-  const decoded = await ctx.decodeAudioData(arr.slice(0))
-  return decoded.duration || SCAN_SAMPLE_SEC
-}
-
 // ── Scan a work ───────────────────────────────────────────
 async function scanWork(work) {
   if (radarScanning) return  // already scanning
@@ -600,299 +586,9 @@ async function scanWork(work) {
   }
 }
 
-/**
- * Extract the first N seconds as a base64 WAV data URL for ACRCloud.
- * MONO @ 16 kHz — ACRCloud fingerprints at ~8 kHz internally, so this is
- * plenty for matching while keeping the upload tiny. The old 30s stereo 48kHz
- * sample was ~5.76 MB and tripped ACRCloud code 3016 ("file too large").
- * 15s mono 16kHz ≈ 480 KB.
- */
-async function extractAudioSample(file, durationSec, offsetSec = 0) {
-  const SR = 16000
-  const arr = await file.arrayBuffer()
-  // Decode at native rate first so we can clamp the render length to the real
-  // track duration (no trailing silence padding for short tracks).
-  const probe = new OfflineAudioContext(1, 1, SR)
-  const decoded = await probe.decodeAudioData(arr.slice(0))
-  const dur   = decoded.duration || durationSec
-  const start = Math.max(0, Math.min(offsetSec, Math.max(0, dur - 1)))
-  const secs  = Math.min(durationSec, Math.max(0.5, dur - start))
-  const ctx = new OfflineAudioContext(1, Math.max(1, Math.ceil(SR * secs)), SR)
-  const src = ctx.createBufferSource()
-  src.buffer = decoded
-  src.connect(ctx.destination)
-  src.start(0, start, secs)
-  const rendered = await ctx.startRendering()
-
-  // Encode to WAV
-  const numCh = rendered.numberOfChannels
-  const len   = rendered.length
-  const sr    = rendered.sampleRate
-  const byteRate = sr * numCh * 2
-  const dataBytes = len * numCh * 2
-  const buf = new ArrayBuffer(44 + dataBytes)
-  const dv  = new DataView(buf)
-  const w   = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)) }
-
-  w(0, 'RIFF'); dv.setUint32(4, 36 + dataBytes, true); w(8, 'WAVE')
-  w(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true)
-  dv.setUint16(22, numCh, true); dv.setUint32(24, sr, true)
-  dv.setUint32(28, byteRate, true); dv.setUint16(32, numCh * 2, true); dv.setUint16(34, 16, true)
-  w(36, 'data'); dv.setUint32(40, dataBytes, true)
-
-  let off = 44
-  for (let i = 0; i < len; i++) {
-    for (let c = 0; c < numCh; c++) {
-      const s = Math.max(-1, Math.min(1, rendered.getChannelData(c)[i]))
-      dv.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-      off += 2
-    }
-  }
-
-  const bytes = new Uint8Array(buf)
-  let bin = ''
-  for (const byte of bytes) bin += String.fromCharCode(byte)
-  return `data:audio/wav;base64,${btoa(bin)}`
-}
-
-// Interpret an ISRC's country prefix. Q-prefixes (QM/QZ/QT/QN…) are ISRC
-// "user-assigned" codes that IFPI hands to digital distributors, so they almost
-// always mean the upload came through an aggregator (DistroKid / TuneCore /
-// CD Baby / Amuse …) rather than a traditional label — a direct DMCA to that
-// distributor takes the release down across every platform at once.
-function analyzeIsrc(isrc) {
-  const clean = (isrc ?? '').replace(/[-\s]/g, '')
-  if (clean.length < 7) return ''
-  const cc = clean.slice(0, 2).toUpperCase()
-  const registrant = clean.slice(2, 5)
-  const year = clean.slice(5, 7)
-  if (/^Q/.test(cc)) {
-    return `國碼 ${cc} 為 ISRC「使用者指定碼」，幾乎都由數位發行商（DistroKid / TuneCore / CD Baby / Amuse 等 aggregator）配發，非傳統唱片公司。`
-      + `→ 建議直接對該發行商發 DMCA，一撤即全平台同步下架。登記者代碼：${registrant}，年份 20${year}。`
-  }
-  return `國碼 ${cc}、登記者代碼 ${registrant}、年份 20${year}。`
-}
-
-// ── Takedown evidence report ──────────────────────────────
-// Build a DMCA-style evidence report for one suspected-infringement match,
-// including a SHA-256 of the user's ORIGINAL file (proof of possession) and
-// the exact platform links where the stolen upload is hosted.
-async function generateTakedownReport(work, r) {
-  const now = new Date()
-  let ownFile = '原始檔不在本分頁 — 請重新上傳同一檔案以加入檔案雜湊（持有證明）'
-  if (work?.file) {
-    try {
-      const hex = await sha256Hex(await work.file.arrayBuffer())
-      ownFile = `檔名：${work.file.name}\n檔案大小：${work.file.size} bytes\nSHA-256：${hex}\n（此雜湊證明我持有此原始錄音檔）`
-    } catch (e) {
-      ownFile = `檔案雜湊計算失敗：${e.message}`
-    }
-  }
-  const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : []
-  const platformLines = platforms.length
-    ? platforms.map(p => `- ${p.name}：${p.url}`).join('\n')
-    : `- （ACRCloud 未提供直接連結，請於各平台搜尋「${r.title ?? ''} ${r.artist ?? ''}」）`
-  const matchKind = r.source === '翻唱' ? '翻唱/改編（Cover）' : '音訊指紋（完全相同錄音）'
-
-  return `WaveForge 盜用取證報告 / Copyright Infringement Evidence
-產生時間：${now.toISOString()}
-
-== 我的原創作品 (My original work) ==
-作品名稱：${work?.name ?? '(未命名)'}
-${ownFile}
-
-== 偵測到的疑似盜用 (Detected infringing upload) ==
-比對曲目：${r.title ?? '(未知)'} / ${r.artist ?? '—'}
-專輯：${r.album ?? '—'}
-發行日：${r.releaseDate ?? '—'}
-廠牌 / 發行者：${r.label ?? '—'}
-相似度：${r.similarity}%（比對方式：${matchKind}）
-ACRCloud ID：${r.acrid ?? '—'}
-ISRC：${r.isrc ?? '—'}
-UPC：${r.upc ?? '—'}
-
-上架平台與連結 (Where it is hosted)：
-${platformLines}
-
-== 發行來源分析 (Distribution source) ==
-${analyzeIsrc(r.isrc) || 'ISRC 不明，無法分析發行來源。'}
-可用 UPC「${r.upc ?? '—'}」與廠牌「${r.label ?? '—'}」向平台或發行商回溯上架者身分。
-
-== 技術證據 (Technical evidence) ==
-比對引擎：ACRCloud Audio Fingerprinting
-說明：相似度 ${r.similarity}% 表示上架版本與我的原始錄音在音訊指紋層級${r.similarity >= 98 ? '完全相同' : '高度相似'}。
-
-== 著作權聲明 (DMCA statement) ==
-我在此聲明，我對上述原創作品擁有著作權（或經授權代表權利人）。上述平台連結所指之內容未經我授權使用了我的錄音，構成侵權。
-我基於誠信相信此使用未經著作權人、其代理人或法律授權。本通知所載資訊正確無誤；在偽證罪責下，我聲明我有權就上述受侵權之專屬權利行事。
-我要求平台移除或停用對該侵權內容的存取。
-
-權利人簽署 (Signature)：__________________________
-日期 (Date)：${now.toLocaleDateString('zh-TW')}
-聯絡方式 (Contact)：__________________________
-`
-}
-
 // ── Render helpers ────────────────────────────────────────
 
 // Build one result row element.
-function buildResultItem(r, i, work) {
-  const cls = r.similarity >= 90 ? 'high' : r.similarity >= 70 ? 'mid' : 'low'
-
-  const item = document.createElement('div')
-  item.className = 'scan-result-item'
-  item.style.animationDelay = `${i * 40}ms`
-
-  const simEl = document.createElement('div')
-  simEl.className = `result-similarity ${cls}`
-  simEl.textContent = `${r.similarity}%`
-
-  if (r.albumArt) {
-    const artEl = document.createElement('img')
-    artEl.src = safeHref(r.albumArt)
-    artEl.alt = ''
-    artEl.className = 'result-album-art'
-    artEl.loading = 'lazy'
-    item.appendChild(artEl)
-  }
-
-  const infoEl = document.createElement('div')
-  infoEl.className = 'result-info'
-
-  const titleEl = document.createElement('div')
-  titleEl.className = 'result-title'
-  titleEl.textContent = r.title ?? ''
-
-  const metaEl = document.createElement('div')
-  metaEl.className = 'result-meta'
-  const artistEl = document.createElement('span')
-  artistEl.textContent = r.artist ?? ''
-  metaEl.appendChild(artistEl)
-  if (r.releaseDate) {
-    const dateEl = document.createElement('span')
-    dateEl.textContent = `· ${r.releaseDate}`
-    metaEl.appendChild(dateEl)
-  }
-  infoEl.append(titleEl, metaEl)
-
-  // Platform link chips. Direct track links (from ACRCloud external IDs) are
-  // exact; when a match has none (common for cover/humming hits), fall back to
-  // precise SEARCH links built from title + artist so every result is findable.
-  const linksEl = document.createElement('div')
-  linksEl.className = 'result-links'
-  let platforms = Array.isArray(r.platforms) && r.platforms.length
-    ? r.platforms.slice()
-    : (r.url && r.url !== '#' ? [{ name: r.platform || '前往', url: r.url }] : [])
-  const isDirect = platforms.length > 0
-  if (platforms.length === 0) {
-    const q = encodeURIComponent(`${r.title ?? ''} ${r.artist ?? ''}`.trim())
-    if (q) {
-      platforms = [
-        { name: 'YouTube 搜尋', url: `https://www.youtube.com/results?search_query=${q}` },
-        { name: 'Spotify 搜尋',  url: `https://open.spotify.com/search/${q}` },
-      ]
-    }
-  }
-  if (platforms.length === 0) {
-    const none = document.createElement('span')
-    none.className = 'result-no-link'
-    none.textContent = '無連結'
-    linksEl.appendChild(none)
-  } else {
-    for (const p of platforms) {
-      const a = document.createElement('a')
-      a.className = `result-link-chip${isDirect ? '' : ' search'}`
-      a.href = safeHref(p.url)
-      a.target = '_blank'
-      a.rel = 'noopener noreferrer'
-      a.setAttribute('aria-label', `${isDirect ? '前往' : '搜尋'} ${p.name}`)
-      a.textContent = p.name
-      linksEl.appendChild(a)
-    }
-  }
-
-  // Takedown evidence — generate a DMCA report .txt (+ copy to clipboard).
-  const evBtn = document.createElement('button')
-  evBtn.className = 'result-evidence-btn'
-  evBtn.textContent = '取證'
-  evBtn.setAttribute('data-tooltip', '產生下架/DMCA 證據報告（含你的檔案雜湊 + 盜用連結）')
-  evBtn.addEventListener('click', async (e) => {
-    e.stopPropagation()
-    evBtn.disabled = true
-    evBtn.textContent = '產生中…'
-    try {
-      const report = await generateTakedownReport(work, r)
-      const safeName = (r.title || 'work').replace(/[^\w一-龥-]/g, '_').slice(0, 40)
-      const blob = new Blob([report], { type: 'text/plain;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = `takedown_${safeName}.txt`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      try { await navigator.clipboard?.writeText(report) } catch { /* clipboard optional */ }
-      evBtn.textContent = '已下載 ✓'
-    } catch (err) {
-      evBtn.textContent = '失敗'
-      console.error('[takedown report]', err)
-    } finally {
-      setTimeout(() => { evBtn.disabled = false; evBtn.textContent = '取證' }, 2500)
-    }
-  })
-  linksEl.appendChild(evBtn)
-
-  item.append(simEl, infoEl, linksEl)
-  return item
-}
-
-// Section header for a match group (原曲/指紋 vs 翻唱/Cover).
-function buildResultSection(kind, count) {
-  const head = document.createElement('div')
-  head.className = `result-section-head ${kind === 'cover' ? 'cover' : 'exact'}`
-  const label = document.createElement('span')
-  label.className = 'result-section-label'
-  label.textContent = kind === 'cover' ? '翻唱比對（Cover）' : '原曲比對（指紋）'
-  const badge = document.createElement('span')
-  badge.className = 'result-section-count'
-  badge.textContent = `${count}`
-  head.append(label, badge)
-  return head
-}
-
-function renderResults(work) {
-  const listEl = document.getElementById('scan-results-list')
-  if (!listEl) return
-
-  if (!work?.results?.length) {
-    const empty = document.createElement('div')
-    empty.className = 'scan-empty'
-    const icon = document.createElement('div')
-    icon.className = 'scan-empty-icon'
-    icon.textContent = '◎'
-    const msg = document.createElement('div')
-    msg.textContent = '尚無比對結果'
-    empty.append(icon, msg)
-    listEl.replaceChildren(empty)
-    return
-  }
-
-  // Split into 原曲(指紋/exact) and 翻唱(cover), each sorted by similarity desc.
-  const bySim = (a, b) => b.similarity - a.similarity
-  const exact = work.results.filter(r => r.source !== '翻唱').sort(bySim)
-  const cover = work.results.filter(r => r.source === '翻唱').sort(bySim)
-
-  const fragment = document.createDocumentFragment()
-  let i = 0
-  if (exact.length) {
-    fragment.appendChild(buildResultSection('exact', exact.length))
-    for (const r of exact) fragment.appendChild(buildResultItem(r, i++, work))
-  }
-  if (cover.length) {
-    fragment.appendChild(buildResultSection('cover', cover.length))
-    for (const r of cover) fragment.appendChild(buildResultItem(r, i++, work))
-  }
-  listEl.replaceChildren(fragment)
-}
-
 function renderWorksList() {
   const listEl = document.getElementById('works-list')
   if (!listEl) return
@@ -1073,54 +769,6 @@ function startRadar() {
 
   if (radarAnim) cancelAnimationFrame(radarAnim)
   draw()
-}
-
-// ── Demucs progress canvas (shared with stems-mastering) ──
-let demucsAnim    = null
-let demucsRunning = false
-
-export function startDemucsAnimation() {
-  const canvas = document.getElementById('demucs-canvas')
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  const W = canvas.width, H = canvas.height
-  const COLORS = ['#FF4B6E', '#4ECDC4', '#FFE66D', '#FD9644']
-  const BARS   = 28
-  const phase  = Array.from({ length: BARS }, (_, i) => (i / BARS) * Math.PI * 2)
-  let t = 0
-  demucsRunning = true
-
-  function draw() {
-    if (!demucsRunning) return
-    ctx.clearRect(0, 0, W, H)
-    const bw = (W - (BARS - 1) * 2) / BARS
-
-    for (let i = 0; i < BARS; i++) {
-      const colorIdx = Math.floor((i / BARS) * COLORS.length)
-      const height   = (0.3 + 0.7 * Math.abs(Math.sin(phase[i] + t))) * H * 0.85
-      const y        = (H - height) / 2
-      ctx.fillStyle  = COLORS[colorIdx] + 'CC'
-      ctx.beginPath()
-      if (ctx.roundRect) {
-        ctx.roundRect(i * (bw + 2), y, bw, height, 2)
-      } else {
-        ctx.rect(i * (bw + 2), y, bw, height)
-      }
-      ctx.fill()
-    }
-
-    t += 0.08
-    demucsAnim = requestAnimationFrame(draw)
-  }
-
-  if (demucsAnim) cancelAnimationFrame(demucsAnim)
-  draw()
-}
-
-export function stopDemucsAnimation() {
-  demucsRunning = false
-  if (demucsAnim) cancelAnimationFrame(demucsAnim)
-  demucsAnim = null
 }
 
 // ── Tutorial toggle ───────────────────────────────────────
@@ -1337,6 +985,6 @@ export function initAntiTheft() {
     const msg = document.createElement('span')
     msg.textContent = '訪客模式：掃描結果為 Demo 資料。設定 Supabase 可啟用完整功能（真實 ACRCloud 掃描、帳號同步）。'
     banner.appendChild(msg)
-    panel?.prepend(banner)
+    panel?.before(banner)
   }
 }

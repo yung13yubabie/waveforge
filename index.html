@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/src/css/reset.css">
   <link rel="stylesheet" href="/src/css/layout.css">
   <link rel="stylesheet" href="/src/css/audio-trust.css">
+  <link rel="stylesheet" href="/src/css/studio.css">
 </head>
 <body>
 
@@ -54,11 +55,22 @@
       <input type="file" id="file-input" accept=".mp3,.wav,.flac,.aac,.m4a,.ogg" aria-hidden="true" multiple>
       <span class="upload-icon" aria-hidden="true">⬆</span>
       <span id="upload-text-wrap">
-        <span class="upload-text"><strong>點擊上傳</strong> 或拖拉音檔</span>
+        <span class="upload-text"><strong>選取音檔</strong> 或拖拉音檔</span>
         <span class="upload-formats">MP3 · WAV · FLAC · AAC · M4A</span>
       </span>
     </label>
 
+    <details class="session-privacy" id="session-privacy">
+      <summary>檔案與隱私</summary>
+      <div class="session-privacy-body">
+        <strong>你的音檔，清楚掌握</strong>
+        <p>一般母帶處理在本頁記憶體內完成，不會上傳音檔。選取檔案後會保留至清除或關閉頁面，以便繼續編輯。</p>
+        <p>使用「開始分軌」會上傳至 Hugging Face；版權掃描會送出音訊片段。清除此頁無法撤回已送往雲端的資料。</p>
+        <label><input id="clear-after-export" type="checkbox"> 單曲輸出後清除母帶工作階段</label>
+        <button id="clear-session-btn" class="header-btn" type="button">清除音檔、分軌與專輯</button>
+        <p id="session-file-status" role="status">尚未載入音檔。</p>
+      </div>
+    </details>
     <div class="header-actions">
       <!-- A/B comparison + C/D snapshots -->
       <!-- Engine boots in B (processed) mode — button state must match -->

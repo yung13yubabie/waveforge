@@ -65,6 +65,7 @@ export class Knob {
     if (!Number.isFinite(value)) return
     this.value = Math.min(this.max, Math.max(this.min, value))
     this.slider.value = String(this.value)
+    this.slider.style.setProperty('--fill', `${100 * (this.value - this.min) / (this.max - this.min || 1)}%`)
     this.input.value = String(Number(this.value.toFixed(6)))
     this.input.setCustomValidity('')
     this.input.setAttribute('aria-invalid', 'false')

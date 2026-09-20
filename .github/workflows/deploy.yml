@@ -28,6 +28,7 @@ jobs:
           npm run build
           npm run lint
           npm test
+          python -m unittest discover -s tests/hf_space
           npx playwright install --with-deps chromium
           npm run test:e2e -- --workers=1
           npm run test:account

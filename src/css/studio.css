@@ -1,0 +1,79 @@
+/* WaveForge studio: quiet surfaces, precise controls, mint for active signal. */
+body { color-scheme: dark; }
+.header { gap: 16px; }
+.logo { letter-spacing: -.7px; font-size: 22px; flex-shrink: 0; }
+.header .upload-zone { border-style: solid; background: var(--c-bg-input); border-radius: 8px; }
+.header-btn, .transport-btn, .modal-submit-btn { transition: background 140ms, border-color 140ms, transform 140ms; }
+.header-btn { min-height: 34px; white-space: nowrap; flex-shrink: 0; }
+.header-actions > * { flex-shrink: 0; }
+.header-btn.primary, .transport-btn.play-btn { color: var(--c-text-inv); box-shadow: none; }
+button:active:not(:disabled) { transform: translateY(1px); }
+.mode-nav { gap: 8px; align-items: center; background: var(--c-bg-base); padding-inline: 20px; }
+.mode-tab { height: 34px; padding: 0 16px; border-radius: 6px; border-bottom: 0; }
+.mode-tab.active { background: var(--c-bg-overlay); color: var(--c-primary); box-shadow: inset 0 0 0 1px var(--c-border-hover); }
+.analysis-bar { background: var(--c-bg-input); }
+.chain-panel { background: var(--c-bg-base); }
+.chain-header { padding: 16px; }
+.chain-title { letter-spacing: 1.5px; }
+.chain-modules { padding: 12px; }
+.module-card { background: var(--c-bg-surface); border-radius: 9px; margin-bottom: 10px; box-shadow: none; }
+.module-card.active { border-color: var(--c-border-hover); }
+.module-card.expanded { border-color: #6fe3c04d; }
+.module-head { min-height: 46px; padding: 12px; }
+.module-name { font-size: 13px; letter-spacing: .2px; }
+.module-body { padding: 16px 12px; background: var(--c-bg-input); }
+.module-card.bypassed { opacity: .7; }
+.knob-wrap.parameter-control { width: 100%; min-width: 0; gap: 7px; align-items: stretch; cursor: default; }
+.parameter-control .knob-label { text-align: left; color: var(--c-text-2); font-size: 11px; line-height: 1.5; }
+.parameter-slider { appearance: none; width: 100%; min-width: 0; height: 28px; background: transparent; cursor: pointer; }
+.parameter-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--c-primary) var(--fill), var(--c-bg-overlay) var(--fill)); }
+.parameter-slider::-webkit-slider-thumb { appearance: none; width: 8px; height: 18px; margin-top: -7px; border-radius: 3px; background: #edf4f1; border: 1px solid #101313; box-shadow: 0 1px 4px #0008; }
+.parameter-slider::-moz-range-track { height: 4px; background: var(--c-bg-overlay); }
+.parameter-slider::-moz-range-progress { height: 4px; background: var(--c-primary); }
+.parameter-slider::-moz-range-thumb { width: 8px; height: 18px; border-radius: 3px; background: #edf4f1; border: 1px solid #101313; }
+.parameter-entry { display: flex; gap: 4px; align-items: center; }
+.parameter-number { width: 100%; min-width: 0; padding: 7px 6px; border: 1px solid var(--c-border); border-radius: 5px; background: var(--c-bg-surface); color: var(--c-text-1); font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+.parameter-number:hover { border-color: var(--c-border-hover); }
+.parameter-number[aria-invalid="true"] { border-color: #ff817c; }
+.parameter-reset { flex: 0 0 28px; min-height: 30px; border: 1px solid var(--c-border); border-radius: 5px; color: var(--c-text-2); cursor: pointer; }
+.parameter-reset:hover { background: var(--c-bg-overlay); color: var(--c-primary); }
+.stem-proc-card, .settings-card { border-radius: 10px; box-shadow: none; }
+.antitheft-panel { flex: 1; min-height: 0; }
+.guest-mode-banner { height: auto; }
+.works-library, .antitheft-settings { background: var(--c-bg-surface); }
+.stems-processing-grid { gap: 16px; padding: 16px 24px; }
+.stems-source, .stems-import-label { color: var(--c-text-2); }
+.stems-bounce-bar { background: var(--c-bg-surface); border-top: 1px solid var(--c-border-hover); }
+.album-row { border-bottom: 1px solid var(--c-border); padding-block: 10px; }
+.transport { background: var(--c-bg-input); border-top: 1px solid var(--c-border-hover); }
+.session-privacy { flex-shrink: 0; font-size: 12px; }
+.session-privacy summary { cursor: pointer; color: var(--c-text-2); padding: 10px 8px; border: 1px solid var(--c-border); border-radius: 6px; }
+.session-privacy[open] summary { color: var(--c-primary); border-color: var(--c-primary); }
+.session-privacy-body { position: absolute; top: calc(var(--header-h) + 8px); left: 20px; width: min(380px, calc(100vw - 40px)); max-height: calc(100dvh - 100px); overflow-y: auto; padding: 20px; background: var(--c-bg-elevated); border: 1px solid var(--c-border-hover); border-radius: 12px; box-shadow: 0 16px 40px #0009; z-index: 80; line-height: 1.8; }
+.session-privacy-body strong { display: block; font-size: 16px; }
+.session-privacy-body p { margin: 12px 0; color: var(--c-text-2); }
+.session-privacy-body label { display: flex; align-items: center; gap: 8px; margin-block: 16px; }
+.session-privacy-body button { width: 100%; justify-content: center; border-color: var(--c-primary); }
+.session-privacy-body input { accent-color: var(--c-primary); }
+#session-file-status { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: no-preference) {
+  .module-card.expanded .module-body, .session-privacy[open] .session-privacy-body { animation: panel-enter 160ms ease-out; }
+  @keyframes panel-enter { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media (max-width: 1100px) { :root { --chain-w: 320px; } .header { gap: 8px; padding-inline: 12px; } .header-actions { gap: 6px; } }
+@media (max-width: 680px) {
+  :root { --header-h: 112px; }
+  .header { flex-wrap: wrap; gap: 6px 10px; padding-block: 8px; align-content: center; overflow: visible; }
+  .header .upload-zone { flex: 1; min-width: 100px; }
+  .header-actions { flex-basis: 100%; margin-left: 0; min-height: 38px; }
+  .mode-nav { padding-inline: 8px; gap: 3px; }
+  .mode-tab { padding-inline: 10px; }
+  .stems-processing-grid { padding: 12px; }
+  .antitheft-panel { flex-direction: column; height: auto; overflow: visible; }
+  .chain-panel, .chain-modules, .meters-panel { overflow: visible; }
+  .chain-modules, .meters-panel { flex: none; }
+}
+
+.ab-btn.active, .works-add-btn, .modal-submit-btn { color: var(--c-text-inv); }
+.api-key-save { white-space: nowrap; flex-shrink: 0; }
+.parameter-control .knob-label { text-transform: none; }

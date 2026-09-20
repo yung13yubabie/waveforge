@@ -1,19 +1,19 @@
 :root {
   /* ── Colour palette ─────────────────────────────────── */
-  --c-bg-base:       #0A0A0F;
-  --c-bg-surface:    #12121A;
-  --c-bg-elevated:   #1A1A26;
-  --c-bg-overlay:    #22222E;
-  --c-bg-input:      #0F0F18;
+  --c-bg-base:       #101313;
+  --c-bg-surface:    #171c1c;
+  --c-bg-elevated:   #202727;
+  --c-bg-overlay:    #2a3333;
+  --c-bg-input:      #111717;
 
-  --c-primary:       #E8003C;
-  --c-primary-h:     #FF2D55;
-  --c-primary-muted: rgba(232, 0, 60, 0.12);
-  --c-primary-glow:  rgba(232, 0, 60, 0.25);
-  --c-primary-dim:   rgba(232, 0, 60, 0.06);
+  --c-primary:       #6fe3c0;
+  --c-primary-h:     #a0f2d8;
+  --c-primary-muted: rgba(111, 227, 192, 0.12);
+  --c-primary-glow:  rgba(111, 227, 192, 0.25);
+  --c-primary-dim:   rgba(111, 227, 192, 0.06);
 
   --c-waveform:      #FF4B6E;
-  --c-waveform-prog: #E8003C;
+  --c-waveform-prog: #6fe3c0;
   --c-waveform-stem-0: #FF4B6E; /* vocals */
   --c-waveform-stem-1: #4ECDC4; /* drums  */
   --c-waveform-stem-2: #FFE66D; /* bass   */
@@ -25,13 +25,13 @@
   --c-orange: #FFA502;
   --c-blue:   #4ECDC4;
 
-  --c-text-1:   #F1F2F6;
-  --c-text-2:   #A4ACC0;
-  --c-text-3:   #7A849C;  /* ≥4.5:1 on surface — WCAG AA for small text */
-  --c-text-inv: #0A0A0F;
+  --c-text-1:   #edf4f1;
+  --c-text-2:   #b0bfba;
+  --c-text-3:   #8faaa0;  /* ≥4.5:1 on surface — WCAG AA for small text */
+  --c-text-inv: #101313;
 
-  --c-border:       rgba(255,255,255,0.06);
-  --c-border-focus: rgba(232,0,60,0.45);
+  --c-border:       rgba(205,233,223,0.12);
+  --c-border-focus: rgba(111,227,192,0.45);
   --c-border-hover: rgba(255,255,255,0.12);
 
   /* ── Spacing ────────────────────────────────────────── */
@@ -46,7 +46,7 @@
 
   /* ── Typography ─────────────────────────────────────── */
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-  --font-ui:   -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-ui:   'Bahnschrift', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
 
   --text-xs:  11px;
   --text-sm:  12px;
@@ -74,11 +74,11 @@
   --dur-slow: 400ms;
 
   /* ── Layout ─────────────────────────────────────────── */
-  --header-h:    56px;
+  --header-h:    64px;
   --analysis-h:  36px;
-  --mode-nav-h:  40px;
+  --mode-nav-h:  48px;
   --transport-h: 52px;
-  --chain-w:     320px;
+  --chain-w:     370px;
   --stems-h:     240px;
 
   /* ── Stems colours (kept for stem panels) ─────────── */
