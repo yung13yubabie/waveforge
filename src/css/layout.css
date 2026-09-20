@@ -573,6 +573,7 @@
 }
 .album-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
@@ -1594,7 +1595,13 @@
   border-radius: var(--r-sm);
   font-size: var(--text-xs);
   color: var(--c-text-1);
-  white-space: nowrap;
+  /* nowrap let a long tooltip render 400-500px wide, guaranteeing overflow
+     on any narrow viewport regardless of where the trigger sits — capping
+     width and wrapping keeps every tooltip within the screen. */
+  max-width: min(240px, calc(100vw - 24px));
+  white-space: normal;
+  overflow-wrap: break-word;
+  text-align: center;
   pointer-events: none;
   z-index: 50;
   opacity: 0;

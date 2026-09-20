@@ -42,7 +42,7 @@ describe('mixBuffers', () => {
     expect(Array.from(out.getChannelData(0))).toEqual([0.5, 0.5])
   })
 
-  it('peak-normalizes a mix that would otherwise clip', () => {
+  it('preserves over-full-scale samples without hidden normalization', () => {
     const a = bufferOf(new Float32Array([0.8, 0.4]))
     const b = bufferOf(new Float32Array([0.8, 0.4]))
 
@@ -50,17 +50,17 @@ describe('mixBuffers', () => {
     const out = mixBuffers([a, b])
     const data = out.getChannelData(0)
 
-    expect(Math.max(...data.map(Math.abs))).toBeCloseTo(1.0, 5)
+    expect(Math.max(...data.map(Math.abs))).toBeCloseTo(1.6, 5)
     // Normalization must be a uniform scale, so the 2:1 ratio is preserved.
     expect(data[0] / data[1]).toBeCloseTo(2.0, 5)
   })
 
-  it('normalizes against a negative peak too', () => {
+  it('preserves negative overload too', () => {
     const a = bufferOf(new Float32Array([-1.5, 0.3]))
 
     const out = mixBuffers([a])
 
-    expect(out.getChannelData(0)[0]).toBeCloseTo(-1.0, 5)
+    expect(out.getChannelData(0)[0]).toBeCloseTo(-1.5, 5)
   })
 
   it('leaves a mix that fits below full scale untouched', () => {

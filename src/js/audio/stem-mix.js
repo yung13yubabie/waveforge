@@ -2,7 +2,7 @@
  * Per-stem DSP and mixdown.
  *
  * Pure audio work: no DOM, no network. Each stem runs through a 3-band EQ and
- * a compressor, then all stems sum into one peak-normalized buffer.
+ * a compressor, then all stems sum without implicit gain changes.
  */
 
 const LOW_SHELF_HZ = 200
@@ -13,9 +13,6 @@ const COMP_KNEE_DB = 6
 const COMP_ATTACK_SEC = 0.003
 const COMP_RELEASE_SEC = 0.25
 
-// Leave the mix alone until it is close enough to full scale to clip.
-const NORMALIZE_ABOVE_PEAK = 0.99
-
 /**
  * Process one stem buffer through EQ + dynamics compression.
  * @param {AudioBuffer|null} buffer
@@ -25,16 +22,15 @@ const NORMALIZE_ABOVE_PEAK = 0.99
  */
 export async function processStem(buffer, params, volume) {
   if (!buffer) return null
+  const ctx = new OfflineAudioContext(2, buffer.length, buffer.sampleRate)
+  const src = ctx.createBufferSource(); src.buffer = buffer
+  const graph = createStemGraph(ctx, params, volume)
+  src.connect(graph.input); graph.output.connect(ctx.destination); src.start()
+  return ctx.startRendering()
+}
+
+export function createStemGraph(ctx, params, volume = 1) {
   const { lowGain, midGain, highGain, thresh, ratio } = params
-  const ctx = new OfflineAudioContext(
-    buffer.numberOfChannels,
-    buffer.length,
-    buffer.sampleRate,
-  )
-
-  const src = ctx.createBufferSource()
-  src.buffer = buffer
-
   const low = ctx.createBiquadFilter()
   low.type = 'lowshelf'; low.frequency.value = LOW_SHELF_HZ; low.gain.value = lowGain
 
@@ -53,20 +49,29 @@ export async function processStem(buffer, params, volume) {
 
   const gain = ctx.createGain()
   gain.gain.value = volume
+  const pan = ctx.createStereoPanner()
+  pan.pan.value = params.pan ?? 0
 
-  src.connect(low)
   low.connect(mid)
   mid.connect(high)
   high.connect(comp)
-  comp.connect(gain)
-  gain.connect(ctx.destination)
-  src.start()
-
-  return ctx.startRendering()
+  comp.connect(pan)
+  pan.connect(gain)
+  return { input: low, output: gain, low, mid, high, comp, gain, pan,
+    update(p, v) {
+      const t = ctx.currentTime
+      for (const [param, value] of [[low.gain, p.lowGain], [mid.gain, p.midGain], [high.gain, p.highGain],
+        [comp.threshold, p.thresh], [comp.ratio, p.ratio], [pan.pan, p.pan ?? 0], [gain.gain, v]]) {
+        if (!Number.isFinite(value)) throw new Error('分軌參數必須是有效數值')
+        param.setTargetAtTime(value, t, 0.01)
+      }
+    },
+    disconnect() { [low, mid, high, comp, pan, gain].forEach(n => n.disconnect()) },
+  }
 }
 
 /**
- * Sum all processed stem buffers and peak-normalize.
+ * Sum processed stems, preserving floating-point overload for explicit user correction.
  * @param {(AudioBuffer|null)[]} buffers
  * @returns {AudioBuffer|null} null when there is nothing to mix
  */
@@ -78,6 +83,8 @@ export function mixBuffers(buffers) {
   const len = Math.max(...valid.map(b => b.length))
   const sr = valid[0].sampleRate
 
+  if (valid.some(b => b.sampleRate !== sr || b.numberOfChannels !== ch)) throw new Error('分軌採樣率與聲道數必須一致')
+
   const mixed = Array.from({ length: ch }, () => new Float32Array(len))
 
   for (const buf of valid) {
@@ -88,13 +95,26 @@ export function mixBuffers(buffers) {
     }
   }
 
-  let peak = 0
-  for (const chan of mixed) for (const s of chan) if (Math.abs(s) > peak) peak = Math.abs(s)
-  if (peak > NORMALIZE_ABOVE_PEAK) for (const chan of mixed) for (let i = 0; i < chan.length; i++) chan[i] /= peak
-
   // Build output AudioBuffer using OfflineAudioContext (broadest compat)
   const tmpCtx = new OfflineAudioContext(ch, len, sr)
   const out = tmpCtx.createBuffer(ch, len, sr)
   for (let c = 0; c < ch; c++) out.copyToChannel(mixed[c], c)
+  return out
+}
+
+export function bufferPeak(buffer) {
+  let peak = 0
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) for (const x of buffer.getChannelData(ch)) peak = Math.max(peak, Math.abs(x))
+  return peak
+}
+
+// Explicit opt-in command, never called automatically by mixBuffers.
+export function normalizeBuffer(buffer, target = 0.99) {
+  const peak = bufferPeak(buffer)
+  const out = new OfflineAudioContext(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+    .createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    out.copyToChannel(buffer.getChannelData(ch).map(x => peak > 0 ? x * target / peak : x), ch)
+  }
   return out
 }

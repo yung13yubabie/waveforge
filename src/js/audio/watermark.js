@@ -64,7 +64,8 @@ export function embedWatermark(channels, sampleRate, payload, { strength = 0.02 
       const rms = Math.sqrt(sumSq / (end - start)) || 0
       const amp = strength * rms
       for (let i = start; i < end; i++) {
-        out[i] = Math.max(-1, Math.min(1, ch[i] + amp * pn[i - start]))
+        // Keep float headroom; final limiting/encoding owns overload handling.
+        out[i] = ch[i] + amp * pn[i - start]
       }
     }
     return out

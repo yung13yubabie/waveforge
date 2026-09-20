@@ -1,6 +1,6 @@
 # WaveForge
 
-瀏覽器端母帶處理 DAW。核心母帶功能純前端 Web Audio API，無需後端即可運作；分軌與防盜偵測需要外部後端（見功能矩陣）。
+線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。不需要離線 App 或本機 AI 模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
 
 > 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 WAV / MP3。
 
@@ -38,7 +38,7 @@ npm run dev        # http://localhost:5173/
 | `npm run dev` | 開發模式（HMR） |
 | `npm run build` | Production build → `dist/` |
 | `npm run preview` | 預覽 production build |
-| `npm test` | 單元測試（Vitest，324 tests） |
+| `npm test` | 單元測試（Vitest） |
 | `npm run verify` | 完整驗證（test + build） |
 | `npm run test:e2e` | Playwright smoke test（需 `npx playwright install chromium`） |
 | `npm run test:coverage` | 覆蓋率報告 |
@@ -51,7 +51,7 @@ npm run dev        # http://localhost:5173/
 | 模組 | 說明 |
 |------|------|
 | HP / LP | 高通 / 低通濾波 |
-| 10-band EQ | 線性相位圖形 EQ（80 Hz–16 kHz） |
+| 10-band EQ | 10-band biquad EQ（32 Hz–16 kHz），匯出可選線性相位 FIR |
 | Dynamic EQ | 動態頻段增益（AudioWorklet） |
 | M/S | 中側矩陣（寬度、Mid/Side 獨立增益） |
 | De-esser | 單頻段 de-esser（AudioWorklet） |
@@ -70,7 +70,7 @@ npm run dev        # http://localhost:5173/
 - **100 步 Undo / Redo**
 - **39 個母帶預設**：Streaming −14/−16、YouTube、Spotify、CD 等
 - **用戶自存預設**（localStorage）
-- **專輯序列**：多曲拖排、ISRC 欄位、per-track 響度微調、CD gap、DDP 輸出
+- **專輯序列**：多曲拖排、ISRC 欄位、per-track 響度微調、CD gap、CD Master Package（WAV+CUE+MD5 ZIP，非 DDP 2.00）
 
 ---
 
@@ -84,7 +84,7 @@ npm run dev        # http://localhost:5173/
 | **BPM / Key 分析** | 只分析前 45 秒（BPM）/ 30 秒（Key）。長前奏曲目結果可能不代表全曲。 |
 | **來源位元率偵測** | 以「檔案大小 ÷ 時長」估算，VBR 檔案顯示的是平均位元率。 |
 
-已**正確實作並驗證**：LUFS（BS.1770-4 兩段式 gating）、True Peak（4× oversampling）、24-bit WAV 編碼、即時/離線處理鏈鏡像。
+已**正確實作並驗證**：LUFS（BS.1770-4 兩段式 gating）、True Peak（4× oversampling）、24-bit WAV 編碼、共享即時／匯出處理圖。
 
 ---
 
@@ -126,7 +126,7 @@ source → bypassGain ───────────────────�
 
 ### Export
 
-`OfflineAudioContext` 離線渲染，完整鏡像即時鏈（含所有 bypass 狀態與 worklet）。Dynamic EQ / De-esser 離線載入失敗時**拒絕輸出並提示**，不會默默輸出少了模組的音訊。
+`OfflineAudioContext` 是非即時計算匯出音檔的 Web API，與網站能否離線使用無關。播放與匯出使用同一份 `processing-graph.js`。Dynamic EQ / De-esser 離線載入失敗時**拒絕輸出並提示**，不會默默輸出少了模組的音訊。
 
 ---
 
@@ -161,3 +161,12 @@ Vite 8 · vanilla JS ES2022 · Web Audio API（AudioWorklet）· WaveSurfer.js 7
 
 - ACRCloud custom fingerprint 上傳（真實作品指紋）
 - 曲風 AI 分析（需 ML 後端）
+
+## Phase 0 更新
+
+- MBC Mix 與真旁路共用 graph，啟用中的效果器不可靜默跳過。
+- 44.1/48/96kHz FIR 使用目標採樣率；單曲、專輯、最終預覽共用 `final-render.js`。
+- 展開「最終母帶預覽與輸出報告」可產生前 10/30 秒或選取範圍，A/B 原始／最終 PCM。主播放器仍是低延遲即時監聽。MP3 編碼不包含在此 PCM 預覽，報告明示編碼前量測。
+- 分軌母帶可匯入既有 vocals/drums/bass/other（或中文名稱）四軌，同步試聽 EQ／壓縮／Pan／音量，再 Bounce。超峰值阻擋送入整數 WAV，需降音量或自行勾選 Normalize Bounce。
+- [音訊稽核及限制](docs/DAW_ARCHITECTURE_AUDIT.md)、[人聲漂移偵測設計](docs/VOCAL_DRIFT_ARCHITECTURE.md)。偵測模型及修復模型尚未接入。
+- `npm run lint` 執行 JavaScript 語法檢查；`npm run test:e2e -- --workers=1` 驗證真實瀏覽器音訊及使用者操作；build 後執行 `npm run test:production` 驗證實際 dist。建置輸出是網站 `dist/`，不產生離線安裝包。

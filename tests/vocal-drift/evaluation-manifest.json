@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "status": "awaiting-authorized-audio-and-annotations",
+  "categories": ["clean-stable", "mild-drift", "severe-drift", "register-change", "falsetto", "breathy", "belt", "AI-artifact"],
+  "requiredFields": ["id", "category", "assetHash", "license", "sourceSampleRate", "referenceSampleRanges", "expectedSuspiciousSampleRanges", "annotatorNotes"],
+  "items": []
+}

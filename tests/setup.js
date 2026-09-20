@@ -65,6 +65,10 @@ class MockAudioContext {
     return makeNode({ curve: null, oversample: 'none' })
   }
 
+  createStereoPanner() {
+    return makeNode({ pan: makeAudioParam(0) })
+  }
+
   createChannelSplitter(channels = 6) {
     return makeNode({ numberOfOutputs: channels })
   }

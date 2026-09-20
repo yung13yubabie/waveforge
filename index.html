@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/src/css/tokens.css">
   <link rel="stylesheet" href="/src/css/reset.css">
   <link rel="stylesheet" href="/src/css/layout.css">
+  <link rel="stylesheet" href="/src/css/audio-trust.css">
 </head>
 <body>
 
@@ -120,6 +121,8 @@
     </div>
   </header>
 
+
+
   <!-- Mode navigation tabs -->
   <nav class="mode-nav" role="tablist" aria-label="功能模式">
     <button class="mode-tab active" role="tab" data-mode="master"
@@ -187,6 +190,19 @@
   <!-- ── Mode: Master (default) ─────────────────────────── -->
   <!-- ── Workspace (waveform + stems) ──────────────────── -->
   <main class="workspace" id="mode-master" role="main">
+  <details class="final-preview-panel">
+    <summary>最終母帶預覽與輸出報告 · Final Render Preview</summary>
+    <p>主播放器為即時試聽；此處包含匯出 EQ、浮水印與最終限幅。A/B 比較原始與處理後音訊。</p>
+    <select id="final-preview-length" aria-label="預覽長度">
+      <option value="10">前 10 秒</option><option value="30">前 30 秒</option><option value="selection">波形選取範圍</option>
+    </select>
+    <button id="final-preview-btn" class="header-btn">產生最終預覽</button>
+    <a id="final-preview-download" download="waveforge-preview.wav" hidden>下載預覽 WAV</a>
+    <p id="final-preview-status" role="status">請先載入音檔。預覽為目前設定的快照。</p>
+    <p><output id="export-report" aria-live="polite"></output></p>
+    <label>原始音訊 <audio id="original-preview-audio" controls></audio></label>
+    <label>最終母帶 <audio id="final-preview-audio" controls></audio></label>
+  </details>
     <!-- Main waveform -->
     <div class="main-waveform-panel">
       <div class="waveform-toolbar">
@@ -258,7 +274,7 @@
       <div id="album-list">
         <div class="album-empty" id="album-empty">
           <div class="album-empty-icon">💿</div>
-          <div class="album-empty-text">載入並調好一首後，按上方「＋ 加入專輯」逐曲建立序列；之後輸出 DDP。</div>
+          <div class="album-empty-text">載入並調好一首後，按上方「＋ 加入專輯」逐曲建立序列；之後輸出 CD Master Package。</div>
         </div>
       </div>
     </section>
@@ -853,6 +869,9 @@
         </div>
       </div>
 
+      <label class="stems-import-label">載入現有四軌（檔名含 vocals／drums／bass／other 或 人聲／鼓組／貝斯／其他）
+        <input id="stems-local-files" type="file" accept="audio/*" multiple>
+      </label>
       <!-- Per-stem processing grid -->
       <div class="stems-processing-grid" id="stems-processing-grid">
         <div class="works-empty" style="grid-column:1/-1">
@@ -863,7 +882,9 @@
 
       <!-- Bounce to master chain -->
       <div class="stems-bounce-bar">
-        <span class="bounce-status" id="bounce-status">分軌完成後可進行 Bounce</span>
+        <button id="stems-preview-btn" class="header-btn" disabled>▶ 試聽分軌混音</button>
+        <label><input id="normalize-bounce" type="checkbox"> Normalize Bounce</label>
+        <span role="status" class="bounce-status" id="bounce-status">分軌完成後可進行 Bounce</span>
         <button class="bounce-btn" id="bounce-btn" disabled>
           Bounce &amp; Master →
         </button>

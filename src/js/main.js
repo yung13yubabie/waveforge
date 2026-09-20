@@ -1,3 +1,4 @@
+import { renderFinalMaster } from './audio/final-render.js'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/plugins/regions'
 import { initModeNav }        from './mode-nav.js'
@@ -14,18 +15,16 @@ import { Spectrogram }     from './ui/spectrogram.js'
 import { StemsPanel }     from './ui/stems.js'
 import { PRESETS }        from './presets.js'
 import { detectBPM, detectKey } from './audio/analyze.js'
-import { buildExportReport, measureIntegratedLUFS } from './audio/measure.js'
+import { measureIntegratedLUFS } from './audio/measure.js'
 import { encodeWAV } from './audio/wav.js'
 import { encodeMP3 } from './audio/mp3.js'
 import { trimBuffer } from './audio/trim.js'
-import { embedWatermark } from './audio/watermark.js'
 import { averageSpectrum, computeMatchCurve } from './audio/match-eq.js'
 import { Album, loudnessTrim } from './album.js'
 import { History } from './history.js'
 import { listUserPresets, saveUserPreset, getUserPreset } from './user-presets.js'
-import { renderMasterChain, eqMagnitudeFromParams, buildFreqGrid } from './audio/render-chain.js'
+import { eqMagnitudeFromParams } from './audio/render-chain.js'
 import { SUPABASE_READY, HF_READY } from './config.js'
-import { truePeakLimit } from './audio/true-peak-limiter.js'
 import { assembleAlbum } from './audio/album-assembly.js'
 import { generateCue } from './audio/cue.js'
 import { createZip } from './audio/zip.js'
@@ -205,9 +204,6 @@ async function boot() {
 
   const engine   = new AudioEngine()
   const stems    = new StemsPanel(document.getElementById('stems-container'))
-  // Must match render-chain.js's own FFT_N — it designs the linear-phase FIR
-  // from a magnitude array sized for this many bins.
-  const EQ_LINPHASE_FFT_N = 4096
 
   // WaveSurfer for main waveform
   let ws = null
@@ -493,6 +489,7 @@ async function boot() {
     const el = document.getElementById('status-text')
     if (!el) return
     el.textContent = text
+    el.title = text
     el.classList.toggle('status-error', ok === false)
   }
 
@@ -737,6 +734,7 @@ async function boot() {
   }
 
   btnPlay.addEventListener('click', async () => {
+    document.dispatchEvent(new Event('wf:stop-stem-preview'))
     if (engine.isPlaying) {
       engine.pause()
       ws?.pause()
@@ -1149,7 +1147,7 @@ async function boot() {
       empty.id = 'album-empty'
       const icon = document.createElement('div'); icon.className = 'album-empty-icon'; icon.textContent = '💿'
       const txt = document.createElement('div'); txt.className = 'album-empty-text'
-      txt.textContent = '載入並調好一首後，按上方「＋ 加入專輯」逐曲建立序列；之後輸出 DDP。'
+      txt.textContent = '載入並調好一首後，按上方「＋ 加入專輯」逐曲建立序列；之後輸出 CD Master Package。'
       empty.append(icon, txt)
       list.appendChild(empty)
       return
@@ -1223,17 +1221,9 @@ async function boot() {
     // album). Each track's OWN snapshot gains feed the FIR design — never the
     // live engine's current gains, which reflect whichever track (if any) is
     // loaded in the main view and would otherwise bleed into every track.
-    let linPhaseMag = null
-    if (!bypassed.eq && document.getElementById('eq-linphase')?.checked) {
-      const grid = buildFreqGrid(DDP_RATE / 2, EQ_LINPHASE_FFT_N / 2)
-      linPhaseMag = eqMagnitudeFromParams(engine, params.eqGains, grid, DDP_RATE)
-    }
-
-    return renderMasterChain({
-      engine, sourceBuffer: decoded, params,
-      bypassed,
-      sampleRate: DDP_RATE, linPhaseMag, dynamicsWorkletUrl,
-    })
+    const result = await renderFinalMaster({ ...captureRenderOptions(),
+      sourceBuffer: decoded, snapshot: { params, bypassed }, sampleRate: DDP_RATE })
+    return result.buffer
   }
   if (import.meta.env.DEV) window.__wf_renderAlbumTrack = renderAlbumTrack
 
@@ -1411,12 +1401,84 @@ async function boot() {
     }
   })
 
+  function captureRenderOptions() {
+    return { engine, snapshot: engine.serialize(), dynamicsWorkletUrl,
+      sampleRate: Number(document.getElementById('export-samplerate').value),
+      linearPhase: document.getElementById('eq-linphase').checked,
+      truePeak: document.getElementById('lim-truepeak').checked,
+      watermark: document.getElementById('export-watermark').value.trim(),
+      targetLUFS: activeTargetLUFS,
+      format: document.getElementById('export-format').value,
+      bitDepth: Number(document.getElementById('export-bitdepth').value),
+      kbps: Number(document.getElementById('export-mp3-bitrate').value),
+    }
+  }
+
+  const finalAudio = document.getElementById('final-preview-audio')
+  const originalAudio = document.getElementById('original-preview-audio')
+  let previewUrls = []
+  function clearPreview() {
+    const link = document.getElementById('final-preview-download')
+    link.hidden = true; link.removeAttribute('href')
+    for (const audio of [finalAudio, originalAudio]) {
+      audio.pause(); audio.removeAttribute('src'); audio.load()
+    }
+    previewUrls.forEach(url => URL.revokeObjectURL(url)); previewUrls = []
+  }
+  for (const audio of [finalAudio, originalAudio]) audio.addEventListener('play', () => {
+    engine.pause(); ws?.pause(); updatePlayBtn(false)
+    for (const other of [finalAudio, originalAudio]) if (other !== audio) other.pause()
+    document.dispatchEvent(new Event('wf:stop-stem-preview'))
+  })
+  btnPlay.addEventListener('click', () => { finalAudio.pause(); originalAudio.pause() })
+  window.addEventListener('pagehide', clearPreview)
+  document.addEventListener('wf:stem-preview-start', () => {
+    engine.pause(); ws?.pause(); updatePlayBtn(false); finalAudio.pause(); originalAudio.pause()
+  })
+  document.getElementById('final-preview-btn').addEventListener('click', async () => {
+    const status = document.getElementById('final-preview-status')
+    const btn = document.getElementById('final-preview-btn')
+    if (!engine.buffer) { status.textContent = '請先載入音檔'; return }
+    const source = engine.buffer
+    const selection = trimRange ? { ...trimRange } : null
+    const mode = document.getElementById('final-preview-length').value
+    if (mode === 'selection' && !selection) { status.textContent = '請先在波形選取範圍'; return }
+    const options = captureRenderOptions()
+    const sourceBuffer = selection ? trimBuffer(source, selection.start, selection.end) : source
+    btn.disabled = true; clearPreview()
+    status.textContent = '正在渲染完整輸出鏈，再擷取預覽片段…'
+    try {
+      const result = await renderFinalMaster({ ...options, sourceBuffer })
+      if (engine.buffer !== source) throw new Error('音檔已更換，請重新預覽')
+      const duration = mode === 'selection' ? result.buffer.duration : Math.min(Number(mode), result.buffer.duration)
+      const count = Math.round(duration * options.sampleRate)
+      const channels = result.channels.map(ch => ch.slice(0, count))
+      // Preview is the final PCM master; MP3 encoding is explicitly excluded.
+      const finalBlob = new Blob([encodeWAV(channels, options.sampleRate, 24)], { type: 'audio/wav' })
+      const raw = trimBuffer(sourceBuffer, 0, duration, { fadeMs: 0 })
+      const rawChannels = Array.from({ length: raw.numberOfChannels }, (_, ch) => raw.getChannelData(ch))
+      const originalBlob = new Blob([encodeWAV(rawChannels, raw.sampleRate, 24)], { type: 'audio/wav' })
+      previewUrls = [URL.createObjectURL(finalBlob), URL.createObjectURL(originalBlob)]
+      finalAudio.src = previewUrls[0]; originalAudio.src = previewUrls[1]
+      const link = document.getElementById('final-preview-download')
+      link.href = previewUrls[0]; link.hidden = false
+      status.textContent = `預覽完成：${duration.toFixed(2)} 秒 / ${options.sampleRate / 1000}kHz，24-bit PCM 母帶（不含 MP3 編碼）。設定變更後請重新產生。`
+    } catch (err) { status.textContent = `預覽失敗：${err.message}` }
+    finally { btn.disabled = false }
+  })
+
   // ── Export report: surface measured loudness/peak so the user can TRUST
   // the output instead of just receiving a WAV blind. Warnings → red status.
-  function showExportReport(report, bitDepth = 24) {
+  function showExportReport(report) {
     const lufsTxt = Number.isFinite(report.lufs) ? `${report.lufs.toFixed(1)} LUFS` : '— LUFS'
     const tpTxt   = Number.isFinite(report.truePeakDb) ? `${report.truePeakDb.toFixed(1)} dBTP` : '— dBTP'
-    const parts = [`已輸出 ${bitDepth}bit/48kHz`, `整合 ${lufsTxt}`, `True Peak ${tpTxt}`]
+    const encoding = report.format === 'mp3' ? `MP3 ${report.kbps}kbps（編碼前量測）` : `WAV ${report.bitDepth}bit`
+    const parts = [`已輸出 ${encoding}/${report.sampleRate / 1000}kHz`, `整合 ${lufsTxt}`, `True Peak ${tpTxt}`,
+      `Sample Peak ${report.samplePeakDb.toFixed(1)} dBFS`, `${report.duration.toFixed(2)} 秒`,
+      `削波 ${report.clipped ? '有' : '無'}`, `線性相位 ${report.linearPhase ? '開' : '關'}`,
+      `True-Peak 限幅 ${report.truePeakLimiter ? '開' : '關'}`, `浮水印 ${report.watermark ? '有' : '無'}`,
+      report.trimRange ? `範圍 ${report.trimRange.start.toFixed(2)}–${report.trimRange.end.toFixed(2)} 秒` : '完整曲目']
+    document.getElementById('export-report').textContent = parts.join(' · ')
     if (report.lufsNote) parts.push(report.lufsNote)
     if (engine.abMode === 'A') parts.push('注意：輸出為處理後，目前監聽 A=原始')
     if (report.warnings.length) {
@@ -1458,59 +1520,25 @@ async function boot() {
       const sourceBuffer = trimRange
         ? trimBuffer(engine.buffer, trimRange.start, trimRange.end)
         : engine.buffer
-      const dur    = sourceBuffer.duration
-      const p      = engine.params
-      const byp    = engine.bypassed
-      const format = document.getElementById('export-format')?.value ?? 'wav'
-      const exportSR = parseInt(document.getElementById('export-samplerate')?.value ?? '44100', 10)
+      const options = captureRenderOptions()
+      const savedRange = trimRange ? { ...trimRange } : null
+      const savedName = currentFile?.name
+      const { format, bitDepth, kbps } = options
+      const { buffer: rendered, channels, report } = await renderFinalMaster({ ...options, sourceBuffer })
+      report.trimRange = savedRange
+      report.format = format; report.bitDepth = bitDepth; report.kbps = kbps
 
-      let linPhaseMag = null
-      if (!byp.eq && document.getElementById('eq-linphase')?.checked) {
-        const grid = buildFreqGrid(engine.ctx.sampleRate / 2, EQ_LINPHASE_FFT_N / 2)
-        linPhaseMag = engine.getEQResponse(grid)
-      }
-
-      setProcessing(true, `渲染中（${fmtTime(dur)}，${exportSR / 1000} kHz）...`, 30)
-      const rendered = await renderMasterChain({
-        engine, sourceBuffer, params: p, bypassed: byp,
-        sampleRate: exportSR, linPhaseMag, dynamicsWorkletUrl,
-      })
-      setProcessing(true, '分析輸出...', 70)
-
-      let channels = []
-      for (let ch = 0; ch < rendered.numberOfChannels; ch++) channels.push(rendered.getChannelData(ch))
-
-      // Optional inaudible watermark — embed BEFORE the true-peak stage so any
-      // limiting accounts for the (tiny) added signal and the ceiling holds.
-      const wmId = document.getElementById('export-watermark')?.value?.trim()
-      if (wmId) {
-        setProcessing(true, '嵌入浮水印...', 55)
-        channels = embedWatermark(channels, rendered.sampleRate, wmId)
-      }
-
-      if (!byp.limiter && document.getElementById('lim-truepeak')?.checked) {
-        setProcessing(true, '真 True-Peak 限幅...', 60)
-        channels = truePeakLimit(channels, rendered.sampleRate, p.limCeiling)
-      }
-
-      const report = buildExportReport(channels, rendered.sampleRate, {
-        targetLUFS: activeTargetLUFS,
-        ceilingDb: byp.limiter ? 0 : p.limCeiling,
-      })
-
-      const baseName = (currentFile
-        ? currentFile.name.replace(/\.[^.]+$/, '')
+      const baseName = (savedName
+        ? savedName.replace(/\.[^.]+$/, '')
         : 'waveforge').replace(/[/\\]/g, '_')
 
       let blob, filename
       if (format === 'mp3') {
-        const kbps = parseInt(document.getElementById('export-mp3-bitrate')?.value ?? '192', 10)
         setProcessing(true, `編碼 MP3 ${kbps}kbps...`, 85)
         const mp3 = encodeMP3(channels, rendered.sampleRate, kbps)
         blob = new Blob([mp3], { type: 'audio/mpeg' })
         filename = `${baseName}_master_${kbps}kbps.mp3`
       } else {
-        const bitDepth = parseInt(document.getElementById('export-bitdepth')?.value ?? '24', 10)
         setProcessing(true, `編碼 WAV ${bitDepth}-bit...`, 85)
         const wav = encodeWAV(channels, rendered.sampleRate, bitDepth)
         blob = new Blob([wav], { type: 'audio/wav' })
@@ -1527,7 +1555,7 @@ async function boot() {
       setTimeout(() => URL.revokeObjectURL(url), 1000)
 
       setProcessing(false, '', 100)
-      showExportReport(report, format === 'mp3' ? 'MP3' : parseInt(document.getElementById('export-bitdepth')?.value ?? '24', 10))
+      showExportReport(report)
     } catch (err) {
       setProcessing(false, '', 0)
       setStatus(`輸出失敗：${err.message}`, false)

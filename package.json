@@ -2,7 +2,7 @@
   "name": "waveforge",
   "version": "0.1.0",
   "private": true,
-  "description": "Professional mastering DAW — WaveForge",
+  "description": "Professional mastering DAW \u2014 WaveForge",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,9 @@
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
-    "verify": "npm test && npm run build"
+    "test:production": "playwright test -c playwright.production.config.js",
+    "verify": "npm test && npm run build",
+    "lint": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

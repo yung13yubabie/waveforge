@@ -82,3 +82,10 @@ describe('audio watermark', () => {
     expect(() => embedWatermark([makeSignal()], 44100, '')).toThrow()
   })
 })
+
+it('preserves floating-point overload for the final limiter instead of hard clipping', () => {
+  const source = new Float32Array(1024).fill(1.2)
+  const result = embedWatermark([source], 48000, '中文作品')
+  expect(Math.max(...result[0])).toBeGreaterThan(1.2)
+  expect(source[0]).toBeCloseTo(1.2)
+})
