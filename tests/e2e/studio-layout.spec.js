@@ -7,6 +7,21 @@ for (const width of [1440, 390]) {
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('/')
+    const contrast = await page.evaluate(() => {
+      const luminance = color => {
+        const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(x => {
+          const v = x / 255
+          return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4
+        })
+        return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722
+      }
+      return ['#bounce-btn', '#auth-submit', '#export-btn'].map(selector => {
+        const style = getComputedStyle(document.querySelector(selector))
+        const a = luminance(style.color), b = luminance(style.backgroundColor)
+        return { selector, ratio: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) }
+      })
+    })
+    for (const { selector, ratio } of contrast) expect(ratio, selector).toBeGreaterThanOrEqual(4.5)
     await page.locator('#mod-hplp .module-head').click()
     await page.locator('[data-param="hp-freq"] input[type="number"]').fill('80')
     await page.locator('[data-param="hp-freq"] input[type="number"]').press('Enter')

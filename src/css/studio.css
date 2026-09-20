@@ -34,7 +34,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .parameter-entry { display: flex; gap: 4px; align-items: center; }
 .parameter-number { width: 100%; min-width: 0; padding: 7px 6px; border: 1px solid var(--c-border); border-radius: 5px; background: var(--c-bg-surface); color: var(--c-text-1); font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
 .parameter-number:hover { border-color: var(--c-border-hover); }
-.parameter-number[aria-invalid="true"] { border-color: #ff817c; }
+.parameter-number[aria-invalid="true"] { border-color: var(--c-danger); }
 .parameter-reset { flex: 0 0 28px; min-height: 30px; border: 1px solid var(--c-border); border-radius: 5px; color: var(--c-text-2); cursor: pointer; }
 .parameter-reset:hover { background: var(--c-bg-overlay); color: var(--c-primary); }
 .stem-proc-card, .settings-card { border-radius: 10px; box-shadow: none; }

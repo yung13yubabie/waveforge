@@ -21,6 +21,9 @@
   --c-waveform-stem-4: #6BCB77; /* guitar */
   --c-waveform-stem-5: #FD9644; /* other  */
 
+  --c-danger: #ff817c;
+  --c-danger-muted: rgba(255, 129, 124, 0.10);
+
   --c-green:  #2ED573;
   --c-orange: #FFA502;
   --c-blue:   #4ECDC4;
