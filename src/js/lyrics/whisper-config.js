@@ -38,7 +38,7 @@ export const WHISPER_INFO = Object.freeze({
   files: WHISPER_FILES, cacheName: WHISPER_CACHE_NAME,
   device: 'wasm', dtype: Object.freeze({ encoder_model: 'fp32', decoder_model_merged: 'q8' }),
   sampleRate: 16000, minWindowSeconds: 0.02, maxWindowSeconds: 20, languages: WHISPER_LANGUAGES,
-  automaticLanguageDetection: false, modelValidation: 'pending-model-backed-validation',
+  automaticLanguageDetection: false, modelValidation: 'browser-smoke-verified-but-quality-uncalibrated',
 })
 export const WHISPER_MODEL_INFO = WHISPER_INFO
 

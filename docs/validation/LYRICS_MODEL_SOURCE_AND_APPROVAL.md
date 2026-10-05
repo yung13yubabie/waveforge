@@ -6,7 +6,7 @@
 
 已完成來源與版本調查、browser Worker/client、下載完整性驗證、獨立模型快取、取消／逾時、嚴格時間驗證及 mock lifecycle tests。
 
-**使用者已批准本文件的固定來源下載與執行。七檔共 66,406,756 bytes 已全部通過長度／SHA-256；實際 Node CPU decoder probe 確認四層 cross-attention outputs，並完成 CC0 英文清唱推論與負例。瀏覽器 WASM／UI 仍待 CI；人工歌唱邊界與多語準確度尚未校準。**
+**使用者已批准本文件的固定來源下載與執行。七檔共 66,406,756 bytes 已全部通過長度／SHA-256；實際 Node CPU decoder probe 確認四層 cross-attention outputs，並完成 CC0 英文清唱推論與負例。建置版瀏覽器 live 下載／WASM／UI 功能也已通過 CI；人工歌唱邊界與多語準確度尚未校準。**
 
 20 秒片段輸出 25 個有界詞時間，重跑一致；5 秒短窗也有合法時間。原始輸出、fixture hash、UTC 時間、matcher 的四個候選／一個未對上結果及第二輪未改善紀錄，見 [實際模型證據](real-model/README.md)。這不是人工 transcript 或準確率 gold。程式仍在缺少必要輸出時拒絕自動定位，絕不以均分曲長替代。
 
@@ -65,7 +65,7 @@ UI 需先說明固定來源、授權、模型量及額外 runtime，使用者當
 - Service 自行規劃最多 20 秒及 2 秒 overlap；底層 client 不再分窗或加 offset
 - 回傳 `{ chunks:[{ text,timestamp:[start,end] }], engine,engineVersion,model,revision,language,sampleRate,duration,timestampOrigin,timingMethod,modelValidation }`
 - 時間單位為秒，全部相對當次窗起點。原曲 offset 由 service 加一次
-- 不回傳虛構 confidence；`modelValidation` 仍為 `pending-model-backed-validation`
+- 不回傳虛構 confidence；`modelValidation` 為 `browser-smoke-verified-but-quality-uncalibrated`，明確區分瀏覽器功能通過與品質未校準
 - 非有限、負值、倒序、零長度、重疊、超出窗口、缺失 timestamp、空白 word 均拒絕整個 window result。空 chunks 是合法的「沒有辨識結果」，不能補成成功
 
 3.8.1 word 模式會使用 cross-attention + DTW，並不預測 segment timestamp tokens；generate 直接使用一般生成路徑，沒有 v4 新 seek-loop。[pipeline 原始碼](https://github.com/huggingface/transformers.js/blob/3.8.1/src/pipelines.js#L1804-L1815)、[model 原始碼](https://github.com/huggingface/transformers.js/blob/3.8.1/src/models.js#L3495-L3525)
@@ -108,7 +108,7 @@ Worker 只對固定 7 個模型 URL 發送 GET，不帶 audio、lyrics、使用�
 
 CPU 模型在兩秒完全數位靜音上幻覺出「you」，目前 client／Worker 對精確全零 PCM 直接回空結果，不載入模型；這不是通用 VAD。固定噪音產生零長度詞而被嚴格拒絕，不修補成假時間。完整失敗輸出也保存在上述證據目錄。
 
-`node scripts/verify-lyrics-model.mjs --help` 說明獨立 CPU 與 browser smoke CLI。browser 模式可驗 built 頁面的實際 Worker/WASM、固定來源 live GET／CORS、快取、取消重試與真 UI 接合；目前待 CI，且不使用或捏造人工 gold。
+`node scripts/verify-lyrics-model.mjs --help` 說明獨立 CPU 與 browser smoke CLI。browser 模式可驗 built 頁面的實際 Worker/WASM、固定來源 live GET／CORS、快取、取消重試與真 UI 接合；已在 [run 37384510849](https://github.com/yung13yubabie/waveforge/actions/runs/37384510849)、head `67e117742d19ab26fa430d3872c89f536772a7ab` 通過；未使用或捏造人工 gold。原始 [browser JSON](real-model/browser-smoke-evidence.json) 按原位元組保留，來源與 SHA-256 見 [provenance](real-model/browser-smoke-provenance.json)。
 
 以下是另一個人工 gold 準確率測試；固定來源已批准，但仍需補齊合法素材的人工 transcript／anchors 才能啟用。測試需先由操作者啟動 localhost Vite server，不自行部署或接觸 production：
 
@@ -122,7 +122,7 @@ npx vitest run tests/audio/whisper-client.test.js
 
 Fixture JSON 必須含：`rightsConfirmed:true`、`pcmFile`（相對 manifest 的 float32 little-endian PCM）、`sampleRate:16000`、明確 `language`、`maxBoundaryErrorSeconds`（>0 且 <=1）、至少兩個人工標註的 `expectedAnchors:[{text,timestamp:[start,end]}]`。Audio 必須 <=20 秒。測試只接受 localhost URL，並阻擋對外非 GET／带 body 請求。
 
-通過標準依序為：
+驗收分層如下；第 1 項及單一英文素材的瀏覽器功能／網路／生命週期已通過，廣泛人工品質校準仍未完成：
 
 1. 七檔完整性通過；實際 decoder outputNames 有四層 `cross_attentions.0` 至 `.3`
 2. 真實短語音 word timestamps、明確語言、短音檔 padding、取消／timeout、零字結果均驗證
@@ -132,3 +132,5 @@ Fixture JSON 必須含：`rightsConfirmed:true`、`pcmFile`（相對 manifest �
 6. 瀏覽器 network capture 確認音訊／歌詞不在任何外部 request payload；首次載入／已快取／損壞快取／清除後重載均核查
 
 合成脈衝只能驗 resampling／裁切時鐘，mock provider 只能驗生命週期；兩者均不能取代歌唱素材模型驗收。
+
+發布另以最終提交全部功能 CI 和實際部署主機驗證為關卡。上列人工邊界／多語品質工作保持未驗證，不把 localhost 功能 smoke 當作正式主機已更新或 100% 歌唱對準。

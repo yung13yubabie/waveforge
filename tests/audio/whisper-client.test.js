@@ -55,7 +55,7 @@ describe('mocked Whisper client lifecycle (no models)', () => {
     expect(result.chunks).toEqual(words())
     expect(result.revision).toBe(WHISPER_REVISION)
     expect(result.timestampOrigin).toBe('window-relative')
-    expect(result.modelValidation).toBe('pending-model-backed-validation')
+    expect(result.modelValidation).toBe('browser-smoke-verified-but-quality-uncalibrated')
     expect(result.chunks[0]).not.toHaveProperty('confidence')
     client.dispose()
   })

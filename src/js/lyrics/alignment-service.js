@@ -5,7 +5,7 @@ import { WHISPER_MODEL_INFO } from './whisper-config.js'
 // The worker client is created only after explicit per-page model consent.
 export const LOCAL_ALIGNMENT_INFO = Object.freeze({
   ...WHISPER_MODEL_INFO, name: 'Whisper tiny · 本機多語辨識',
-  validation: '英文清唱 CPU 已測；瀏覽器待驗證，時間邊界與多語準確度未校準',
+  validation: WHISPER_MODEL_INFO.modelValidation,
 })
 
 const LANGUAGES = new Set(['zh', 'en', 'ja', 'ar', 'es', 'fr', 'de', 'ko'])

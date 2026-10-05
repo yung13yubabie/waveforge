@@ -1,11 +1,11 @@
 # 本機歌詞對時：這個開發分支做到了哪裡
 
-更新日期：2026-10-05。此分支尚未合併或部署。
+更新日期：2026-10-05。建置版瀏覽器功能已通過 CI；最終發布仍需核對最終提交的 CI 與實際部署站點。
 
 ## 尚不能宣稱已完成的部分
 
-**已獲使用者核准固定模型來源，完成七檔完整性檢查、真實 ONNX graph probe 與 Node CPU 英文歌唱推論；瀏覽器 WASM／UI 實測仍待 CI，歌唱時間邊界與多語準確度尚未校準。**
-20 秒 CC0 英文清唱片段產生 25 個合法詞時間，重跑結果一致；這只證明該片段的執行、時間契約與可重現性，不是人工邊界驗收或普遍歌唱準確率。詳見 [實際模型證據](real-model/README.md)；不得把 CPU 結果或 mock 成績當作瀏覽器與歌曲準確度全部通過。
+**已獲使用者核准固定模型來源，完成七檔完整性檢查、真實 ONNX graph probe 與 Node CPU 英文歌唱推論；建置版瀏覽器 WASM／live 下載／UI 實測也已通過 CI；歌唱時間邊界與多語準確度尚未校準。**
+20 秒 CC0 英文清唱片段產生 25 個合法詞時間，重跑結果一致；這只證明該片段的執行、時間契約與可重現性，不是人工邊界驗收或普遍歌唱準確率。詳見 [實際模型證據](real-model/README.md)。瀏覽器通過是功能驗證，不得換算成歌唱準確率。
 
 模型來源、固定 revision、七檔大小與 SHA-256、Apache-2.0 授權及已核准的實測範圍，見 [模型來源與驗收關卡](LYRICS_MODEL_SOURCE_AND_APPROVAL.md)。模型檔共 66,406,756 bytes，另有同站 ORT runtime 21,640,503 bytes；未使用雲端推論服務，也不傳送使用者音訊或歌詞。
 
@@ -48,7 +48,7 @@ Node CPU 驗證用權重另存於 repository 之外，未提交、未發布；�
 - 音訊準備：合成 PCM 與 mock resampler 的 16／44.1／48／96 kHz 時間座標與 20 秒整數 sample 邊界。這一層不證明重取樣音質或辨識品質
 - Worker：以 mock fetch／cache／Worker 驗同意、雜湊、網路白名單、timeout／取消／釋放，以及從安裝套件原始碼核對呼叫契約
 - 真實 Node CPU：已批准的固定七檔全部通過長度／SHA-256；decoder 四層 cross-attention outputs、20 秒英文清唱、5 秒短窗、重跑及靜音／噪音負例均有原始紀錄。第二輪對「Up above...」重跑 8.46 秒片段，覆蓋仍為 19/21，未補回 up，不宣稱改善
-- 真實瀏覽器：獨立 built/live smoke 已備妥，涵蓋實際下載／CORS、Worker/WASM、快取／取消／重試及 UI→service→matcher 接合；待 CI 執行，不能算 passed
+- 真實瀏覽器：建置版 live smoke 已通過，包含實際下載／CORS、Worker/WASM、快取／取消／重試及 UI→service→matcher 接合。UI 顯示四個候選／一個未找到，原文與已鎖定時間保持不變；JSON／TXT 保留草稿，未完整確認時禁止 LRC／SRT／ASS。原始 JSON 與 run/head provenance 存在 real-model 目錄
 - 人工標註準確率測試預設 skipped；仍須有權使用且有人工逐詞邊界的本地 PCM。現有 CC0 片段沒有人工 transcript／anchors，不可把辨識輸出當成 gold 或把 skipped 算 passed
 - Playwright mock-ASR 流程會另檢查實際 UI、原有音訊準備、匹配、工程與下載；仍不屬模型品質測試
 
@@ -68,8 +68,12 @@ Node CPU 驗證用權重另存於 repository 之外，未提交、未發布；�
 
 ## 合併／上線前必要關卡
 
-已完成：核准權重來源、逐檔核 SHA、真實 decoder outputs probe、單一英文清唱 CPU 成功／有限負例，以及一次第二輪無改善的比較。
+已完成：核准權重來源、逐檔核 SHA、真實 decoder outputs probe、單一英文清唱 CPU 成功／有限負例、一次第二輪無改善的比較，以及建置版真實瀏覽器下載／WASM／UI／快取／取消重試驗證。
 
-仍待完成：真實瀏覽器 built/live 與 UI CI、更多語言／唱法／無人聲負例、人工邊界誤差與漏對／錯配報告，以及瀏覽器網路隱私、取消與記憶體檢查。
+瀏覽器證據來自 [CI run 37384510849](https://github.com/yung13yubabie/waveforge/actions/runs/37384510849)，head `67e117742d19ab26fa430d3872c89f536772a7ab`。該輪 browser 75、account 4、production 43 個測試通過；本地單元 916 通過、1 個人工 gold 測試 skipped。這些結果不能自動沿用成後續新提交已通過。
 
-未完成以上關卡前保持草稿 PR，不用本輪 mock 成績替代模型驗收。
+發布關卡：最終提交的全部功能 CI 通過，部署後核對目標 [GitHub Pages 站點](https://yung13yubabie.github.io/waveforge/) 的實際版本與功能；localhost CI 不等於正式主機已部署。
+
+另行保留的品質校準工作：更多語言／方言／唱法／無人聲負例、人工邊界誤差與漏對／錯配報告，以及更廣泛裝置與記憶體測試。這些未完成時不能宣稱全語言或 100% 對準，但不把已通過的功能驗證寫成尚未執行。
+
+發布候選需按最終功能 CI 與實際部署結果驗收；人工歌唱品質校準另列，不用 mock、單一片段或功能 smoke 冒稱準確率。

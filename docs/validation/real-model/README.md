@@ -17,7 +17,17 @@ Weights are retained outside this repository, not committed or published.
   validation failures are retained, including failures that must not be hidden.
 - `browser-blocker.json`: ordinary local Chromium could not start because its
   process-singleton socket was prohibited. No sandbox or security restriction
-  was bypassed. **Browser Worker/WASM validation remains outstanding.**
+  was bypassed. This is the historical VM blocker from 21:54 UTC; the later
+  permitted CI browser run passed and supersedes it as the current status.
+- `browser-smoke-evidence.json`: exact 75,945-byte CI report, unmodified. Built
+  Worker/WASM, live fixed-source download/CORS, cache/repeat/cancel/retry and
+  actual application UI all passed. There were no forbidden requests or page
+  errors. `singingAccuracyValidated` remains false.
+- `browser-smoke-provenance.json`: SHA-256, originating run and tested head.
+  Evidence: [run 37384510849](https://github.com/yung13yubabie/waveforge/actions/runs/37384510849),
+  commit `67e117742d19ab26fa430d3872c89f536772a7ab`, completed
+  2026-10-05 22:49:37 UTC. This is a localhost built-app test, not evidence that
+  the production host already serves this commit.
 
 The shared pure `whisper-timestamps.js` adapter is the same instance-level,
 version-pinned mel-to-encoder frame correction used by the product Worker.
@@ -90,8 +100,10 @@ interpolation, or confidence was fabricated. Thus `timestampContractAllPassed`
 is deliberately false in the raw evidence. A synthetic unrelated lyric line
 remained unresolved when matched against the valid singing ASR output.
 
-`WHISPER_INFO.modelValidation` remains `pending-model-backed-validation` because
-the shipping browser route and real lyric-alignment quality are not validated.
+`WHISPER_INFO.modelValidation` is now `browser-smoke-verified-but-quality-uncalibrated`.
+The built browser functional route has passed; real lyric-alignment accuracy
+is still uncalibrated. The original CI artifact retains the metadata string
+from its tested commit and is intentionally not rewritten to reflect later copy edits.
 
 ## Reproduce, only with source/execution approval
 
@@ -120,7 +132,8 @@ inference service. The CPU runtime is supplied by the locked npm dependency.
 
 The runner additionally implements `--browser` for a permitted environment with
 official Playwright Chromium installed and an already-running localhost
-server. This mode has **not been launched in this restricted VM**. Run it as a
+server. The built/live mode has passed in permitted CI; it was not relaunched
+in the restricted VM. Run it as a
 separate explicitly approved validation step, never by enabling the existing
 manual-gold accuracy test or making model execution part of deployment:
 
@@ -197,8 +210,14 @@ response CSP rather than inheriting the page's meta CSP.
   skipped; mocks are still labeled separately from real model evidence
 - Exact digital silence produces an empty result without a Worker or download
 - The pure timestamp adapter extraction preserves its existing synthetic tests
-- Real browser/WASM lifecycle, cache, cancellation and network capture remain
-  pending on a permitted browser environment
+- Real browser/WASM lifecycle, live downloads/CORS, cache, cancellation, retry,
+  network capture and actual UI passed in the recorded CI run. UI produced four
+  candidates/one unresolved line, preserved the locked line, reused cache with
+  zero new model GETs and enforced timed-export gates
+- That head passed 75 browser, 4 account and 43 production tests; local unit
+  verification was 916 passed/1 manual-gold skip. The final release commit must
+  pass its own functional CI; verify the exact deployed GitHub Pages host and
+  version separately before claiming release completion
 - Annotated English and Mandarin singing, mixed language, long vowels, rap,
   repeated choruses, intro/interlude, and full-song overlap/retry quality remain
   pending; one short English excerpt is not an acceptance benchmark

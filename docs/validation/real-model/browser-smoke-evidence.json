@@ -1,0 +1,2880 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-10-05T22:49:07.750Z",
+  "completedAt": "2026-10-05T22:49:37.347Z",
+  "status": "browser-smoke-passed-not-accuracy-validation",
+  "model": "Xenova/whisper-tiny",
+  "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+  "transformersVersion": "3.8.1",
+  "nodeVersion": "v22.23.3",
+  "platform": "linux",
+  "architecture": "x64",
+  "dtype": {
+    "encoder_model": "fp32",
+    "decoder_model_merged": "q8"
+  },
+  "backend": "browser-worker-wasm",
+  "browserWasmValidated": true,
+  "singingAccuracyValidated": false,
+  "fixtureHasManualGold": false,
+  "files": [
+    {
+      "path": "onnx/encoder_model.onnx",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model.onnx",
+      "bytes": 32909539,
+      "sha256": "39e81b6c86a5b2b4beda1bb3145486a769d594801f780a66cad1ae72c7ad2c5e",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "onnx/decoder_model_merged_quantized.onnx",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+      "bytes": 30727765,
+      "sha256": "6c0c125986b007d2e3734bec84c18bda0152071b90b87fadac6d7764499927a0",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+      "bytes": 2248,
+      "sha256": "2b2e4e519084e0ea028b19b153f95202735a971870d6844aa26e559edd292e94",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "generation_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+      "bytes": 3716,
+      "sha256": "68ac791fcb4999461a313472125042934656240ba1cba7d1c2627fcbb19ac24c",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+      "bytes": 339,
+      "sha256": "a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+      "bytes": 2480466,
+      "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json",
+      "bytes": 282683,
+      "sha256": "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce",
+      "verified": true,
+      "source": "download"
+    }
+  ],
+  "graph": {
+    "backend": "browser-worker-wasm",
+    "evidence": "The product Worker asserts all four actual decoder session outputNames before the first inference; successful inference passed that assertion.",
+    "requiredCrossAttentionOutputsPresent": true,
+    "requiredOutputs": [
+      "cross_attentions.0",
+      "cross_attentions.1",
+      "cross_attentions.2",
+      "cross_attentions.3"
+    ]
+  },
+  "runs": [
+    {
+      "id": "exact-silence-preflight",
+      "startedAt": "2026-10-05T22:49:12.956Z",
+      "status": "completed",
+      "result": {
+        "chunks": [],
+        "engine": "transformers.js-whisper",
+        "engineVersion": "3.8.1",
+        "model": "Xenova/whisper-tiny",
+        "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+        "language": "en",
+        "sampleRate": 16000,
+        "duration": 2,
+        "timestampOrigin": "window-relative",
+        "timingMethod": "exact-digital-silence",
+        "modelValidation": "pending-model-backed-validation",
+        "modelExecuted": false
+      },
+      "phases": [
+        "complete"
+      ],
+      "cacheReadFiles": [],
+      "downloadedFiles": [],
+      "progressEvents": 1,
+      "cancelledAtTranscribing": false,
+      "elapsedMilliseconds": 3,
+      "modelFileGets": 0,
+      "workersCreated": 0,
+      "text": "",
+      "audioSeconds": 2,
+      "validatedChunks": [],
+      "timestampContractPassed": true
+    },
+    {
+      "id": "cc0-singing-first-worker-wasm",
+      "startedAt": "2026-10-05T22:49:13.048Z",
+      "status": "completed",
+      "result": {
+        "chunks": [
+          {
+            "text": " Twinkle,",
+            "timestamp": [
+              0.34,
+              1.48
+            ]
+          },
+          {
+            "text": " twinkle",
+            "timestamp": [
+              1.48,
+              2.54
+            ]
+          },
+          {
+            "text": " little",
+            "timestamp": [
+              2.54,
+              3.54
+            ]
+          },
+          {
+            "text": " star",
+            "timestamp": [
+              3.54,
+              4.66
+            ]
+          },
+          {
+            "text": " How",
+            "timestamp": [
+              4.66,
+              5.74
+            ]
+          },
+          {
+            "text": " I",
+            "timestamp": [
+              5.74,
+              6.22
+            ]
+          },
+          {
+            "text": " wonder",
+            "timestamp": [
+              6.22,
+              7
+            ]
+          },
+          {
+            "text": " what",
+            "timestamp": [
+              7,
+              7.7
+            ]
+          },
+          {
+            "text": " you",
+            "timestamp": [
+              7.7,
+              8.42
+            ]
+          },
+          {
+            "text": " are",
+            "timestamp": [
+              8.42,
+              9.3
+            ]
+          },
+          {
+            "text": " Hopper,",
+            "timestamp": [
+              9.3,
+              10.54
+            ]
+          },
+          {
+            "text": " above",
+            "timestamp": [
+              11.12,
+              11.18
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              11.18,
+              11.76
+            ]
+          },
+          {
+            "text": " world",
+            "timestamp": [
+              11.76,
+              12.24
+            ]
+          },
+          {
+            "text": " so",
+            "timestamp": [
+              12.24,
+              12.86
+            ]
+          },
+          {
+            "text": " high",
+            "timestamp": [
+              12.86,
+              13.76
+            ]
+          },
+          {
+            "text": " Like",
+            "timestamp": [
+              13.76,
+              14.62
+            ]
+          },
+          {
+            "text": " a",
+            "timestamp": [
+              14.62,
+              15.24
+            ]
+          },
+          {
+            "text": " diamond",
+            "timestamp": [
+              15.24,
+              15.9
+            ]
+          },
+          {
+            "text": " in",
+            "timestamp": [
+              15.9,
+              16.94
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              16.94,
+              17.38
+            ]
+          },
+          {
+            "text": " sky,",
+            "timestamp": [
+              17.38,
+              18.18
+            ]
+          },
+          {
+            "text": " when",
+            "timestamp": [
+              19.02,
+              19.24
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              19.24,
+              19.68
+            ]
+          },
+          {
+            "text": " blade",
+            "timestamp": [
+              19.68,
+              19.98
+            ]
+          }
+        ],
+        "engine": "transformers.js-whisper",
+        "engineVersion": "3.8.1",
+        "model": "Xenova/whisper-tiny",
+        "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+        "language": "en",
+        "sampleRate": 16000,
+        "duration": 20,
+        "timestampOrigin": "window-relative",
+        "timingMethod": "audio-cross-attention-dtw",
+        "modelValidation": "pending-model-backed-validation"
+      },
+      "phases": [
+        "downloading",
+        "verifying",
+        "loading",
+        "transcribing",
+        "complete"
+      ],
+      "cacheReadFiles": [],
+      "downloadedFiles": [
+        "onnx/encoder_model.onnx",
+        "onnx/decoder_model_merged_quantized.onnx",
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "progressEvents": 842,
+      "cancelledAtTranscribing": false,
+      "elapsedMilliseconds": 6881,
+      "modelFileGets": 14,
+      "workersCreated": 1,
+      "text": " Twinkle, twinkle little star How I wonder what you are Hopper, above the world so high Like a diamond in the sky, when the blade",
+      "audioSeconds": 20,
+      "validatedChunks": [
+        {
+          "text": " Twinkle,",
+          "timestamp": [
+            0.34,
+            1.48
+          ]
+        },
+        {
+          "text": " twinkle",
+          "timestamp": [
+            1.48,
+            2.54
+          ]
+        },
+        {
+          "text": " little",
+          "timestamp": [
+            2.54,
+            3.54
+          ]
+        },
+        {
+          "text": " star",
+          "timestamp": [
+            3.54,
+            4.66
+          ]
+        },
+        {
+          "text": " How",
+          "timestamp": [
+            4.66,
+            5.74
+          ]
+        },
+        {
+          "text": " I",
+          "timestamp": [
+            5.74,
+            6.22
+          ]
+        },
+        {
+          "text": " wonder",
+          "timestamp": [
+            6.22,
+            7
+          ]
+        },
+        {
+          "text": " what",
+          "timestamp": [
+            7,
+            7.7
+          ]
+        },
+        {
+          "text": " you",
+          "timestamp": [
+            7.7,
+            8.42
+          ]
+        },
+        {
+          "text": " are",
+          "timestamp": [
+            8.42,
+            9.3
+          ]
+        },
+        {
+          "text": " Hopper,",
+          "timestamp": [
+            9.3,
+            10.54
+          ]
+        },
+        {
+          "text": " above",
+          "timestamp": [
+            11.12,
+            11.18
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            11.18,
+            11.76
+          ]
+        },
+        {
+          "text": " world",
+          "timestamp": [
+            11.76,
+            12.24
+          ]
+        },
+        {
+          "text": " so",
+          "timestamp": [
+            12.24,
+            12.86
+          ]
+        },
+        {
+          "text": " high",
+          "timestamp": [
+            12.86,
+            13.76
+          ]
+        },
+        {
+          "text": " Like",
+          "timestamp": [
+            13.76,
+            14.62
+          ]
+        },
+        {
+          "text": " a",
+          "timestamp": [
+            14.62,
+            15.24
+          ]
+        },
+        {
+          "text": " diamond",
+          "timestamp": [
+            15.24,
+            15.9
+          ]
+        },
+        {
+          "text": " in",
+          "timestamp": [
+            15.9,
+            16.94
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            16.94,
+            17.38
+          ]
+        },
+        {
+          "text": " sky,",
+          "timestamp": [
+            17.38,
+            18.18
+          ]
+        },
+        {
+          "text": " when",
+          "timestamp": [
+            19.02,
+            19.24
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            19.24,
+            19.68
+          ]
+        },
+        {
+          "text": " blade",
+          "timestamp": [
+            19.68,
+            19.98
+          ]
+        }
+      ],
+      "timestampContractPassed": true
+    },
+    {
+      "id": "cc0-singing-repeat-same-worker",
+      "startedAt": "2026-10-05T22:49:19.939Z",
+      "status": "completed",
+      "result": {
+        "chunks": [
+          {
+            "text": " Twinkle,",
+            "timestamp": [
+              0.34,
+              1.48
+            ]
+          },
+          {
+            "text": " twinkle",
+            "timestamp": [
+              1.48,
+              2.54
+            ]
+          },
+          {
+            "text": " little",
+            "timestamp": [
+              2.54,
+              3.54
+            ]
+          },
+          {
+            "text": " star",
+            "timestamp": [
+              3.54,
+              4.66
+            ]
+          },
+          {
+            "text": " How",
+            "timestamp": [
+              4.66,
+              5.74
+            ]
+          },
+          {
+            "text": " I",
+            "timestamp": [
+              5.74,
+              6.22
+            ]
+          },
+          {
+            "text": " wonder",
+            "timestamp": [
+              6.22,
+              7
+            ]
+          },
+          {
+            "text": " what",
+            "timestamp": [
+              7,
+              7.7
+            ]
+          },
+          {
+            "text": " you",
+            "timestamp": [
+              7.7,
+              8.42
+            ]
+          },
+          {
+            "text": " are",
+            "timestamp": [
+              8.42,
+              9.3
+            ]
+          },
+          {
+            "text": " Hopper,",
+            "timestamp": [
+              9.3,
+              10.54
+            ]
+          },
+          {
+            "text": " above",
+            "timestamp": [
+              11.12,
+              11.18
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              11.18,
+              11.76
+            ]
+          },
+          {
+            "text": " world",
+            "timestamp": [
+              11.76,
+              12.24
+            ]
+          },
+          {
+            "text": " so",
+            "timestamp": [
+              12.24,
+              12.86
+            ]
+          },
+          {
+            "text": " high",
+            "timestamp": [
+              12.86,
+              13.76
+            ]
+          },
+          {
+            "text": " Like",
+            "timestamp": [
+              13.76,
+              14.62
+            ]
+          },
+          {
+            "text": " a",
+            "timestamp": [
+              14.62,
+              15.24
+            ]
+          },
+          {
+            "text": " diamond",
+            "timestamp": [
+              15.24,
+              15.9
+            ]
+          },
+          {
+            "text": " in",
+            "timestamp": [
+              15.9,
+              16.94
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              16.94,
+              17.38
+            ]
+          },
+          {
+            "text": " sky,",
+            "timestamp": [
+              17.38,
+              18.18
+            ]
+          },
+          {
+            "text": " when",
+            "timestamp": [
+              19.02,
+              19.24
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              19.24,
+              19.68
+            ]
+          },
+          {
+            "text": " blade",
+            "timestamp": [
+              19.68,
+              19.98
+            ]
+          }
+        ],
+        "engine": "transformers.js-whisper",
+        "engineVersion": "3.8.1",
+        "model": "Xenova/whisper-tiny",
+        "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+        "language": "en",
+        "sampleRate": 16000,
+        "duration": 20,
+        "timestampOrigin": "window-relative",
+        "timingMethod": "audio-cross-attention-dtw",
+        "modelValidation": "pending-model-backed-validation"
+      },
+      "phases": [
+        "transcribing",
+        "complete"
+      ],
+      "cacheReadFiles": [],
+      "downloadedFiles": [],
+      "progressEvents": 2,
+      "cancelledAtTranscribing": false,
+      "elapsedMilliseconds": 2330,
+      "modelFileGets": 0,
+      "workersCreated": 0,
+      "text": " Twinkle, twinkle little star How I wonder what you are Hopper, above the world so high Like a diamond in the sky, when the blade",
+      "audioSeconds": 20,
+      "validatedChunks": [
+        {
+          "text": " Twinkle,",
+          "timestamp": [
+            0.34,
+            1.48
+          ]
+        },
+        {
+          "text": " twinkle",
+          "timestamp": [
+            1.48,
+            2.54
+          ]
+        },
+        {
+          "text": " little",
+          "timestamp": [
+            2.54,
+            3.54
+          ]
+        },
+        {
+          "text": " star",
+          "timestamp": [
+            3.54,
+            4.66
+          ]
+        },
+        {
+          "text": " How",
+          "timestamp": [
+            4.66,
+            5.74
+          ]
+        },
+        {
+          "text": " I",
+          "timestamp": [
+            5.74,
+            6.22
+          ]
+        },
+        {
+          "text": " wonder",
+          "timestamp": [
+            6.22,
+            7
+          ]
+        },
+        {
+          "text": " what",
+          "timestamp": [
+            7,
+            7.7
+          ]
+        },
+        {
+          "text": " you",
+          "timestamp": [
+            7.7,
+            8.42
+          ]
+        },
+        {
+          "text": " are",
+          "timestamp": [
+            8.42,
+            9.3
+          ]
+        },
+        {
+          "text": " Hopper,",
+          "timestamp": [
+            9.3,
+            10.54
+          ]
+        },
+        {
+          "text": " above",
+          "timestamp": [
+            11.12,
+            11.18
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            11.18,
+            11.76
+          ]
+        },
+        {
+          "text": " world",
+          "timestamp": [
+            11.76,
+            12.24
+          ]
+        },
+        {
+          "text": " so",
+          "timestamp": [
+            12.24,
+            12.86
+          ]
+        },
+        {
+          "text": " high",
+          "timestamp": [
+            12.86,
+            13.76
+          ]
+        },
+        {
+          "text": " Like",
+          "timestamp": [
+            13.76,
+            14.62
+          ]
+        },
+        {
+          "text": " a",
+          "timestamp": [
+            14.62,
+            15.24
+          ]
+        },
+        {
+          "text": " diamond",
+          "timestamp": [
+            15.24,
+            15.9
+          ]
+        },
+        {
+          "text": " in",
+          "timestamp": [
+            15.9,
+            16.94
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            16.94,
+            17.38
+          ]
+        },
+        {
+          "text": " sky,",
+          "timestamp": [
+            17.38,
+            18.18
+          ]
+        },
+        {
+          "text": " when",
+          "timestamp": [
+            19.02,
+            19.24
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            19.24,
+            19.68
+          ]
+        },
+        {
+          "text": " blade",
+          "timestamp": [
+            19.68,
+            19.98
+          ]
+        }
+      ],
+      "timestampContractPassed": true
+    },
+    {
+      "id": "cc0-singing-new-worker-from-cache",
+      "startedAt": "2026-10-05T22:49:22.271Z",
+      "status": "completed",
+      "result": {
+        "chunks": [
+          {
+            "text": " Twinkle,",
+            "timestamp": [
+              0.34,
+              1.48
+            ]
+          },
+          {
+            "text": " twinkle",
+            "timestamp": [
+              1.48,
+              2.54
+            ]
+          },
+          {
+            "text": " little",
+            "timestamp": [
+              2.54,
+              3.54
+            ]
+          },
+          {
+            "text": " star",
+            "timestamp": [
+              3.54,
+              4.66
+            ]
+          },
+          {
+            "text": " How",
+            "timestamp": [
+              4.66,
+              5.74
+            ]
+          },
+          {
+            "text": " I",
+            "timestamp": [
+              5.74,
+              6.22
+            ]
+          },
+          {
+            "text": " wonder",
+            "timestamp": [
+              6.22,
+              7
+            ]
+          },
+          {
+            "text": " what",
+            "timestamp": [
+              7,
+              7.7
+            ]
+          },
+          {
+            "text": " you",
+            "timestamp": [
+              7.7,
+              8.42
+            ]
+          },
+          {
+            "text": " are",
+            "timestamp": [
+              8.42,
+              9.3
+            ]
+          },
+          {
+            "text": " Hopper,",
+            "timestamp": [
+              9.3,
+              10.54
+            ]
+          },
+          {
+            "text": " above",
+            "timestamp": [
+              11.12,
+              11.18
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              11.18,
+              11.76
+            ]
+          },
+          {
+            "text": " world",
+            "timestamp": [
+              11.76,
+              12.24
+            ]
+          },
+          {
+            "text": " so",
+            "timestamp": [
+              12.24,
+              12.86
+            ]
+          },
+          {
+            "text": " high",
+            "timestamp": [
+              12.86,
+              13.76
+            ]
+          },
+          {
+            "text": " Like",
+            "timestamp": [
+              13.76,
+              14.62
+            ]
+          },
+          {
+            "text": " a",
+            "timestamp": [
+              14.62,
+              15.24
+            ]
+          },
+          {
+            "text": " diamond",
+            "timestamp": [
+              15.24,
+              15.9
+            ]
+          },
+          {
+            "text": " in",
+            "timestamp": [
+              15.9,
+              16.94
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              16.94,
+              17.38
+            ]
+          },
+          {
+            "text": " sky,",
+            "timestamp": [
+              17.38,
+              18.18
+            ]
+          },
+          {
+            "text": " when",
+            "timestamp": [
+              19.02,
+              19.24
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              19.24,
+              19.68
+            ]
+          },
+          {
+            "text": " blade",
+            "timestamp": [
+              19.68,
+              19.98
+            ]
+          }
+        ],
+        "engine": "transformers.js-whisper",
+        "engineVersion": "3.8.1",
+        "model": "Xenova/whisper-tiny",
+        "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+        "language": "en",
+        "sampleRate": 16000,
+        "duration": 20,
+        "timestampOrigin": "window-relative",
+        "timingMethod": "audio-cross-attention-dtw",
+        "modelValidation": "pending-model-backed-validation"
+      },
+      "phases": [
+        "reading-cache",
+        "verifying",
+        "loading",
+        "transcribing",
+        "complete"
+      ],
+      "cacheReadFiles": [
+        "onnx/encoder_model.onnx",
+        "onnx/decoder_model_merged_quantized.onnx",
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "downloadedFiles": [],
+      "progressEvents": 89,
+      "cancelledAtTranscribing": false,
+      "elapsedMilliseconds": 4176,
+      "modelFileGets": 0,
+      "workersCreated": 1,
+      "text": " Twinkle, twinkle little star How I wonder what you are Hopper, above the world so high Like a diamond in the sky, when the blade",
+      "audioSeconds": 20,
+      "validatedChunks": [
+        {
+          "text": " Twinkle,",
+          "timestamp": [
+            0.34,
+            1.48
+          ]
+        },
+        {
+          "text": " twinkle",
+          "timestamp": [
+            1.48,
+            2.54
+          ]
+        },
+        {
+          "text": " little",
+          "timestamp": [
+            2.54,
+            3.54
+          ]
+        },
+        {
+          "text": " star",
+          "timestamp": [
+            3.54,
+            4.66
+          ]
+        },
+        {
+          "text": " How",
+          "timestamp": [
+            4.66,
+            5.74
+          ]
+        },
+        {
+          "text": " I",
+          "timestamp": [
+            5.74,
+            6.22
+          ]
+        },
+        {
+          "text": " wonder",
+          "timestamp": [
+            6.22,
+            7
+          ]
+        },
+        {
+          "text": " what",
+          "timestamp": [
+            7,
+            7.7
+          ]
+        },
+        {
+          "text": " you",
+          "timestamp": [
+            7.7,
+            8.42
+          ]
+        },
+        {
+          "text": " are",
+          "timestamp": [
+            8.42,
+            9.3
+          ]
+        },
+        {
+          "text": " Hopper,",
+          "timestamp": [
+            9.3,
+            10.54
+          ]
+        },
+        {
+          "text": " above",
+          "timestamp": [
+            11.12,
+            11.18
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            11.18,
+            11.76
+          ]
+        },
+        {
+          "text": " world",
+          "timestamp": [
+            11.76,
+            12.24
+          ]
+        },
+        {
+          "text": " so",
+          "timestamp": [
+            12.24,
+            12.86
+          ]
+        },
+        {
+          "text": " high",
+          "timestamp": [
+            12.86,
+            13.76
+          ]
+        },
+        {
+          "text": " Like",
+          "timestamp": [
+            13.76,
+            14.62
+          ]
+        },
+        {
+          "text": " a",
+          "timestamp": [
+            14.62,
+            15.24
+          ]
+        },
+        {
+          "text": " diamond",
+          "timestamp": [
+            15.24,
+            15.9
+          ]
+        },
+        {
+          "text": " in",
+          "timestamp": [
+            15.9,
+            16.94
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            16.94,
+            17.38
+          ]
+        },
+        {
+          "text": " sky,",
+          "timestamp": [
+            17.38,
+            18.18
+          ]
+        },
+        {
+          "text": " when",
+          "timestamp": [
+            19.02,
+            19.24
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            19.24,
+            19.68
+          ]
+        },
+        {
+          "text": " blade",
+          "timestamp": [
+            19.68,
+            19.98
+          ]
+        }
+      ],
+      "timestampContractPassed": true
+    },
+    {
+      "id": "cancel-after-transcribing-began",
+      "startedAt": "2026-10-05T22:49:26.449Z",
+      "status": "failed",
+      "error": {
+        "name": "AbortError",
+        "message": "Whisper transcription cancelled"
+      },
+      "phases": [
+        "transcribing"
+      ],
+      "cacheReadFiles": [],
+      "downloadedFiles": [],
+      "progressEvents": 1,
+      "cancelledAtTranscribing": true,
+      "elapsedMilliseconds": 12,
+      "modelFileGets": 0,
+      "workersCreated": 0
+    },
+    {
+      "id": "retry-after-worker-cancellation",
+      "startedAt": "2026-10-05T22:49:26.463Z",
+      "status": "completed",
+      "result": {
+        "chunks": [
+          {
+            "text": " Twinkle,",
+            "timestamp": [
+              0.34,
+              1.48
+            ]
+          },
+          {
+            "text": " twinkle",
+            "timestamp": [
+              1.48,
+              2.54
+            ]
+          },
+          {
+            "text": " little",
+            "timestamp": [
+              2.54,
+              3.54
+            ]
+          },
+          {
+            "text": " star",
+            "timestamp": [
+              3.54,
+              4.66
+            ]
+          },
+          {
+            "text": " How",
+            "timestamp": [
+              4.66,
+              5.74
+            ]
+          },
+          {
+            "text": " I",
+            "timestamp": [
+              5.74,
+              6.22
+            ]
+          },
+          {
+            "text": " wonder",
+            "timestamp": [
+              6.22,
+              7
+            ]
+          },
+          {
+            "text": " what",
+            "timestamp": [
+              7,
+              7.7
+            ]
+          },
+          {
+            "text": " you",
+            "timestamp": [
+              7.7,
+              8.42
+            ]
+          },
+          {
+            "text": " are",
+            "timestamp": [
+              8.42,
+              9.3
+            ]
+          },
+          {
+            "text": " Hopper,",
+            "timestamp": [
+              9.3,
+              10.54
+            ]
+          },
+          {
+            "text": " above",
+            "timestamp": [
+              11.12,
+              11.18
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              11.18,
+              11.76
+            ]
+          },
+          {
+            "text": " world",
+            "timestamp": [
+              11.76,
+              12.24
+            ]
+          },
+          {
+            "text": " so",
+            "timestamp": [
+              12.24,
+              12.86
+            ]
+          },
+          {
+            "text": " high",
+            "timestamp": [
+              12.86,
+              13.76
+            ]
+          },
+          {
+            "text": " Like",
+            "timestamp": [
+              13.76,
+              14.62
+            ]
+          },
+          {
+            "text": " a",
+            "timestamp": [
+              14.62,
+              15.24
+            ]
+          },
+          {
+            "text": " diamond",
+            "timestamp": [
+              15.24,
+              15.9
+            ]
+          },
+          {
+            "text": " in",
+            "timestamp": [
+              15.9,
+              16.94
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              16.94,
+              17.38
+            ]
+          },
+          {
+            "text": " sky,",
+            "timestamp": [
+              17.38,
+              18.18
+            ]
+          },
+          {
+            "text": " when",
+            "timestamp": [
+              19.02,
+              19.24
+            ]
+          },
+          {
+            "text": " the",
+            "timestamp": [
+              19.24,
+              19.68
+            ]
+          },
+          {
+            "text": " blade",
+            "timestamp": [
+              19.68,
+              19.98
+            ]
+          }
+        ],
+        "engine": "transformers.js-whisper",
+        "engineVersion": "3.8.1",
+        "model": "Xenova/whisper-tiny",
+        "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+        "language": "en",
+        "sampleRate": 16000,
+        "duration": 20,
+        "timestampOrigin": "window-relative",
+        "timingMethod": "audio-cross-attention-dtw",
+        "modelValidation": "pending-model-backed-validation"
+      },
+      "phases": [
+        "reading-cache",
+        "verifying",
+        "loading",
+        "transcribing",
+        "complete"
+      ],
+      "cacheReadFiles": [
+        "onnx/encoder_model.onnx",
+        "onnx/decoder_model_merged_quantized.onnx",
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "downloadedFiles": [],
+      "progressEvents": 106,
+      "cancelledAtTranscribing": false,
+      "elapsedMilliseconds": 3476,
+      "modelFileGets": 0,
+      "workersCreated": 1,
+      "text": " Twinkle, twinkle little star How I wonder what you are Hopper, above the world so high Like a diamond in the sky, when the blade",
+      "audioSeconds": 20,
+      "validatedChunks": [
+        {
+          "text": " Twinkle,",
+          "timestamp": [
+            0.34,
+            1.48
+          ]
+        },
+        {
+          "text": " twinkle",
+          "timestamp": [
+            1.48,
+            2.54
+          ]
+        },
+        {
+          "text": " little",
+          "timestamp": [
+            2.54,
+            3.54
+          ]
+        },
+        {
+          "text": " star",
+          "timestamp": [
+            3.54,
+            4.66
+          ]
+        },
+        {
+          "text": " How",
+          "timestamp": [
+            4.66,
+            5.74
+          ]
+        },
+        {
+          "text": " I",
+          "timestamp": [
+            5.74,
+            6.22
+          ]
+        },
+        {
+          "text": " wonder",
+          "timestamp": [
+            6.22,
+            7
+          ]
+        },
+        {
+          "text": " what",
+          "timestamp": [
+            7,
+            7.7
+          ]
+        },
+        {
+          "text": " you",
+          "timestamp": [
+            7.7,
+            8.42
+          ]
+        },
+        {
+          "text": " are",
+          "timestamp": [
+            8.42,
+            9.3
+          ]
+        },
+        {
+          "text": " Hopper,",
+          "timestamp": [
+            9.3,
+            10.54
+          ]
+        },
+        {
+          "text": " above",
+          "timestamp": [
+            11.12,
+            11.18
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            11.18,
+            11.76
+          ]
+        },
+        {
+          "text": " world",
+          "timestamp": [
+            11.76,
+            12.24
+          ]
+        },
+        {
+          "text": " so",
+          "timestamp": [
+            12.24,
+            12.86
+          ]
+        },
+        {
+          "text": " high",
+          "timestamp": [
+            12.86,
+            13.76
+          ]
+        },
+        {
+          "text": " Like",
+          "timestamp": [
+            13.76,
+            14.62
+          ]
+        },
+        {
+          "text": " a",
+          "timestamp": [
+            14.62,
+            15.24
+          ]
+        },
+        {
+          "text": " diamond",
+          "timestamp": [
+            15.24,
+            15.9
+          ]
+        },
+        {
+          "text": " in",
+          "timestamp": [
+            15.9,
+            16.94
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            16.94,
+            17.38
+          ]
+        },
+        {
+          "text": " sky,",
+          "timestamp": [
+            17.38,
+            18.18
+          ]
+        },
+        {
+          "text": " when",
+          "timestamp": [
+            19.02,
+            19.24
+          ]
+        },
+        {
+          "text": " the",
+          "timestamp": [
+            19.24,
+            19.68
+          ]
+        },
+        {
+          "text": " blade",
+          "timestamp": [
+            19.68,
+            19.98
+          ]
+        }
+      ],
+      "timestampContractPassed": true
+    }
+  ],
+  "limitations": [
+    "This smoke validates the built assets on a local static server; deployed-host response headers remain a separate acceptance gate.",
+    "The CC0 fixture has no manually verified transcript or timestamp gold; no recognition/boundary accuracy metric is claimed.",
+    "One English singing excerpt does not validate Mandarin, multilingual, mixed-language, or full-song quality."
+  ],
+  "totalVerifiedBytes": 66406756,
+  "fixture": {
+    "fixtureId": "cc0-twinkle-first-20s",
+    "sha256": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+    "durationSeconds": 20,
+    "language": "en",
+    "rightsConfirmed": true,
+    "transcriptVerified": false,
+    "source": "https://commons.wikimedia.org/wiki/File:Twinkle_Twinkle_Little_Star_-_sung_with_full_lyrics.ogg",
+    "license": "CC0-1.0"
+  },
+  "serverMode": "built-application-local-static-server",
+  "testOrigin": "http://127.0.0.1:4174",
+  "modelTransport": "Live browser GETs to the seven fixed source URLs and their HTTPS redirect chains; the product Worker verifies all lengths and SHA-256 hashes before execution",
+  "liveBrowserModelDownloadValidated": true,
+  "network": {
+    "allowlist": [
+      "http://127.0.0.1:4174",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model.onnx",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json"
+    ],
+    "redirectRule": "HTTPS GET descendants of an exact manifest request only",
+    "requests": [
+      {
+        "url": "http://127.0.0.1:4174/",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/index-BRn3vdaX.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/wavesurfer-V6VYV3yg.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/index-DZN5Kq-A.css",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/index-BRn3vdaX.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/whisper-client-CCgBnV8Y.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model.onnx",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "onnx/encoder_model.onnx",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://us.aws.cdn.hf.co/xet-bridge-us/6452c15b3a794b2d9b15a809/ca16b19720c50202ed0ea3e4e189ec79aabadac1c15ede28f6fdfbe8604c2f2c",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "onnx/encoder_model.onnx",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "onnx/decoder_model_merged_quantized.onnx",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://us.aws.cdn.hf.co/xet-bridge-us/6452c15b3a794b2d9b15a809/be9fd4dea91805a4f9be0f93406b67a7971641f8a6377c5e9ea065629449e731",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "onnx/decoder_model_merged_quantized.onnx",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/api/resolve-cache/models/Xenova/whisper-tiny/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "generation_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/api/resolve-cache/models/Xenova/whisper-tiny/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "generation_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "preprocessor_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/api/resolve-cache/models/Xenova/whisper-tiny/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "preprocessor_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "tokenizer.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/api/resolve-cache/models/Xenova/whisper-tiny/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "tokenizer.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "tokenizer_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "https://huggingface.co/api/resolve-cache/models/Xenova/whisper-tiny/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json",
+        "queryOmitted": true,
+        "method": "GET",
+        "hasBody": false,
+        "manifestPath": "tokenizer_config.json",
+        "delivery": "live-approved-model-get"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0TxsgQ-.mjs",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0TxsgQ-.mjs",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0TxsgQ-.mjs",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174http://127.0.0.1:4174/7c9a8430-b215-4e74-8021-b8448cffd6d4",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0TxsgQ-.mjs",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      },
+      {
+        "url": "http://127.0.0.1:4174/assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+        "queryOmitted": false,
+        "method": "GET",
+        "hasBody": false,
+        "delivery": "localhost-server"
+      }
+    ],
+    "forbiddenRequests": [],
+    "blockedDevelopmentWebSockets": []
+  },
+  "workers": [
+    {
+      "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+      "createdAt": "2026-10-05T22:49:13.064Z"
+    },
+    {
+      "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+      "createdAt": "2026-10-05T22:49:22.298Z"
+    },
+    {
+      "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+      "createdAt": "2026-10-05T22:49:26.475Z"
+    },
+    {
+      "url": "http://127.0.0.1:4174/assets/whisper-worker-tRZF_ytj.js",
+      "createdAt": "2026-10-05T22:49:30.350Z"
+    }
+  ],
+  "pageErrors": [],
+  "browserVersion": "148.0.7778.96",
+  "clientModuleUrl": "http://127.0.0.1:4174/assets/whisper-client-CCgBnV8Y.js",
+  "browserCache": {
+    "name": "waveforge-lyrics-whisper-tiny-5332fcc35e32a33b86612b9a57a89be7906102b1-fp32-q8-v1",
+    "urls": [
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model.onnx",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+      "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json"
+    ]
+  },
+  "referenceLyricMapping": {
+    "referenceSource": "https://en.wikisource.org/wiki/Rhymes_for_the_Nursery/The_Star",
+    "scope": "Public-domain reference lines matched to actual ASR output, NOT manually verified performance transcript or timing gold",
+    "sourceText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+    "sourceTextUnchanged": true,
+    "matchedCount": 4,
+    "unresolvedCount": 1,
+    "result": {
+      "version": 1,
+      "status": "complete",
+      "candidates": [
+        {
+          "id": "reference-1",
+          "text": "Twinkle, twinkle, little star",
+          "lineIndex": 0,
+          "sung": true,
+          "target": true,
+          "protected": false,
+          "status": "matched",
+          "start": 0.34,
+          "end": 4.66,
+          "evidence": {
+            "coverage": 1,
+            "matchedCharacters": 24,
+            "totalCharacters": 24,
+            "matchedWordIndices": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "unmatchedNormalizedUnits": [],
+            "extraAsrWordIndices": [],
+            "extraAsrNormalizedUnits": [],
+            "reasons": [],
+            "boundarySource": "asr"
+          }
+        },
+        {
+          "id": "reference-2",
+          "text": "How I wonder what you are",
+          "lineIndex": 1,
+          "sung": true,
+          "target": true,
+          "protected": false,
+          "status": "matched",
+          "start": 4.66,
+          "end": 9.3,
+          "evidence": {
+            "coverage": 1,
+            "matchedCharacters": 20,
+            "totalCharacters": 20,
+            "matchedWordIndices": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "unmatchedNormalizedUnits": [],
+            "extraAsrWordIndices": [],
+            "extraAsrNormalizedUnits": [],
+            "reasons": [],
+            "boundarySource": "asr"
+          }
+        },
+        {
+          "id": "reference-3",
+          "text": "Up above the world so high",
+          "lineIndex": 2,
+          "sung": true,
+          "target": true,
+          "protected": false,
+          "status": "matched",
+          "start": 11.12,
+          "end": 13.76,
+          "evidence": {
+            "coverage": 0.9047619047619048,
+            "matchedCharacters": 19,
+            "totalCharacters": 21,
+            "matchedWordIndices": [
+              11,
+              12,
+              13,
+              14,
+              15
+            ],
+            "unmatchedNormalizedUnits": [
+              "up"
+            ],
+            "extraAsrWordIndices": [],
+            "extraAsrNormalizedUnits": [],
+            "reasons": [
+              "partial_lyrics"
+            ],
+            "boundarySource": "asr"
+          }
+        },
+        {
+          "id": "reference-4",
+          "text": "Like a diamond in the sky",
+          "lineIndex": 3,
+          "sung": true,
+          "target": true,
+          "protected": false,
+          "status": "matched",
+          "start": 13.76,
+          "end": 18.18,
+          "evidence": {
+            "coverage": 1,
+            "matchedCharacters": 20,
+            "totalCharacters": 20,
+            "matchedWordIndices": [
+              16,
+              17,
+              18,
+              19,
+              20,
+              21
+            ],
+            "unmatchedNormalizedUnits": [],
+            "extraAsrWordIndices": [],
+            "extraAsrNormalizedUnits": [],
+            "reasons": [],
+            "boundarySource": "asr"
+          }
+        },
+        {
+          "id": "reference-5",
+          "text": "When the blazing sun is gone",
+          "lineIndex": 4,
+          "sung": true,
+          "target": true,
+          "protected": false,
+          "status": "unresolved",
+          "start": null,
+          "end": null,
+          "evidence": {
+            "coverage": 0,
+            "matchedCharacters": 0,
+            "totalCharacters": 23,
+            "matchedWordIndices": [],
+            "unmatchedNormalizedUnits": [
+              "when",
+              "the",
+              "blazing",
+              "sun",
+              "is",
+              "gone"
+            ],
+            "extraAsrWordIndices": [],
+            "extraAsrNormalizedUnits": [],
+            "reasons": [
+              "insufficient_word_evidence"
+            ],
+            "boundarySource": null
+          }
+        }
+      ],
+      "diagnostics": {
+        "reasons": [],
+        "rejectedWords": [],
+        "matrixCells": 928,
+        "candidateCount": 12,
+        "scoreMeaning": "Lexical coverage and alignment score are not calibrated probabilities",
+        "timestampBasis": "absolute_source_seconds"
+      }
+    }
+  },
+  "repeatIdenticalTextAndChunks": true,
+  "safetyChecks": {
+    "exactDigitalSilenceProductPreflight": {
+      "chunks": [],
+      "engine": "transformers.js-whisper",
+      "engineVersion": "3.8.1",
+      "model": "Xenova/whisper-tiny",
+      "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+      "language": "en",
+      "sampleRate": 16000,
+      "duration": 2,
+      "timestampOrigin": "window-relative",
+      "timingMethod": "exact-digital-silence",
+      "modelValidation": "pending-model-backed-validation",
+      "modelExecuted": false
+    },
+    "cancelledRunningWorkerThenRetried": true,
+    "verifiedNewWorkerCacheReuse": true,
+    "incorrectTextSource": "synthetic unrelated lyrics; not fixture ground truth",
+    "actualSingingWithIncorrectText": [
+      {
+        "id": "unrelated-negative",
+        "text": "Cobalt submarines catalog geometric invoices",
+        "lineIndex": 0,
+        "sung": true,
+        "target": true,
+        "protected": false,
+        "status": "unresolved",
+        "start": null,
+        "end": null,
+        "evidence": {
+          "coverage": 0,
+          "matchedCharacters": 0,
+          "totalCharacters": 40,
+          "matchedWordIndices": [],
+          "unmatchedNormalizedUnits": [
+            "cobalt",
+            "submarines",
+            "catalog",
+            "geometric",
+            "invoices"
+          ],
+          "extraAsrWordIndices": [],
+          "extraAsrNormalizedUnits": [],
+          "reasons": [
+            "insufficient_word_evidence"
+          ],
+          "boundarySource": null
+        }
+      }
+    ]
+  },
+  "uiIntegration": {
+    "status": "passed",
+    "currentStep": "complete",
+    "startedAt": "2026-10-05T22:49:29.943Z",
+    "path": "real built/dev application UI → alignment service → real Worker/WASM → matcher → session",
+    "mockAsrUsed": false,
+    "manualAccuracyValidated": false,
+    "confirmationScope": "The first-line confirmation button is exercised only to test lock preservation; no human listening or correct-boundary assertion is implied",
+    "referenceText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+    "projects": {
+      "beforeAnalysis": {
+        "schema": "waveforge.lyrics.v1",
+        "revision": 2,
+        "rawText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+        "source": {
+          "name": "first-20s-mono-16k.wav",
+          "hash": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+          "duration": 20
+        },
+        "displayOffsetMs": 0,
+        "lines": [
+          {
+            "id": "line-1",
+            "text": "Twinkle, twinkle, little star",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-2",
+            "text": "How I wonder what you are",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-3",
+            "text": "Up above the world so high",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-4",
+            "text": "Like a diamond in the sky",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-5",
+            "text": "When the blazing sun is gone",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          }
+        ]
+      },
+      "proposalNotYetAdopted": {
+        "schema": "waveforge.lyrics.v1",
+        "revision": 2,
+        "rawText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+        "source": {
+          "name": "first-20s-mono-16k.wav",
+          "hash": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+          "duration": 20
+        },
+        "displayOffsetMs": 0,
+        "lines": [
+          {
+            "id": "line-1",
+            "text": "Twinkle, twinkle, little star",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-2",
+            "text": "How I wonder what you are",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-3",
+            "text": "Up above the world so high",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-4",
+            "text": "Like a diamond in the sky",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          },
+          {
+            "id": "line-5",
+            "text": "When the blazing sun is gone",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": null
+          }
+        ]
+      },
+      "afterSingleBatchAdoption": {
+        "schema": "waveforge.lyrics.v1",
+        "revision": 3,
+        "rawText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+        "source": {
+          "name": "first-20s-mono-16k.wav",
+          "hash": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+          "duration": 20
+        },
+        "displayOffsetMs": 0,
+        "lines": [
+          {
+            "id": "line-1",
+            "text": "Twinkle, twinkle, little star",
+            "sung": true,
+            "start": 0.34,
+            "end": 4.66,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-2",
+            "text": "How I wonder what you are",
+            "sung": true,
+            "start": 4.66,
+            "end": 9.3,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-3",
+            "text": "Up above the world so high",
+            "sung": true,
+            "start": 11.04,
+            "end": 13.76,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 0.9047619047619048,
+                "reasons": [
+                  "partial_lyrics"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-4",
+            "text": "Like a diamond in the sky",
+            "sung": true,
+            "start": 13.76,
+            "end": 18.18,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-5",
+            "text": "When the blazing sun is gone",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": {
+              "status": "unresolved",
+              "evidence": {
+                "coverage": 0,
+                "reasons": [
+                  "insufficient_word_evidence"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          }
+        ]
+      },
+      "afterFirstLineConfirmedAndLocked": {
+        "schema": "waveforge.lyrics.v1",
+        "revision": 4,
+        "rawText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+        "source": {
+          "name": "first-20s-mono-16k.wav",
+          "hash": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+          "duration": 20
+        },
+        "displayOffsetMs": 0,
+        "lines": [
+          {
+            "id": "line-1",
+            "text": "Twinkle, twinkle, little star",
+            "sung": true,
+            "start": 0.34,
+            "end": 4.66,
+            "confirmed": true,
+            "manualLocked": true,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-2",
+            "text": "How I wonder what you are",
+            "sung": true,
+            "start": 4.66,
+            "end": 9.3,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-3",
+            "text": "Up above the world so high",
+            "sung": true,
+            "start": 11.04,
+            "end": 13.76,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 0.9047619047619048,
+                "reasons": [
+                  "partial_lyrics"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-4",
+            "text": "Like a diamond in the sky",
+            "sung": true,
+            "start": 13.76,
+            "end": 18.18,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-5",
+            "text": "When the blazing sun is gone",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": {
+              "status": "unresolved",
+              "evidence": {
+                "coverage": 0,
+                "reasons": [
+                  "insufficient_word_evidence"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          }
+        ]
+      },
+      "afterTargetedRetryBeforeAdoption": {
+        "schema": "waveforge.lyrics.v1",
+        "revision": 4,
+        "rawText": "Twinkle, twinkle, little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky\nWhen the blazing sun is gone",
+        "source": {
+          "name": "first-20s-mono-16k.wav",
+          "hash": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+          "duration": 20
+        },
+        "displayOffsetMs": 0,
+        "lines": [
+          {
+            "id": "line-1",
+            "text": "Twinkle, twinkle, little star",
+            "sung": true,
+            "start": 0.34,
+            "end": 4.66,
+            "confirmed": true,
+            "manualLocked": true,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-2",
+            "text": "How I wonder what you are",
+            "sung": true,
+            "start": 4.66,
+            "end": 9.3,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-3",
+            "text": "Up above the world so high",
+            "sung": true,
+            "start": 11.04,
+            "end": 13.76,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 0.9047619047619048,
+                "reasons": [
+                  "partial_lyrics"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-4",
+            "text": "Like a diamond in the sky",
+            "sung": true,
+            "start": 13.76,
+            "end": 18.18,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": "automatic",
+            "alignment": {
+              "status": "matched",
+              "evidence": {
+                "coverage": 1,
+                "reasons": []
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          },
+          {
+            "id": "line-5",
+            "text": "When the blazing sun is gone",
+            "sung": true,
+            "start": null,
+            "end": null,
+            "confirmed": false,
+            "manualLocked": false,
+            "timingOrigin": null,
+            "alignment": {
+              "status": "unresolved",
+              "evidence": {
+                "coverage": 0,
+                "reasons": [
+                  "insufficient_word_evidence"
+                ]
+              },
+              "engine": "transformers.js-whisper@3.8.1",
+              "model": "Xenova/whisper-tiny",
+              "modelRevision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+              "language": "en",
+              "backend": "wasm",
+              "pass": 1
+            }
+          }
+        ]
+      }
+    },
+    "downloads": [
+      {
+        "filename": "WaveForge_Lyrics.json",
+        "at": "2026-10-05T22:49:30.242Z"
+      },
+      {
+        "filename": "WaveForge_Lyrics.json",
+        "at": "2026-10-05T22:49:34.675Z"
+      },
+      {
+        "filename": "WaveForge_Lyrics.json",
+        "at": "2026-10-05T22:49:34.792Z"
+      },
+      {
+        "filename": "WaveForge_Lyrics.json",
+        "at": "2026-10-05T22:49:34.942Z"
+      },
+      {
+        "filename": "WaveForge_Lyrics.json",
+        "at": "2026-10-05T22:49:37.157Z"
+      },
+      {
+        "filename": "WaveForge_Lyrics.txt",
+        "at": "2026-10-05T22:49:37.342Z"
+      }
+    ],
+    "exportGates": {
+      "lrc": {
+        "blocked": true,
+        "message": "line-2：尚未確認\nline-3：尚未確認\nline-4：尚未確認\nline-5：待打點"
+      },
+      "srt": {
+        "blocked": true,
+        "message": "line-2：尚未確認\nline-3：尚未確認\nline-4：尚未確認\nline-5：待打點"
+      },
+      "ass": {
+        "blocked": true,
+        "message": "line-2：尚未確認\nline-3：尚未確認\nline-4：尚未確認\nline-5：待打點"
+      },
+      "txt": {
+        "allowedAsDraft": true,
+        "originalTextPreserved": true
+      },
+      "json": {
+        "allowedAsDraft": true,
+        "sourceHashPreserved": true,
+        "unconfirmedLinesRetained": true
+      }
+    },
+    "latestAlignmentMessage": "分析結束，請檢查候選；原有時間尚未變更",
+    "firstProposalSummary": "找到 4 句時間；1 句尚未找到。原文與目前時間尚未變更。",
+    "firstProposalRows": [
+      {
+        "id": "line-1",
+        "text": "第 1 行 · Twinkle, twinkle, little star · 找到時間，請試聽 · 0.340–4.660 秒"
+      },
+      {
+        "id": "line-2",
+        "text": "第 2 行 · How I wonder what you are · 找到時間，請試聽 · 4.660–9.300 秒"
+      },
+      {
+        "id": "line-3",
+        "text": "第 3 行 · Up above the world so high · 找到時間，請試聽 · 11.040–13.760 秒"
+      },
+      {
+        "id": "line-4",
+        "text": "第 4 行 · Like a diamond in the sky · 找到時間，請試聽 · 13.760–18.180 秒"
+      },
+      {
+        "id": "line-5",
+        "text": "第 5 行 · When the blazing sun is gone · 尚未在音訊找到 · 尚無完整時間"
+      }
+    ],
+    "firstMatchedCount": 4,
+    "firstMissingCount": 1,
+    "missingCandidateDiagnostic": "文字吻合：0／23 個比對字元；未找到足夠的文字吻合依據",
+    "retryTargetId": "line-3",
+    "retryProposalSummary": "找到 1 句時間；0 句尚未找到。原文與目前時間尚未變更。",
+    "retryCandidateDiagnostic": "文字吻合：19／21 個比對字元；只有部分原文字元能與辨識結果對上",
+    "lockedLinePreserved": true,
+    "modelFileGets": 0,
+    "whisperWorkersCreated": 1,
+    "completedAt": "2026-10-05T22:49:37.346Z"
+  }
+}
