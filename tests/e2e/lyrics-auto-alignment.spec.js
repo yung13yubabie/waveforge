@@ -170,10 +170,13 @@ test.describe('Automatic lyrics workflow with mock ASR only', () => {
     await page.locator('#lyrics-language').selectOption('en')
     await page.locator('#lyrics-model-consent').uncheck()
     await expect(command(page, 'lyrics.align')).toBeDisabled()
-    await expect(page.locator('#lyrics-command-select option[value="lyrics.align"]')).toBeDisabled()
+    // Playwright's enabled-state matcher follows the enclosing label to its
+    // enabled <select>. Check this native option's own gate instead.
+    await expect(page.locator('#lyrics-command-select option[value="lyrics.align"]')).toHaveJSProperty('disabled', true)
     expect(await mockAsr.workers()).toEqual([])
     expect(await mockAsr.jobs()).toEqual([])
     await page.locator('#lyrics-model-consent').check()
+    await expect(page.locator('#lyrics-command-select option[value="lyrics.align"]')).toHaveJSProperty('disabled', false)
     await command(page, 'lyrics.align').click()
     await mockAsr.waitForJobs(1)
     expectPreparedJob((await mockAsr.jobs())[0], 128000)

@@ -56,12 +56,20 @@ test('real editor import, edits, preview, WAV and portable archive roundtrip use
   await page.locator('#daw-seek').evaluate(input => { input.value = '2'; input.dispatchEvent(new Event('input', { bubbles: true })) })
   await action(page, 'split').click()
   await expect(page.locator('.daw-clip')).toHaveCount(3)
+  const selectedClipId = await page.locator('.daw-clip[aria-pressed="true"]').getAttribute('data-clip-id')
   await action(page, 'duplicate').click()
   await expect(page.locator('.daw-clip')).toHaveCount(4)
   await action(page, 'undo').click()
   await expect(page.locator('.daw-clip')).toHaveCount(3)
   await action(page, 'redo').click()
   await expect(page.locator('.daw-clip')).toHaveCount(4)
+  await expect(page.locator('.daw-clip[aria-pressed="true"]')).toHaveAttribute('data-clip-id', selectedClipId)
+  await expect(page.locator('#daw-clip-fields')).toBeEnabled()
+  // Fades are intentionally progressive detail, not an always-visible field.
+  // Use the same visible disclosure a person opens before editing the seam.
+  await page.getByText('細調音量與接縫', { exact: true }).click()
+  await expect(page.locator('#daw-fade-in')).toBeVisible()
+  await expect(page.locator('#daw-fade-in')).toBeEnabled()
   await field(page, 'fade-in', .05); await field(page, 'fade-out', .05)
   await action(page, 'fades').click()
   const trackGain = page.locator('input[data-track-control="gainDb"]').first()
@@ -91,6 +99,7 @@ test('real editor import, edits, preview, WAV and portable archive roundtrip use
   expect(saved.project.tracks.reduce((sum, track) => sum + track.clips.length, 0)).toBe(4)
   expect(saved.project.masterGainDb).toBe(-2)
   expect(saved.project.tracks[0].gainDb).toBe(-3)
+  expect(saved.project.tracks.flatMap(track => track.clips).find(clip => clip.id === selectedClipId)).toMatchObject({ fadeInSeconds: .05, fadeOutSeconds: .05 })
   await page.screenshot({ path: testInfo.outputPath('editor-desktop.png'), fullPage: true })
   page.once('dialog', dialog => dialog.accept())
   await action(page, 'clear').click()
@@ -132,11 +141,62 @@ test('mobile keyboard workflow, sticky transport and reduced motion remain usabl
     const box = await action(page, command).boundingBox()
     expect(box.height).toBeGreaterThanOrEqual(44)
   }
-  await page.locator('#mode-editor').evaluate(panel => { panel.scrollTop = 0 })
-  await page.evaluate(() => scrollTo(0, 0))
+  const captureGeometry = () => page.evaluate(() => {
+    const describe = selector => {
+      const element = document.querySelector(selector), rect = element.getBoundingClientRect()
+      return { selector, rect: rect.toJSON(), clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+        clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop,
+        overflowX: getComputedStyle(element).overflowX, overflowY: getComputedStyle(element).overflowY }
+    }
+    const outsideEditorControls = [...document.querySelectorAll('#mode-editor button, #mode-editor input, #mode-editor select')]
+      .filter(element => !element.closest('#daw-timeline')) // The timeline deliberately scrolls horizontally.
+      .filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden')
+      .map(element => ({ id: element.id || element.dataset.daw || element.textContent, rect: element.getBoundingClientRect().toJSON() }))
+      .filter(({ rect }) => rect.left < -1 || rect.right > innerWidth + 1)
+    return { viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }, windowScrollY: scrollY,
+      containers: ['html', 'body', '#app', '#mode-editor', '.daw-inspector', '.daw-transport'].map(describe), outsideEditorControls }
+  })
+  // Mobile body is its own scroller (100dvh + overflow-y:auto). Resetting only
+  // window/editor leaves it scrolled; fullPage then captures a long blank canvas.
+  const beforeReset = await captureGeometry()
+  await page.evaluate(() => {
+    for (const element of [document.scrollingElement, document.documentElement, document.body,
+      document.getElementById('app'), document.getElementById('mode-editor')]) {
+      if (element) { element.scrollTop = 0; element.scrollLeft = 0 }
+    }
+    window.scrollTo(0, 0)
+  })
+  await expect(page.locator('#app > .header')).toBeInViewport()
+  await expect(page.locator('#mode-editor h1')).toBeInViewport()
+  const top = await captureGeometry()
+  expect(top.viewport).toMatchObject({ width: 390, height: 844 })
+  expect(top.outsideEditorControls).toEqual([])
+  for (const selector of ['html', 'body', '#app', '#mode-editor']) {
+    const geometry = top.containers.find(item => item.selector === selector)
+    expect(geometry.rect.left, selector).toBeGreaterThanOrEqual(-1)
+    expect(geometry.rect.right, selector).toBeLessThanOrEqual(391)
+    expect(geometry.scrollTop, selector).toBe(0)
+  }
+  const header = await page.locator('#app > .header').boundingBox()
+  expect(header.y).toBeGreaterThanOrEqual(0)
+  expect(header.y + header.height).toBeLessThanOrEqual(844)
   const transport = await page.locator('.daw-transport').boundingBox()
+  expect(transport.y).toBeGreaterThanOrEqual(0)
   expect(transport.y + transport.height).toBeLessThanOrEqual(845)
-  await page.screenshot({ path: testInfo.outputPath('editor-mobile.png'), fullPage: true })
+  // Viewport captures are exactly what the user sees; do not expand the capture
+  // to nested scrollHeight or let fullPage's scroll extents masquerade as width.
+  const topScreenshot = await page.screenshot({ path: testInfo.outputPath('editor-mobile-top.png'), fullPage: false, scale: 'css' })
+  expect([topScreenshot.readUInt32BE(16), topScreenshot.readUInt32BE(20)]).toEqual([390, 844])
+  await page.locator('.daw-inspector').evaluate(inspector => inspector.scrollIntoView({ block: 'start', inline: 'nearest' }))
+  await expect(page.locator('#daw-selection-title')).toBeInViewport()
+  await expect(page.locator('#daw-clip-name')).toBeInViewport()
+  await expect(action(page, 'move')).toBeInViewport()
+  const inspector = await captureGeometry()
+  expect(inspector.viewport).toMatchObject({ width: 390, height: 844 })
+  expect(inspector.outsideEditorControls).toEqual([])
+  const inspectorScreenshot = await page.screenshot({ path: testInfo.outputPath('editor-mobile-inspector.png'), fullPage: false, scale: 'css' })
+  expect([inspectorScreenshot.readUInt32BE(16), inspectorScreenshot.readUInt32BE(20)]).toEqual([390, 844])
+  await testInfo.attach('editor-mobile-geometry.json', { body: JSON.stringify({ beforeReset, top, inspector }, null, 2), contentType: 'application/json' })
 })
 
 test('bad audio and declined clear preserve the current editor project', async ({ page }) => {

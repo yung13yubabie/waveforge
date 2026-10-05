@@ -70,6 +70,24 @@ describe('local DAW panel', () => {
     await click('delete'); expect(panel.getProject().tracks[0].clips).toHaveLength(2)
     await click('undo'); expect(panel.getProject().tracks[0].clips).toHaveLength(3)
   })
+  it('retains the selected split clip across duplicate undo/redo and exposes fades through its disclosure', async () => {
+    await setup({ importAudio: false }); await panel.importFiles([makeFile('one.wav'), makeFile('two.wav')])
+    await click('later'); await change('trim-start', 1); await change('trim-end', 4); await click('trim')
+    el('seek').value = '2'; el('seek').dispatchEvent(new Event('input'))
+    await click('split')
+    const selectedId = document.querySelector('.daw-clip[aria-pressed="true"]').dataset.clipId
+    await click('duplicate'); await click('undo'); await click('redo')
+    expect(document.querySelectorAll('.daw-clip')).toHaveLength(4)
+    expect(document.querySelector('.daw-clip[aria-pressed="true"]').dataset.clipId).toBe(selectedId)
+    expect(el('clip-fields').disabled).toBe(false)
+    const detail = el('fade-in').closest('details')
+    expect(detail.open).toBe(false)
+    detail.querySelector('summary').click()
+    expect(detail.open).toBe(true)
+    await change('fade-in', .05); await change('fade-out', .05); await click('fades')
+    const savedClip = panel.getProject().tracks.flatMap(track => track.clips).find(clip => clip.id === selectedId)
+    expect(savedClip).toMatchObject({ fadeInSeconds: .05, fadeOutSeconds: .05 })
+  })
   it('preserves exact beat positions when trimming at a non-integer-second tempo', async () => {
     await setup(); await change('tempo', 137); await click('later')
     const position = clip().atSeconds

@@ -28,6 +28,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Unit, syntax and production build
+        id: build
         run: |
           npm run lint
           npm run check:capabilities
@@ -37,6 +38,7 @@ jobs:
           mkdir -p artifacts/audio-trust
           node scripts/test-audio-trust.mjs > artifacts/audio-trust/synthetic-results.json
       - name: Install test browser
+        id: browser_install
         run: npx playwright install --with-deps chromium
       - name: Browser and built-site regressions
         run: |
@@ -44,6 +46,9 @@ jobs:
           npm run test:account
           npm run test:production
       - name: Approved local Whisper in a real built-site browser
+        # Independent evidence still runs when another browser regression fails;
+        # the overall job remains failed until every gate passes.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.browser_install.outcome == 'success' }}
         timeout-minutes: 12
         run: |
           npm run preview -- --host 127.0.0.1 --port 4174 --strictPort > /tmp/waveforge-model-preview.log 2>&1 &

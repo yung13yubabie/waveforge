@@ -36,7 +36,7 @@
 
 ## 驗證狀態
 
-本地整合：915 項單元通過，1 項需要人工金標的模型品質測試 skipped；154 個 JavaScript 語法檢查、136 項能力規格結構檢查、4 項 Python 測試與 production build 通過。模型實際 CPU 記錄見 `real-model/`。
+本地整合：916 項單元通過，1 項需要人工金標的模型品質測試 skipped；154 個 JavaScript 語法檢查、136 項能力規格結構檢查、4 項 Python 測試與 production build 通過。模型實際 CPU 記錄見 `real-model/`。
 
 本地 Chromium 在啟動時被執行環境 socket 權限阻擋，不能把測試發現／列出算成執行通過。PR 工作流會跑真正瀏覽器的多軌 UI、預聽／匯出、ZIP 還原、取消轉送及固定模型驗證。合併前須檢查該精確提交的 CI 與畫面證據。
 
