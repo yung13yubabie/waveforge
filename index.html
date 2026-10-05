@@ -148,6 +148,7 @@
     <button class="mode-tab" role="tab" data-mode="antitheft"
             aria-selected="false" aria-controls="mode-antitheft">防盜偵測</button>
     <button id="tab-editor" class="mode-tab" role="tab" data-mode="editor" aria-selected="false" aria-controls="mode-editor">多軌剪輯</button>
+    <button id="tab-pitch" class="mode-tab" role="tab" data-mode="pitch" aria-selected="false" aria-controls="mode-pitch">音高助手</button>
     <button id="tab-lyrics" class="mode-tab" role="tab" data-mode="lyrics" aria-selected="false" aria-controls="mode-lyrics">歌詞對時</button>
     <div class="mode-nav-auth">
       <button class="auth-login-pill" id="auth-login-pill">登入 / 註冊</button>
@@ -1192,6 +1193,16 @@
           <button type="button" data-daw="trim">裁掉所選範圍外的聲音</button>
           <p class="daw-note">以時間軸秒數保留目前片段的一部分，不會改變音高或播放速度；復原可找回</p>
           <div class="daw-actions"><button type="button" data-daw="split">在播放位置切開</button><button type="button" data-daw="duplicate">複製到片段後方</button><button type="button" data-daw="delete">刪除此片段</button></div>
+          <details id="daw-automation-details"><summary>這句某處大聲／小聲</summary>
+            <p class="daw-note" id="daw-automation-help">用音量點調整句內起伏。拖動圖上的點，或在下方輸入數字後套用。時間從此片段開頭算起，點與點之間平滑改變音量。</p>
+            <svg id="daw-automation-graph" class="daw-automation-graph" viewBox="0 0 320 140" role="img" aria-label="所選片段的音量曲線" aria-describedby="daw-automation-help"></svg>
+            <p class="daw-note" id="daw-automation-summary">尚未選取片段</p>
+            <label>要調整的音量點<select id="daw-automation-point"></select></label>
+            <div class="daw-two"><label>片段內時間（秒）<input id="daw-automation-time" type="number" min="0" step="any" required></label><label>音量（%）<input id="daw-automation-value" type="number" min="0" max="200" step="any" required></label></div>
+            <div class="daw-actions"><button type="button" data-daw="automation-apply">套用音量點</button><button type="button" data-daw="automation-add">新增中間點</button></div>
+            <div class="daw-actions"><button type="button" data-daw="automation-remove">刪除此中間點</button><button type="button" data-daw="automation-reset">重設句內音量</button></div>
+            <p class="daw-note">100% 不變，0% 靜音，最高 200%（約 +6 dB）；最多 32 點。起點與終點可調音量，時間固定。新增點位於最寬空隙中間。曲線會與片段音量、淡入淡出相乘；若輸出過大，請降低總混音音量。</p>
+          </details>
           <details><summary>細調音量與接縫</summary>
             <label>片段音量（dB）<input id="daw-clip-gain" type="number" min="-60" max="12" step="0.5"></label>
             <div class="daw-two"><label>淡入（秒）<input id="daw-fade-in" type="number" min="0" step="0.01"></label><label>淡出（秒）<input id="daw-fade-out" type="number" min="0" step="0.01"></label></div>
@@ -1224,6 +1235,8 @@
       <output id="daw-time">00:00.000 / 00:00.000</output>
     </div>
   </section>
+
+  <section class="workspace mode-panel" id="mode-pitch" role="tabpanel" aria-labelledby="tab-pitch" hidden></section>
 
   <section class="workspace mode-panel lyrics-panel" id="mode-lyrics" role="tabpanel" aria-labelledby="tab-lyrics" hidden>
     <div class="lyrics-heading"><div><p class="lyrics-eyebrow">歌詞工作台</p><h1>原文歌詞・逐句對時</h1></div><span id="lyrics-position">0.000 s</span></div>

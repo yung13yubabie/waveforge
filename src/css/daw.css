@@ -79,3 +79,14 @@
 @media (max-width: 600px) { #app.mode-editor { height: auto; min-height: 100dvh; overflow: visible; } .daw-panel { padding: 16px 12px 230px; overflow: visible; } .daw-heading h1 { font-size: 21px; } .daw-panel .daw-inspector fieldset { display: block; } .daw-transport { gap: 6px 8px; } .daw-timeline { --daw-label-width: 150px; max-height: 520px; } .daw-project-bar .daw-actions, .daw-import-bar { width: 100%; } .daw-heading .daw-badge { display: none; } #app.mode-editor .mode-nav { padding-inline: 8px; } #app.mode-editor .mode-tab { padding-inline: 12px; } }
 @media (prefers-reduced-motion: reduce) { .daw-panel *, .daw-panel *::before, .daw-panel *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (forced-colors: active) { .daw-panel .daw-clip[aria-pressed=true] { outline: 3px solid Highlight; } .daw-wave { color: CanvasText; } }
+
+/* The graph is the actual linear gain curve, with the same numeric editor for keyboard users. */
+.daw-automation-graph { width: 100%; height: auto; display: block; background: var(--c-bg-input); border: 1px solid var(--c-border); border-radius: 7px; touch-action: none; }
+.daw-automation-grid { stroke: var(--c-border); stroke-width: 1; }
+.daw-automation-unity { stroke: var(--c-text-2); stroke-width: 1; stroke-dasharray: 4 4; }
+.daw-automation-line { fill: none; stroke: var(--c-primary); stroke-width: 2; }
+.daw-automation-dot { fill: var(--c-bg-surface); stroke: var(--c-primary); stroke-width: 3; cursor: grab; }
+.daw-automation-dot[data-selected=true] { fill: var(--c-primary); }
+.daw-automation-graph text { fill: var(--c-text-2); font-size: 10px; pointer-events: none; }
+#daw-clip-fields:disabled .daw-automation-graph { opacity: .45; }
+@media (forced-colors: active) { .daw-automation-line, .daw-automation-dot { stroke: Highlight; } .daw-automation-dot[data-selected=true] { fill: Highlight; } }

@@ -1,4 +1,4 @@
-import { DAW_LIMITS, validateProject, getProjectDuration, getDecodedBytes, getClipEnvelope } from './project.js'
+import { DAW_LIMITS, validateProject, getProjectDuration, getDecodedBytes, getClipEnvelope, getClipVolumeAutomation } from './project.js'
 import { measurePeaks } from '../audio/measure.js'
 
 const dbToGain = db => 10 ** (db / 20)
@@ -30,6 +30,7 @@ export function buildRenderPlan(project) {
       clips: track.clips.map(clip => ({
         id: clip.id, assetId: clip.assetId, atSeconds: clip.atSeconds, offsetSeconds: clip.offsetSeconds,
         durationSeconds: clip.durationSeconds, gain: dbToGain(clip.gainDb), envelope: getClipEnvelope(clip),
+        automation: getClipVolumeAutomation(clip),
       })),
     })),
   }
@@ -91,14 +92,21 @@ export async function renderProject(project, buffers, {
       gain.connect(pan); pan.connect(master)
       for (const clip of track.clips) {
         checkCurrent(signal, isCurrent)
-        const source = context.createBufferSource(), clipGain = context.createGain(); nodes.push(source, clipGain)
+        const source = context.createBufferSource(), clipGain = context.createGain(), automationGain = context.createGain(); nodes.push(source, clipGain, automationGain)
         source.buffer = buffers.get(clip.assetId)
         for (let index = 0; index < clip.envelope.length; index++) {
           const point = clip.envelope[index], at = clip.atSeconds + point.timeSeconds
           if (index === 0) clipGain.gain.setValueAtTime(point.value * clip.gain, at)
           else clipGain.gain.linearRampToValueAtTime(point.value * clip.gain, at)
         }
-        source.connect(clipGain); clipGain.connect(gain)
+        // Multiply curves in separate nodes: merging their points would replace
+        // the product of two ramps with an incorrect straight interpolation.
+        for (let index = 0; index < clip.automation.length; index++) {
+          const point = clip.automation[index], at = clip.atSeconds + point.timeSeconds
+          if (index === 0) automationGain.gain.setValueAtTime(point.value, at)
+          else automationGain.gain.linearRampToValueAtTime(point.value, at)
+        }
+        source.connect(clipGain); clipGain.connect(automationGain); automationGain.connect(gain)
         source.start(clip.atSeconds, clip.offsetSeconds, clip.durationSeconds)
       }
     }

@@ -1,4 +1,4 @@
-import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS } from './project.js'
+import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt } from './project.js'
 import { renderProject } from './render.js'
 import { ProjectHistory } from './history.js'
 import { exportProjectArchive, importProjectArchive, archiveFileName } from './archive.js'
@@ -53,7 +53,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   let saved = JSON.stringify(project), hasDownloaded = false
   let selection = null, cursor = 0, mix = null, job = null, generation = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
-  let drag = null, suppressClick = false
+  let drag = null, suppressClick = false, automationDrag = null, automationIndex = 0, automationClipId = null
   const getContext = () => context ||= new AudioContextClass()
   const dirty = () => saved !== JSON.stringify(project)
   const selected = () => {
@@ -75,6 +75,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       const track = project.tracks.find(track => track.id === input.dataset.trackId)
       if (track) input.value = String(track[input.dataset.trackControl])
     })
+    renderAutomation()
     status(error?.message || String(error), true)
   }
   const run = task => Promise.resolve().then(task).catch(report)
@@ -109,6 +110,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     status(message); refreshControls()
   }
   function invalidate() {
+    automationDrag = null
     stop()
     mix = null
     if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('設定已修改，請重新產生混音')
@@ -169,8 +171,63 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       el('clip-track').replaceChildren(...project.tracks.map(t => { const option = node('option', '', t.name); option.value = t.id; return option }))
       el('clip-track').value = track.id
     }
+    renderAutomation()
     root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.clipId === selection?.clipId)))
     refreshControls()
+  }
+  function renderAutomation(previewPoints) {
+    const item = selected(), graph = el('automation-graph')
+    const points = item ? previewPoints || getClipVolumeAutomation(item.clip) : []
+    if (automationClipId !== item?.clip.id) { automationClipId = item?.clip.id; automationIndex = 0; automationDrag = null }
+    automationIndex = clamp(automationIndex, 0, Math.max(0, points.length - 1))
+    graph.replaceChildren()
+    const svgNode = (tag, attributes, text) => {
+      const result = document.createElementNS('http://www.w3.org/2000/svg', tag)
+      for (const [key, value] of Object.entries(attributes)) result.setAttribute(key, String(value))
+      if (text !== undefined) result.textContent = text
+      graph.append(result); return result
+    }
+    for (const value of [0, 1, 2]) {
+      const y = 124 - value * 54
+      svgNode('line', { x1: 16, x2: 304, y1: y, y2: y, class: value === 1 ? 'daw-automation-unity' : 'daw-automation-grid' })
+      svgNode('text', { x: 20, y: y - 3 }, `${value * 100}%`)
+    }
+    if (item) {
+      const coordinates = points.map(point => [16 + point.timeSeconds / item.clip.durationSeconds * 288, 124 - point.value * 54])
+      svgNode('polyline', { points: coordinates.map(point => point.join(',')).join(' '), class: 'daw-automation-line' })
+      coordinates.forEach(([cx, cy], index) => svgNode('circle', { cx, cy, r: 7, class: 'daw-automation-dot', 'data-automation-index': index, 'data-selected': index === automationIndex }))
+    }
+    el('automation-point').replaceChildren(...points.map((point, index) => {
+      const label = index === 0 ? '起點' : index === points.length - 1 ? '終點' : `中間點 ${index}`
+      const option = node('option', '', `${label} · ${Number(point.timeSeconds.toFixed(4))} 秒 · ${Number((point.value * 100).toFixed(2))}%`)
+      option.value = String(index); return option
+    }))
+    el('automation-point').value = String(automationIndex)
+    const point = points[automationIndex], endpoint = automationIndex === 0 || automationIndex === points.length - 1
+    el('automation-time').value = point ? String(point.timeSeconds) : ''
+    el('automation-time').max = String(item?.clip.durationSeconds || 0)
+    el('automation-time').readOnly = endpoint
+    el('automation-value').value = point ? String(point.value * 100) : ''
+    button('automation-remove').disabled = !item || endpoint
+    button('automation-reset').disabled = !item?.clip.volumeAutomation
+    button('automation-add').disabled = !item || points.length >= DAW_LIMITS.maxAutomationPoints
+    el('automation-summary').textContent = item ? `${item.clip.volumeAutomation ? '已套用' : '尚無變化，整句 100%'} · ${points.length}/${DAW_LIMITS.maxAutomationPoints} 點 · 0–${Number(item.clip.durationSeconds.toFixed(4))} 秒` : '尚未選取片段'
+    graph.setAttribute('aria-label', item ? `片段音量曲線，${points.length} 點，範圍 0 至 200%，可用下方數字編輯` : '尚未選取片段的音量曲線')
+  }
+  function addAutomationPoint() {
+    const item = selected(); if (!item) return
+    const points = getClipVolumeAutomation(item.clip)
+    let widest = 1
+    for (let index = 2; index < points.length; index++) {
+      if (points[index].timeSeconds - points[index - 1].timeSeconds > points[widest].timeSeconds - points[widest - 1].timeSeconds) widest = index
+    }
+    const timeSeconds = (points[widest - 1].timeSeconds + points[widest].timeSeconds) / 2
+    clipCommand('clip.automation.add', { point: { timeSeconds, value: envelopeValueAt(points, timeSeconds) } }, '已新增音量點；調整數字後按「套用音量點」')
+    automationIndex = widest; renderAutomation(); el('automation-value').focus({ preventScroll: true })
+  }
+  function applyAutomationPoint() {
+    if (!el('automation-time').value || !el('automation-value').value) throw new Error('請填入音量點的時間與音量；原設定仍保留')
+    clipCommand('clip.automation.update', { index: automationIndex, patch: { timeSeconds: Number(el('automation-time').value), value: Number(el('automation-value').value) / 100 } }, '已套用句內音量；試聽與匯出都會使用這條曲線')
   }
   function waveform(clip) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -388,6 +445,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('audio-files').value = ''; el('project-file').value = ''; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
+    automationDrag = null
     selection = { trackId, clipId }; const item = selected(); if (!item) { selection = null; return }
     stop(); cursor = item.clip.atSeconds; renderInspector(); paintPlayhead()
   }
@@ -402,6 +460,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     cancel: () => cancelJob(), undo: () => changeHistory('undo'), redo: () => changeHistory('redo'),
     'add-track': () => command({ type: 'track.add', track: { name: `音軌 ${project.tracks.length + 1}` } }, '已新增空白音軌'),
     earlier: () => nudge(-1), later: () => nudge(1),
+    'automation-add': addAutomationPoint, 'automation-apply': applyAutomationPoint,
+    'automation-remove': () => clipCommand('clip.automation.remove', { index: automationIndex }, '已刪除中間音量點；相鄰點會平滑連接'),
+    'automation-reset': () => clipCommand('clip.automation.reset', {}, '已重設句內音量為 100%；片段音量與淡入淡出仍保留'),
     move: () => { const clipId = selection?.clipId, toTrackId = el('clip-track').value; clipCommand('clip.move', { atSeconds: snap(Number(el('clip-at').value)), toTrackId }, '已套用片段位置'); selection = { trackId: toTrackId, clipId }; renderInspector() },
     trim: () => clipCommand('clip.trim', { startSeconds: Number(el('trim-start').value), endSeconds: Number(el('trim-end').value) }, '已裁切片段，原檔仍保留'),
     split: () => clipCommand('clip.split', { atSeconds: currentTime() }, '已在播放位置切開片段'),
@@ -435,6 +496,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     else if (id === 'daw-sample-rate') command({ type: 'project.update', patch: { sampleRate: Number(target.value) } }, '混音取樣率已更新，請重新產生混音')
     else if (id === 'daw-master-gain') command({ type: 'project.update', patch: { masterGainDb: Number(target.value) } }, '總混音音量已更新，試聽與輸出都會套用')
     else if (id === 'daw-clip-name') clipCommand('clip.update', { patch: { name: target.value.trim() } }, '已更新片段名稱')
+    else if (id === 'daw-automation-point') { automationDrag = null; automationIndex = Number(target.value); renderAutomation() }
     else if (id === 'daw-clip-gain') clipCommand('clip.update', { patch: { gainDb: Number(target.value) } }, '已更新片段音量')
     else if (['daw-zoom', 'daw-grid', 'daw-snap'].includes(id)) { renderTracks(); paintPlayhead() }
     else if (id === 'daw-loop') { stop(); refreshControls() }
@@ -442,6 +504,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }))
   listen(el('seek'), 'input', () => { const next = Number(el('seek').value); stop(); cursor = next; paintPlayhead(); refreshControls() })
   listen(root, 'keydown', event => {
+    if (event.key === 'Escape' && automationDrag) { automationDrag = null; renderAutomation(); return }
     if (event.defaultPrevented || event.isComposing || event.target.matches('input,textarea,select,[contenteditable=true]')) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(event.shiftKey ? 'redo' : 'undo') }
@@ -454,18 +517,51 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     if (clip && clip.dataset.clipId !== selection?.clipId) choose(clip.dataset.trackId, clip.dataset.clipId)
   })
   listen(root, 'pointerdown', event => {
+    const point = event.target.closest('[data-automation-index]')
+    if (point) {
+      if ((event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
+      const item = selected(); if (!item) return
+      event.preventDefault(); automationIndex = Number(point.dataset.automationIndex)
+      automationDrag = { revision: project.revision, trackId: item.track.id, clipId: item.clip.id, index: automationIndex, pointerId: event.pointerId, points: getClipVolumeAutomation(item.clip), changed: false }
+      el('automation-graph').setPointerCapture?.(event.pointerId)
+      renderAutomation(); return
+    }
     const clip = event.target.closest('.daw-clip')
     if (!clip || (event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
     choose(clip.dataset.trackId, clip.dataset.clipId)
     drag = { trackId: clip.dataset.trackId, clipId: clip.dataset.clipId, x: event.clientX, at: selected().clip.atSeconds, moved: false }
   })
   listen(window, 'pointermove', event => {
+    if (automationDrag) {
+      if (automationDrag.pointerId !== event.pointerId) return
+      const item = selected(), box = el('automation-graph').getBoundingClientRect()
+      if (!item || !box.width || !box.height || project.revision !== automationDrag.revision) { automationDrag = null; renderAutomation(); return }
+      const points = automationDrag.points, index = automationDrag.index
+      let timeSeconds = points[index].timeSeconds
+      if (index > 0 && index < points.length - 1) {
+        const spacing = Math.min(1 / project.assets.find(asset => asset.id === item.clip.assetId).sampleRate, (points[index + 1].timeSeconds - points[index - 1].timeSeconds) / 4)
+        timeSeconds = clamp(((event.clientX - box.left) / box.width * 320 - 16) / 288 * item.clip.durationSeconds, points[index - 1].timeSeconds + spacing, points[index + 1].timeSeconds - spacing)
+      }
+      points[index] = { timeSeconds, value: clamp((124 - (event.clientY - box.top) / box.height * 140) / 54, 0, DAW_LIMITS.maxAutomationGain) }
+      automationDrag.changed = true; renderAutomation(points); return
+    }
     if (!drag || Math.abs(event.clientX - drag.x) < 4 && !drag.moved) return
     drag.moved = true
     const clip = [...root.querySelectorAll('.daw-clip')].find(c => c.dataset.clipId === drag.clipId)
     if (clip) clip.style.left = `${snap(drag.at + (event.clientX - drag.x) / Number(el('zoom').value)) * Number(el('zoom').value)}px`
   })
   listen(window, 'pointerup', event => {
+    if (automationDrag) {
+      if (automationDrag.pointerId !== event.pointerId) return
+      const previous = automationDrag; automationDrag = null
+      if (previous.changed && previous.revision === project.revision && previous.clipId === selected()?.clip.id) {
+        run(() => {
+          if (previous.revision !== project.revision || previous.clipId !== selected()?.clip.id) { renderAutomation(); return }
+          command({ type: 'clip.automation.update', trackId: previous.trackId, clipId: previous.clipId, index: previous.index, patch: previous.points[previous.index] }, '已調整句內音量；這次拖曳可一次復原')
+        })
+      } else renderAutomation()
+      return
+    }
     if (!drag) return
     const previous = drag; drag = null
     if (!previous.moved) return
@@ -475,11 +571,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       selection = { trackId: target?.dataset.trackId || previous.trackId, clipId: previous.clipId }; renderInspector()
     }).finally(() => { renderTracks(); paintPlayhead() })
   })
-  listen(window, 'pointercancel', () => { drag = null; renderTracks(); paintPlayhead() })
+  listen(window, 'pointercancel', () => { drag = null; automationDrag = null; renderAutomation(); renderTracks(); paintPlayhead() })
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return

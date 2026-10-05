@@ -4,6 +4,7 @@ export const DAW_LIMITS = Object.freeze({
   maxDurationSeconds: 600, maxTracks: 16, maxClips: 256, maxAssets: 64,
   maxDecodedBytes: 256 * 1024 * 1024, maxRenderBytes: 256 * 1024 * 1024,
   maxCombinedBytes: 512 * 1024 * 1024, maxEnvelopePoints: 8,
+  maxAutomationPoints: 32, maxAutomationGain: 2,
 })
 const OUTPUT_RATES = [44100, 48000, 96000]
 const EPSILON = 1e-9
@@ -96,7 +97,7 @@ export function validateProject(project) {
     clipCount += track.clips.length
     if (clipCount > DAW_LIMITS.maxClips) fail('project exceeds 256 clips')
     for (const clip of track.clips) {
-      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope'], 'clip')
+      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope', 'volumeAutomation'], 'clip')
       unique(clip.id, clipIds, 'clip ID'); text(clip.name, 'clip name')
       const asset = assets.get(clip.assetId)
       if (!asset) fail(`clip ${clip.id} has missing asset ${clip.assetId}`)
@@ -109,6 +110,19 @@ export function validateProject(project) {
       number(clip.fadeInSeconds, 'fade in', 0, clip.durationSeconds)
       number(clip.fadeOutSeconds, 'fade out', 0, clip.durationSeconds)
       if (clip.fadeInSeconds + clip.fadeOutSeconds > clip.durationSeconds + EPSILON) fail('clip fades overlap; shorten a fade')
+      if (clip.volumeAutomation !== undefined) {
+        array(clip.volumeAutomation, 'volume automation', DAW_LIMITS.maxAutomationPoints)
+        if (clip.volumeAutomation.length < 2) fail('volume automation needs start and end points')
+        let previous = -1
+        for (const point of clip.volumeAutomation) {
+          onlyKeys(point, ['timeSeconds', 'value'], 'volume automation point')
+          number(point.timeSeconds, 'automation time', 0, clip.durationSeconds)
+          number(point.value, 'automation gain', 0, DAW_LIMITS.maxAutomationGain)
+          if (point.timeSeconds <= previous) fail('volume automation points must be strictly ordered')
+          previous = point.timeSeconds
+        }
+        if (clip.volumeAutomation[0].timeSeconds !== 0 || previous !== clip.durationSeconds) fail('volume automation must span the clip exactly')
+      }
       if (clip.gainEnvelope !== undefined) {
         array(clip.gainEnvelope, 'gain envelope', DAW_LIMITS.maxEnvelopePoints)
         if (clip.gainEnvelope.length < 2) fail('gain envelope needs start and end points')
@@ -147,14 +161,22 @@ export function envelopeValueAt(points, seconds) {
   }
   return points.at(-1).value
 }
-function sliceClip(clip, start, end) {
-  const durationSeconds = end - start, points = getClipEnvelope(clip)
-  const gainEnvelope = [{ timeSeconds: 0, value: envelopeValueAt(points, start) },
+/** A separate linear-amplitude multiplier; absent automation is exactly unity. */
+export function getClipVolumeAutomation(clip) {
+  return clip.volumeAutomation ? clone(clip.volumeAutomation) : [{ timeSeconds: 0, value: 1 }, { timeSeconds: clip.durationSeconds, value: 1 }]
+}
+function sliceEnvelope(points, start, end) {
+  return [{ timeSeconds: 0, value: envelopeValueAt(points, start) },
     ...points.filter(point => point.timeSeconds > start && point.timeSeconds < end).map(point => ({ ...point, timeSeconds: point.timeSeconds - start })),
-    { timeSeconds: durationSeconds, value: envelopeValueAt(points, end) }]
+    { timeSeconds: end - start, value: envelopeValueAt(points, end) }]
+}
+function sliceClip(clip, start, end) {
+  const durationSeconds = end - start
   return { ...clip, atSeconds: clip.atSeconds + start, offsetSeconds: clip.offsetSeconds + start,
     durationSeconds, fadeInSeconds: Math.min(durationSeconds, Math.max(0, clip.fadeInSeconds - start)),
-    fadeOutSeconds: Math.min(durationSeconds, Math.max(0, end - (clip.durationSeconds - clip.fadeOutSeconds))), gainEnvelope }
+    fadeOutSeconds: Math.min(durationSeconds, Math.max(0, end - (clip.durationSeconds - clip.fadeOutSeconds))),
+    gainEnvelope: sliceEnvelope(getClipEnvelope(clip), start, end),
+    ...(clip.volumeAutomation ? { volumeAutomation: sliceEnvelope(clip.volumeAutomation, start, end) } : {}) }
 }
 function makeTrack(input = {}) {
   return { id: generateId('track'), name: 'Audio track', gainDb: 0, pan: 0, mute: false, solo: false, clips: [], ...input }
@@ -232,6 +254,37 @@ export function applyCommand(project, command) {
       number(command.startSeconds, 'trim start', clip.atSeconds, clip.atSeconds + clip.durationSeconds)
       number(command.endSeconds, 'trim end', command.startSeconds, clip.atSeconds + clip.durationSeconds)
       track.clips.splice(track.clips.indexOf(clip), 1, sliceClip(clip, command.startSeconds - clip.atSeconds, command.endSeconds - clip.atSeconds)); break
+    }
+    case 'clip.automation.add': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      onlyKeys(command.point, ['timeSeconds', 'value'], 'volume automation point')
+      // Validate before cloning: JSON would turn NaN/Infinity into null.
+      number(command.point.timeSeconds, 'automation time', 0, clip.durationSeconds)
+      number(command.point.value, 'automation gain', 0, DAW_LIMITS.maxAutomationGain)
+      const points = getClipVolumeAutomation(clip)
+      points.push({ ...command.point }); points.sort((a, b) => a.timeSeconds - b.timeSeconds)
+      clip.volumeAutomation = points
+      break
+    }
+    case 'clip.automation.update': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const points = getClipVolumeAutomation(clip)
+      integer(command.index, 'automation point index', 0, points.length - 1)
+      patch(points[command.index], command.patch, ['timeSeconds', 'value'], 'volume automation point patch')
+      // Keep point identity and endpoint positions stable. Reordering is an error.
+      clip.volumeAutomation = points
+      break
+    }
+    case 'clip.automation.remove': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const points = getClipVolumeAutomation(clip)
+      integer(command.index, 'interior automation point index', 1, points.length - 2)
+      points.splice(command.index, 1); clip.volumeAutomation = points
+      break
+    }
+    case 'clip.automation.reset': {
+      delete clipById(trackById(next, command.trackId), command.clipId).volumeAutomation
+      break
     }
     case 'clip.update': {
       const clip = clipById(trackById(next, command.trackId), command.clipId)
