@@ -1,10 +1,11 @@
 // Tab navigation between Master / Stems / Anti-theft modes
 
-const MODES = ['master', 'stems', 'antitheft']
+const MODES = ['master', 'stems', 'antitheft', 'lyrics']
 
 export function initModeNav() {
   const tabs = document.querySelectorAll('.mode-tab[data-mode]')
   const panels = {
+    lyrics:     document.getElementById('mode-lyrics'),
     master:     document.getElementById('mode-master'),
     stems:      document.getElementById('mode-stems'),
     antitheft:  document.getElementById('mode-antitheft'),
@@ -25,7 +26,7 @@ export function initModeNav() {
     })
 
     // Anti-theft is full-width (no chain panel)
-    if (mode === 'antitheft') {
+    if (mode === 'antitheft' || mode === 'lyrics') {
       app.classList.add('mode-antitheft')
       chainPanel?.setAttribute('aria-hidden', 'true')
     } else {
@@ -33,6 +34,8 @@ export function initModeNav() {
       chainPanel?.removeAttribute('aria-hidden')
     }
 
+    app.classList.toggle('mode-lyrics', mode === 'lyrics')
+    document.dispatchEvent(new CustomEvent('wf:mode-change', { detail: { mode } }))
     app.classList.toggle('mode-stems', mode === 'stems')
     if (mode === 'stems') chainPanel?.setAttribute('aria-hidden', 'true')
 

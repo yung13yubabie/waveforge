@@ -1,0 +1,174 @@
+{
+  "generatedFrom": "Original synthetic fixture generators; no user audio",
+  "rows": [
+    {
+      "label": "baseline",
+      "keyFixture": "3s silence + 27s C-major",
+      "keys": [
+        {
+          "sampleRate": 44100,
+          "result": {
+            "key": null,
+            "scale": null,
+            "confidence": 0
+          }
+        },
+        {
+          "sampleRate": 48000,
+          "result": {
+            "key": null,
+            "scale": null,
+            "confidence": 0
+          }
+        },
+        {
+          "sampleRate": 96000,
+          "result": {
+            "key": null,
+            "scale": null,
+            "confidence": 0
+          }
+        }
+      ],
+      "terminalBefore": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -60.13888731517575,
+        "clipped": false
+      },
+      "terminalAfter": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -60.13888731517575,
+        "clipped": false
+      },
+      "ispAfter": {
+        "samplePeakDb": -3.706775529228401,
+        "truePeakDb": -0.717819541634521,
+        "clipped": false
+      },
+      "referenceCallReproduction": {
+        "sourceRate": 96000,
+        "analyzedAsRate": 48000,
+        "bands": [
+          32,
+          64,
+          125,
+          250,
+          500,
+          1000,
+          2000,
+          4000,
+          8000,
+          16000
+        ],
+        "curveDb": [
+          0,
+          0,
+          0,
+          0,
+          -9.965043920844312,
+          11.971284812364527,
+          -2.0062408915202123,
+          0,
+          0,
+          0
+        ],
+        "scope": "Recreated source-traced DSP calls, not browser integration"
+      }
+    },
+    {
+      "label": "candidate",
+      "keyFixture": "3s silence + 27s C-major",
+      "keys": [
+        {
+          "sampleRate": 44100,
+          "result": {
+            "key": "C",
+            "scale": "大調",
+            "confidence": 0.8444585891814003,
+            "analysis": {
+              "startSeconds": 0,
+              "endSeconds": 30,
+              "windowCount": 8,
+              "windowDurationSeconds": 0.09287981859410431,
+              "sampledSeconds": 0.7430385487528345
+            }
+          }
+        },
+        {
+          "sampleRate": 48000,
+          "result": {
+            "key": "C",
+            "scale": "大調",
+            "confidence": 0.840363257262251,
+            "analysis": {
+              "startSeconds": 0,
+              "endSeconds": 30,
+              "windowCount": 8,
+              "windowDurationSeconds": 0.08533333333333333,
+              "sampledSeconds": 0.6826666666666666
+            }
+          }
+        },
+        {
+          "sampleRate": 96000,
+          "result": {
+            "key": "C",
+            "scale": "大調",
+            "confidence": 0.8403707658764386,
+            "analysis": {
+              "startSeconds": 0,
+              "endSeconds": 30,
+              "windowCount": 8,
+              "windowDurationSeconds": 0.08533333333333333,
+              "sampledSeconds": 0.6826666666666666
+            }
+          }
+        }
+      ],
+      "terminalBefore": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -0.008690123541032074,
+        "clipped": false
+      },
+      "terminalAfter": {
+        "samplePeakDb": -1.0000002900227403,
+        "truePeakDb": -1.0000002900227403,
+        "clipped": false
+      },
+      "ispAfter": {
+        "samplePeakDb": -3.9719402990787884,
+        "truePeakDb": -1.0000084349542755,
+        "clipped": false
+      },
+      "referenceCallReproduction": {
+        "sourceRate": 96000,
+        "analyzedAsRate": 96000,
+        "bands": [
+          32,
+          64,
+          125,
+          250,
+          500,
+          1000,
+          2000,
+          4000,
+          8000,
+          16000
+        ],
+        "curveDb": [
+          0,
+          0,
+          0,
+          0,
+          0.020015473892053492,
+          0.0081169081697956,
+          -0.06824707361043814,
+          0.040114691548588155,
+          0,
+          0
+        ],
+        "scope": "Recreated source-traced DSP calls, not browser integration"
+      }
+    }
+  ]
+}

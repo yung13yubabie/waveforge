@@ -1,7 +1,10 @@
+import { scanTruePeak } from './true-peak.js'
+
 // Offline mastering measurements for the export report: integrated LUFS,
 // true peak (4× oversampled), sample peak, clip detection.
-// Mirrors the DSP in lufs-worklet.js so the export receipt matches the live
-// meter, but runs synchronously over a finished AudioBuffer.
+// LUFS uses the same weighting/gating as lufs-worklet.js. Offline peak estimation
+// also flushes EOF and includes a sample-peak floor; do not claim exact live-meter
+// parity or independent certification from this finite-buffer implementation.
 
 // ── K-weighting biquad coefficients (ITU-R BS.1770-4) ───────
 function kWeightCoeffs(sr) {
@@ -80,54 +83,12 @@ export function measureIntegratedLUFS(channels, sr) {
   return meanMs <= 1e-10 ? -Infinity : -0.691 + 10 * Math.log10(meanMs)
 }
 
-// ── True peak (4× oversampled) — same polyphase bank as the worklet ──
-function polyphase(taps, phases) {
-  const center = (taps - 1) / 2
-  const banks = []
-  for (let p = 0; p < phases; p++) {
-    const frac = p / phases
-    const h = new Float64Array(taps)
-    let sum = 0
-    for (let k = 0; k < taps; k++) {
-      const x = k - center - frac
-      const s = Math.abs(x) < 1e-9 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x)
-      const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + 0.5)) / taps)
-      h[k] = s * w
-      sum += h[k]
-    }
-    for (let k = 0; k < taps; k++) h[k] /= sum
-    banks.push(h)
-  }
-  return banks
-}
-
-// Returns { samplePeakDb, truePeakDb, clipped } for the buffer.
+// True peak is a 4x finite-buffer estimate including sample peaks and FIR tails.
 export function measurePeaks(channels) {
-  const taps = 12
-  const banks = polyphase(taps, 4)
-  let samplePeak = 0, truePeak = 0
-  for (const x of channels) {
-    const dl = new Float64Array(taps)
-    for (let n = 0; n < x.length; n++) {
-      const a = Math.abs(x[n])
-      if (a > samplePeak) samplePeak = a
-      for (let k = taps - 1; k > 0; k--) dl[k] = dl[k - 1]
-      dl[0] = x[n]
-      for (let p = 0; p < banks.length; p++) {
-        const h = banks[p]
-        let acc = 0
-        for (let k = 0; k < taps; k++) acc += h[k] * dl[k]
-        const av = Math.abs(acc)
-        if (av > truePeak) truePeak = av
-      }
-    }
-  }
+  const { samplePeak, peak } = scanTruePeak(channels)
   const toDb = v => (v <= 1e-7 ? -Infinity : 20 * Math.log10(v))
-  return {
-    samplePeakDb: toDb(samplePeak),
-    truePeakDb: toDb(truePeak),
-    clipped: samplePeak >= 0.9999,   // 16/24-bit full scale → clip on re-quantise
-  }
+  return { samplePeakDb: toDb(samplePeak), truePeakDb: toDb(peak),
+    clipped: samplePeak >= 0.9999 }
 }
 
 // Stereo phase correlation: +1 = mono/in-phase, 0 = uncorrelated (wide),

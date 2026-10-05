@@ -1,0 +1,58 @@
+name: Verify pull request
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Unit, syntax and production build
+        run: |
+          npm run lint
+          npm run check:capabilities
+          npm test
+          python -m unittest discover -s tests/hf_space
+          npm run build
+          mkdir -p artifacts/audio-trust
+          node scripts/test-audio-trust.mjs > artifacts/audio-trust/synthetic-results.json
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+      - name: Browser and built-site regressions
+        run: |
+          npm run test:e2e -- --workers=1
+          npm run test:account
+          npm run test:production
+      - name: Save synthetic test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-audio-and-browser-tests
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            artifacts/audio-trust/
+            test-results/
+            test-results-account/
+            test-results-production/
+
+# No secrets, Pages permission, deploy job or pull_request_target trigger.
+# Fixtures and test accounts are synthetic; production accounts/audio are not used.

@@ -1,3 +1,4 @@
+import { initLyricsPanel } from './lyrics/panel.js'
 import { initAlbumPanel } from './ui/album-panel.js'
 import { renderFinalMaster } from './audio/final-render.js'
 import { assertIntegerHeadroom } from './audio/export-safety.js'
@@ -157,7 +158,7 @@ function updateVinylUI(duration) {
   }
 
   const messages = []
-  if (duration > limits.max)    messages.push({ cls: 'error', text: '✕ 超過每面極限時長，刻版必定失真' })
+  if (duration > limits.max)    messages.push({ cls: 'error', text: '⚠ 超過此格式的參考時長，請由刻版廠評估可行性' })
   else if (duration > limits.ideal) messages.push({ cls: 'warn', text: '⚠ 超過理想時長，建議縮短或降低音量' })
   else                           messages.push({ cls: 'ok',   text: '✓ 時長在允許範圍內' })
 
@@ -242,6 +243,20 @@ async function boot() {
     }
   })
 
+  const lyricsController = initLyricsPanel({ engine, getCurrentFile: () => currentFile,
+    playRange: async (start, end, loop) => {
+      if (isLoadingFile) throw new Error('音檔正在載入')
+      document.dispatchEvent(new Event('wf:stop-stem-preview'))
+      document.getElementById('final-preview-audio')?.pause()
+      document.getElementById('original-preview-audio')?.pause()
+      await engine.playRange(start, end, loop); updatePlayBtn(engine.isPlaying)
+    },
+    stopPlayback: () => { engine.stop(); engine.clearPlaybackRange(); ws?.pause(); updatePlayBtn(false) },
+  })
+  document.addEventListener('wf:mode-change', () => {
+    if (engine.playbackRange) { engine.stop(); engine.clearPlaybackRange(); updatePlayBtn(false) }
+  })
+
   // ── File loading ────────────────────────────────────────
   let isLoadingFile = false
   async function loadFile(file, { preserveStems = false } = {}) {
@@ -257,9 +272,11 @@ async function boot() {
     const disabled = buttons.map(button => button.disabled)
     buttons.forEach(button => { button.disabled = true })
     if (!preserveStems) stemController.sourceLoading(file)
+    lyricsController.sourceLoading()
     try {
       await doLoadFile(file, preserveStems)
       clearPreview()
+      lyricsController.sourceAccepted(file, engine.buffer)
       return true
     } catch (err) {
       // Preserve the accepted session on failed replacement. A failed waveform
@@ -279,6 +296,7 @@ async function boot() {
       document.getElementById('upload-text-wrap').replaceChildren(...previous.upload)
       buttons.forEach((button, i) => { button.disabled = disabled[i] })
       if (!preserveStems) stemController.sourceFailed(err)
+      lyricsController.sourceFailed(previous.file, previous.buffer)
       setStatus(`讀取失敗：${err.message}${previous.file ? `；已保留 ${previous.file.name}` : ''}`, false)
       return false
     } finally {
@@ -474,8 +492,9 @@ async function boot() {
         for (const mod of ['dyneq', 'deesser']) {
           const card = document.getElementById(`mod-${mod}`)
           card?.classList.add('unimplemented')
-          card?.querySelector('input[type="checkbox"]')?.setAttribute('disabled', '')
-          card?.setAttribute('data-tooltip', 'AudioWorklet 載入失敗 — 此模組暫不可用')
+          // Keep the bypass checkbox operable so a recalled enabled preset can be rescued.
+          card?.querySelectorAll('.knob-wrap input, .knob-wrap button').forEach(input => { input.disabled = true })
+          card?.setAttribute('data-tooltip', '此效果器目前無法使用；取消勾選後可繼續匯出，也可重開頁面再試')
         }
         setStatus('部分模組停用（AudioWorklet 載入失敗）', false)
       }
@@ -521,6 +540,7 @@ async function boot() {
     engine.sourceAsset = null
     engine.duration = 0
     currentFile = null
+    lyricsController.clear()
     clearPreview()
     disableTrimDrag?.()
     disableTrimDrag = null
@@ -729,6 +749,10 @@ async function boot() {
     // Initial visual must match the checkbox state (unchecked = bypassed look)
     cb.closest('.module-card')?.classList.toggle('bypassed', !cb.checked)
     cb.addEventListener('change', () => {
+      if (engine.ctx && !engine.dynamicsAvailable && ['dyneq', 'deesser'].includes(id) && cb.checked) {
+        cb.checked = false
+        setStatus('此效果器未載入，已維持旁路；請重新載入頁面重試', false)
+      }
       const bypassed = !cb.checked
       const card = cb.closest('.module-card')
       card?.classList.toggle('bypassed', bypassed)
@@ -855,6 +879,7 @@ async function boot() {
 
   // Keyboard: Space → play/pause; Ctrl/Cmd+Z undo; Ctrl/Cmd+Shift+Z (or Ctrl+Y) redo
   document.addEventListener('keydown', e => {
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.target.closest('#mode-lyrics') || e.target.matches('input, textarea, select, [contenteditable="true"]')) return
     const mod = e.ctrlKey || e.metaKey
     if (mod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault()
@@ -1133,9 +1158,10 @@ async function boot() {
       const refCh = []
       for (let c = 0; c < refBuf.numberOfChannels; c++) refCh.push(refBuf.getChannelData(c))
 
-      const sr = engine.ctx.sampleRate
-      const srcBands = averageSpectrum(srcCh, sr, bandFreqs)
-      const refBands = averageSpectrum(refCh, sr, bandFreqs)
+      const srcRate = engine.buffer.sampleRate
+      const refRate = refBuf.sampleRate
+      const srcBands = averageSpectrum(srcCh, srcRate, bandFreqs)
+      const refBands = averageSpectrum(refCh, refRate, bandFreqs)
       // averageSpectrum returns null for clips shorter than one FFT frame
       // (~85ms) — without this guard the match silently produces a flat curve.
       if (!srcBands || !refBands) {
@@ -1148,10 +1174,11 @@ async function boot() {
       const eqCb = document.getElementById('eq-enabled')
       if (eqCb && !eqCb.checked) { eqCb.checked = true; eqCb.dispatchEvent(new Event('change')) }
       curve.forEach((g, i) => { engine.setEQBand(i, g); knobs[`eq-${i}`]?.setValue(g, true) })
+      recordEditNow()
 
       // Loudness delta (informational — match tone here, loudness via limiter/preset)
-      const srcLufs = measureIntegratedLUFS(srcCh, sr)
-      const refLufs = measureIntegratedLUFS(refCh, sr)
+      const srcLufs = measureIntegratedLUFS(srcCh, srcRate)
+      const refLufs = measureIntegratedLUFS(refCh, refRate)
       const delta = (Number.isFinite(srcLufs) && Number.isFinite(refLufs)) ? (refLufs - srcLufs) : null
       const peak = Math.max(...curve.map(Math.abs)).toFixed(1)
       setRefStatus(
@@ -1203,7 +1230,7 @@ async function boot() {
       const confEl = document.getElementById(`conf-${id}`)
       if (confEl && confPct != null) {
         confEl.style.width = `${Math.round(confPct)}%`
-        confEl.title = `信心度 ${Math.round(confPct)}%`
+        confEl.title = `分析相符程度 ${Math.round(confPct)}%（非正確率保證）`
       }
     }
 
@@ -1240,11 +1267,12 @@ async function boot() {
       const confEl = document.getElementById('conf-val-genre')
       if (confEl) { confEl.style.width = '0%'; confEl.title = '需要後端 AI 分析' }
 
-      // Honest about scope: detectBPM samples the first 45 s, detectKey the first 30 s
+      // Key is a sparse estimate across the indicated range, not note-by-note analysis.
+      const keyScope = keyResult.analysis.windowCount
+        ? `前 ${keyResult.analysis.endSeconds.toFixed(1)} 秒內 ${keyResult.analysis.windowCount} 段抽樣，需聽辨確認`
+        : '片段太短，未分析'
       setStatus(
-        bpmResult.bpm
-          ? `${bpmResult.bpm} BPM（前 45 秒）· ${keyResult.key ?? '?'} ${keyResult.scale ?? ''}（前 30 秒）· 曲風需後端`
-          : '曲風需後端 AI 分析',
+        `${bpmResult.bpm ?? '未知'} BPM（前 ${Math.min(engine.duration, 45).toFixed(1)} 秒）· ${keyResult.key ?? '?'} ${keyResult.scale ?? ''}（${keyScope}）· 曲風需後端`,
         true
       )
 
@@ -1274,7 +1302,20 @@ async function boot() {
   const finalAudio = document.getElementById('final-preview-audio')
   const originalAudio = document.getElementById('original-preview-audio')
   let previewUrls = []
+  let previewRecipeKey = null
+  function renderRecipeKey() {
+    const { engine: ignoredEngine, ...options } = captureRenderOptions()
+    return JSON.stringify({ ...options, trimRange, previewLength: document.getElementById('final-preview-length').value })
+  }
+  const previewWatcher = setInterval(() => {
+    if (previewRecipeKey && renderRecipeKey() !== previewRecipeKey) {
+      clearPreview()
+      document.getElementById('final-preview-status').textContent = '預覽已過期：處理、選區或輸出設定已變更，請重新產生。'
+    }
+  }, 200)
+  window.addEventListener('pagehide', event => { if (!event.persisted) clearInterval(previewWatcher) })
   function clearPreview() {
+    previewRecipeKey = null
     const link = document.getElementById('final-preview-download')
     link.hidden = true; link.removeAttribute('href')
     for (const audio of [finalAudio, originalAudio]) {
@@ -1301,12 +1342,14 @@ async function boot() {
     const mode = document.getElementById('final-preview-length').value
     if (mode === 'selection' && !selection) { status.textContent = '請先在波形選取範圍'; return }
     const options = captureRenderOptions()
+    const recipeKey = renderRecipeKey()
     const sourceBuffer = selection ? trimBuffer(source, selection.start, selection.end) : source
     btn.disabled = true; clearPreview()
     status.textContent = '正在渲染完整輸出鏈，再擷取預覽片段…'
     try {
       const result = await renderFinalMaster({ ...options, sourceBuffer })
       if (engine.buffer !== source) throw new Error('音檔已更換，請重新預覽')
+      if (renderRecipeKey() !== recipeKey) throw new Error('渲染期間設定已變更，請重新預覽')
       const duration = mode === 'selection' ? result.buffer.duration : Math.min(Number(mode), result.buffer.duration)
       const count = Math.round(duration * options.sampleRate)
       const channels = result.channels.map(ch => ch.slice(0, count))
@@ -1318,6 +1361,7 @@ async function boot() {
       assertIntegerHeadroom(rawChannels, options.allowHardClip)
       const originalBlob = new Blob([encodeWAV(rawChannels, raw.sampleRate, 24)], { type: 'audio/wav' })
       previewUrls = [URL.createObjectURL(finalBlob), URL.createObjectURL(originalBlob)]
+      previewRecipeKey = recipeKey
       finalAudio.src = previewUrls[0]; originalAudio.src = previewUrls[1]
       const link = document.getElementById('final-preview-download')
       link.href = previewUrls[0]; link.hidden = false
@@ -1331,8 +1375,8 @@ async function boot() {
   function showExportReport(report) {
     const lufsTxt = Number.isFinite(report.lufs) ? `${report.lufs.toFixed(1)} LUFS` : '— LUFS'
     const tpTxt   = Number.isFinite(report.truePeakDb) ? `${report.truePeakDb.toFixed(1)} dBTP` : '— dBTP'
-    const encoding = report.format === 'mp3' ? `MP3 ${report.kbps}kbps（編碼前量測）` : `WAV ${report.bitDepth}bit`
-    const parts = [`已輸出 ${encoding}/${report.sampleRate / 1000}kHz`, `整合 ${lufsTxt}`, `True Peak ${tpTxt}`,
+    const encoding = report.format === 'mp3' ? `MP3 ${report.kbps}kbps（編碼前量測）` : `WAV ${report.bitDepth}bit（量化前量測）`
+    const parts = [`已輸出 ${encoding}/${report.sampleRate / 1000}kHz`, `整合 ${lufsTxt}`, `True Peak（4× 估測）${tpTxt}`,
       `Sample Peak ${report.samplePeakDb.toFixed(1)} dBFS`, `${report.duration.toFixed(2)} 秒`,
       `削波 ${report.clipped ? '有' : '無'}`, `線性相位 ${report.linearPhase ? '開' : '關'}`,
       `True-Peak 限幅 ${report.truePeakLimiter ? '開' : '關'}`, `浮水印 ${report.watermark ? '有' : '無'}`,
@@ -1440,7 +1484,7 @@ async function boot() {
     }
   })
 
-  window.addEventListener('pagehide', () => clearInterval(timeLoopId))
+  window.addEventListener('pagehide', event => { if (!event.persisted) clearInterval(timeLoopId) })
 }
 
 // ── Entry point ──────────────────────────────────────────

@@ -7,6 +7,8 @@ import {
   fetchStemFiles,
   runDemucsJob,
   HF_MAX_FILE_BYTES,
+  HF_UPLOAD_TIMEOUT_MS,
+  HF_PREDICT_TIMEOUT_MS,
 } from '../../src/js/audio/hf-demucs.js'
 
 const ENDPOINT = 'https://space.hf.example'
@@ -40,7 +42,7 @@ function fileOfSize(bytes) {
   return Object.defineProperty(smallFile(), 'size', { value: bytes })
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('fetchWithTimeout', () => {
   it('passes the response through when the request completes', async () => {
@@ -48,12 +50,81 @@ describe('fetchWithTimeout', () => {
     await expect(fetchWithTimeout('https://x/y', {}, 1000, '測試')).resolves.toMatchObject({ ok: true })
   })
 
-  it('translates an abort into a labelled timeout message', async () => {
-    const abortErr = Object.assign(new Error('aborted'), { name: 'AbortError' })
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortErr))
-
-    await expect(fetchWithTimeout('https://x/y', {}, 5000, 'HF 上傳'))
+  it('aborts a stalled request with a labelled timeout message', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url, { signal }) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })))
+    const result = expect(fetchWithTimeout('https://x/y', {}, 5000, 'HF 上傳'))
       .rejects.toThrow('HF 上傳 逾時（5 秒），請稍後重試')
+    await vi.advanceTimersByTimeAsync(5000)
+    await result
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps the deadline active after headers until the body consumer settles', async () => {
+    vi.useFakeTimers()
+    let requestSignal
+    vi.stubGlobal('fetch', vi.fn(async (_url, { signal }) => {
+      requestSignal = signal
+      return res('headers arrived')
+    }))
+    const readBody = (_response, signal) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+    const result = expect(fetchWithTimeout('https://x/y', {}, 1000, '測試', readBody))
+      .rejects.toThrow('測試 逾時（1 秒），請稍後重試')
+    await vi.advanceTimersByTimeAsync(999)
+    expect(requestSignal.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await result
+    expect(requestSignal.aborted).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('preserves caller cancellation and removes its listener', async () => {
+    vi.useFakeTimers()
+    const caller = new AbortController()
+    const remove = vi.spyOn(caller.signal, 'removeEventListener')
+    vi.stubGlobal('fetch', vi.fn((_url, { signal }) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })))
+    const result = expect(fetchWithTimeout('https://x/y', { signal: caller.signal }, 1000, '測試'))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    caller.abort()
+    await result
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not start a request if its caller already cancelled it', async () => {
+    const caller = new AbortController()
+    caller.abort()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchWithTimeout('https://x/y', { signal: caller.signal }, 1000, '測試'))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('cancels an unread error response and clears its timer', async () => {
+    vi.useFakeTimers()
+    const cancel = vi.fn()
+    const body = new ReadableStream({ cancel })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res(body, { ok: false, status: 502 })))
+    await expect(fetchWithTimeout('https://x/y', {}, 1000, '測試', () => { throw new Error('HTTP 502') }))
+      .rejects.toThrow('HTTP 502')
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not wait indefinitely for an unread response cancellation hook', async () => {
+    vi.useFakeTimers()
+    const body = new ReadableStream({ cancel: () => new Promise(() => {}) })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res(body, { ok: false, status: 502 })))
+    await expect(fetchWithTimeout('https://x/y', {}, 1000, '測試', () => { throw new Error('HTTP 502') }))
+      .rejects.toThrow('HTTP 502')
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('rethrows a non-abort network error unchanged', async () => {
@@ -95,6 +166,51 @@ describe('readDemucsSSE', () => {
   it('rejects when the stream ends before a complete event', async () => {
     const stream = streamOf('event: generating\ndata: null\n')
     await expect(readDemucsSSE(stream)).rejects.toThrow('Demucs 串流意外結束，未收到完成事件')
+  })
+
+  it('cancels and unlocks the stream after complete even if the server keeps it open', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('event: complete\ndata: [1]\n')) },
+      cancel,
+    })
+    await expect(readDemucsSSE(body)).resolves.toEqual([1])
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(body.locked).toBe(false)
+  })
+
+  it('releases a completed stream without waiting for its cancellation hook', async () => {
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('event: complete\ndata: [1]\n')) },
+      cancel: () => new Promise(() => {}),
+    })
+    await expect(readDemucsSSE(body)).resolves.toEqual([1])
+    expect(body.locked).toBe(false)
+  })
+
+  it.each(['event: error\ndata: "failed"\n', 'event: complete\ndata: {invalid}\n'])(
+    'cancels and unlocks an open stream on parsing or server error: %s', async chunk => {
+      const cancel = vi.fn()
+      const body = new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode(chunk)) },
+        cancel,
+      })
+      await expect(readDemucsSSE(body)).rejects.toThrow()
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(body.locked).toBe(false)
+    })
+
+  it('cancels a stalled reader and releases the lock when aborted', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream({ cancel })
+    const caller = new AbortController()
+    const remove = vi.spyOn(caller.signal, 'removeEventListener')
+    const result = expect(readDemucsSSE(body, caller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    caller.abort()
+    await result
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(body.locked).toBe(false)
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 })
 
@@ -198,6 +314,51 @@ describe('runDemucsJob', () => {
 
   beforeEach(() => vi.stubGlobal('fetch', happyPath()))
 
+  it('times out a stalled SSE body after immediate headers and releases its reader', async () => {
+    vi.useFakeTimers()
+    const cancel = vi.fn()
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('event: heartbeat\ndata: null\n')) },
+      cancel,
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(res(['/tmp/in.wav']))
+      .mockResolvedValueOnce(res({ event_id: 'evt-1' }))
+      .mockResolvedValueOnce(res(body))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = expect(runDemucsJob(smallFile(), ENDPOINT))
+      .rejects.toThrow('Demucs 分軌 逾時（600 秒），請稍後重試')
+    await vi.advanceTimersByTimeAsync(HF_PREDICT_TIMEOUT_MS)
+    await result
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[2][1].signal.aborted).toBe(true)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(body.locked).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('propagates caller cancellation through SSE without downloading stems', async () => {
+    vi.useFakeTimers()
+    const caller = new AbortController()
+    const cancel = vi.fn()
+    const body = new ReadableStream({ cancel })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(res(['/tmp/in.wav']))
+      .mockResolvedValueOnce(res({ event_id: 'evt-1' }))
+      .mockResolvedValueOnce(res(body))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = expect(runDemucsJob(smallFile(), ENDPOINT, { signal: caller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    caller.abort()
+    await result
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(body.locked).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('rejects an oversized file before uploading anything', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -277,5 +438,62 @@ describe('runDemucsJob', () => {
       .mockResolvedValueOnce(res(streamOf('event: complete\ndata: {"oops":true}\n'))))
 
     await expect(runDemucsJob(smallFile(), ENDPOINT)).rejects.toThrow(/未回傳任何分軌資料/)
+  })
+})
+
+describe('response body deadlines', () => {
+  // No real songs or endpoints: mimic fetch aborting a pending body read.
+  const stalledResponse = (method, signal) => ({
+    ok: true,
+    status: 200,
+    [method]: () => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }),
+  })
+
+  it('bounds upload response JSON after its headers arrive', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async (_url, { signal }) => stalledResponse('json', signal)))
+    const result = expect(uploadToGradio(smallFile(), ENDPOINT)).rejects.toThrow('HF 上傳 逾時（60 秒）')
+    await vi.advanceTimersByTimeAsync(HF_UPLOAD_TIMEOUT_MS)
+    await result
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds submission response JSON after its headers arrive', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(res(['/tmp/in.wav']))
+      .mockImplementationOnce(async (_url, { signal }) => stalledResponse('json', signal)))
+    const result = expect(runDemucsJob(smallFile(), ENDPOINT)).rejects.toThrow('Demucs 任務送出 逾時（60 秒）')
+    await vi.advanceTimersByTimeAsync(HF_UPLOAD_TIMEOUT_MS)
+    await result
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['path', 'url'])('bounds a stem %s download body after its headers arrive', async route => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async (_url, { signal }) => stalledResponse('arrayBuffer', signal)))
+    const request = route === 'path' ? fetchGradioFile(ENDPOINT, '/tmp/vocals.wav')
+      : fetchStemFiles(ENDPOINT, [{ url: 'https://cdn.example/vocals.wav' }])
+    const result = expect(request).rejects.toThrow('分軌檔下載 逾時（60 秒）')
+    await vi.advanceTimersByTimeAsync(HF_UPLOAD_TIMEOUT_MS)
+    await result
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('stops downloading later stems when the caller aborts a pending body', async () => {
+    vi.useFakeTimers()
+    const caller = new AbortController()
+    const fetchMock = vi.fn(async (_url, { signal }) => stalledResponse('arrayBuffer', signal))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = expect(fetchStemFiles(ENDPOINT, [
+      { url: 'https://cdn.example/vocals.wav' }, { url: 'https://cdn.example/drums.wav' },
+    ], { signal: caller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(0)
+    caller.abort()
+    await result
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

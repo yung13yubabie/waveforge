@@ -1,0 +1,90 @@
+{
+  "status": "PASS",
+  "scope": "Synthetic PCM, 4x estimator; not codec or singing-model certification",
+  "results": [
+    {
+      "sampleRate": 44100,
+      "fixture": "terminal",
+      "before": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -0.008690123541032074,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -1.0000002900227403,
+        "truePeakDb": -1.0000002900227403,
+        "clipped": false
+      }
+    },
+    {
+      "sampleRate": 44100,
+      "fixture": "isp",
+      "before": {
+        "samplePeakDb": -0.08773949632283165,
+        "truePeakDb": 3.0182330862556697,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -3.9713154585900035,
+        "truePeakDb": -1.0000088828078042,
+        "clipped": false
+      }
+    },
+    {
+      "sampleRate": 48000,
+      "fixture": "terminal",
+      "before": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -0.008690123541032074,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -1.0000002900227403,
+        "truePeakDb": -1.0000002900227403,
+        "clipped": false
+      }
+    },
+    {
+      "sampleRate": 48000,
+      "fixture": "isp",
+      "before": {
+        "samplePeakDb": -0.08773949632283165,
+        "truePeakDb": 3.0182330862556697,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -3.9719402990787884,
+        "truePeakDb": -1.0000084349542755,
+        "clipped": false
+      }
+    },
+    {
+      "sampleRate": 96000,
+      "fixture": "terminal",
+      "before": {
+        "samplePeakDb": -0.008690123541032074,
+        "truePeakDb": -0.008690123541032074,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -1.0000002900227403,
+        "truePeakDb": -1.0000002900227403,
+        "clipped": false
+      }
+    },
+    {
+      "sampleRate": 96000,
+      "fixture": "isp",
+      "before": {
+        "samplePeakDb": -0.08773949632283165,
+        "truePeakDb": 3.0182330862556697,
+        "clipped": false
+      },
+      "after": {
+        "samplePeakDb": -3.9708991958297863,
+        "truePeakDb": -1.0000086794107945,
+        "clipped": false
+      }
+    }
+  ]
+}

@@ -754,3 +754,24 @@ describe('AudioEngine', () => {
     })
   })
 })
+
+describe('sentence playback range', () => {
+  it('uses source loop boundaries and the engine clock, including pause/resume after multiple loops', async () => {
+    const e = new AudioEngine(); await e.init(); e.buffer = { duration: 8 }; e.duration = 8
+    e.loop = false; await e.playRange(1, 2, true)
+    expect(e.source.loopStart).toBe(1); expect(e.source.loopEnd).toBe(2)
+    e.startTime = e.ctx.currentTime - 4.4
+    expect(e.currentTime).toBeCloseTo(1.4)
+    e.pause(); expect(e.pauseOffset).toBeCloseTo(1.4)
+    await e.play(); expect(e.pauseOffset).toBeCloseTo(1.4)
+    e.stop(); e.clearPlaybackRange(); expect(e.loop).toBe(false)
+  })
+  it('limits non-loop playback, rejects invalid bounds and clears range for outside seek', async () => {
+    const e = new AudioEngine(); await e.init(); e.buffer = { duration: 8 }; e.duration = 8
+    await expect(e.playRange(2, 1)).rejects.toThrow('無效')
+    await e.playRange(1, 2)
+    expect(e.source.start).toHaveBeenCalledWith(0, 1, 1)
+    e.seekTo(.75); expect(e.playbackRange).toBe(null)
+    expect(e.pauseOffset).toBe(6)
+  })
+})

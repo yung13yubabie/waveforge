@@ -17,7 +17,7 @@ export function initAlbumPanel({ album, engine, getCurrentFile, captureRenderOpt
     // Source integrated LUFS (informational; processed/target loudness = Phase 6 step 6)
     const ch = []
     for (let c = 0; c < engine.buffer.numberOfChannels; c++) ch.push(engine.buffer.getChannelData(c))
-    const lufs = measureIntegratedLUFS(ch, engine.ctx.sampleRate)
+    const lufs = measureIntegratedLUFS(ch, engine.buffer.sampleRate)
     album.add({
       file: currentFile,
       snapshot: engine.serialize(),   // freeze this track's full chain

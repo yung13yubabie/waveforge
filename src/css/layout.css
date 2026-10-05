@@ -852,7 +852,7 @@
   filter: saturate(0.2);
 }
 .module-card.unimplemented .knob-wrap { pointer-events: none; }
-.module-card.unimplemented .module-toggle { cursor: not-allowed; }
+.module-card.unimplemented .module-toggle { cursor: pointer; } /* Bypass recovery remains operable. */
 
 .phase-badge {
   display: inline-block;

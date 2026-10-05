@@ -2,6 +2,7 @@ import { renderMasterChain, buildFreqGrid, eqMagnitudeFromParams } from './rende
 import { embedWatermark } from './watermark.js'
 import { truePeakLimit } from './true-peak-limiter.js'
 import { buildExportReport } from './measure.js'
+import { assertMeasuredTruePeak } from './true-peak.js'
 
 // Snapshot-based final chain shared by download, final preview and album tracks.
 export async function renderFinalMaster({ engine, sourceBuffer, snapshot, sampleRate,
@@ -21,7 +22,10 @@ export async function renderFinalMaster({ engine, sourceBuffer, snapshot, sample
     targetLUFS, ceilingDb: bypassed.limiter ? 0 : params.limCeiling,
   }), sampleRate, duration: buffer.duration, linearPhase: !!linPhaseMag,
   watermark: !!watermark, truePeakLimiter: limited,
+  truePeakMethod: '4x-windowed-sinc-12tap', truePeakVerifiedPreEncode: limited,
+  truePeakVerificationStage: limited ? 'pre-encode-float-pcm' : 'not-verified',
   sourcePCMRate: sourceBuffer.sampleRate, rendererBackend: 'native-web-audio',
   sampleRateConverter: sourceBuffer.sampleRate === sampleRate ? 'none' : 'browser-native' }
+  if (limited) assertMeasuredTruePeak(report.truePeakDb, params.limCeiling)
   return { buffer, channels, report }
 }

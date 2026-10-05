@@ -3,6 +3,18 @@ import { test, expect } from '@playwright/test'
 
 const audio = name => ({ name, mimeType: 'audio/wav', buffer: readFileSync('tests/fixtures/test-tone.wav') })
 
+test('privacy disclosure distinguishes local cleanup, explicit cloud uploads and persistent account records', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('#session-privacy summary').click()
+  const privacy = page.locator('.session-privacy-body')
+  await expect(privacy).toContainText('一般母帶處理在本頁記憶體內完成，不會上傳音檔')
+  await expect(privacy).toContainText('按「開始分軌」才會將整首音檔送往 Hugging Face')
+  await expect(privacy).toContainText('按版權掃描才會經 Supabase 將音訊片段送往 ACRCloud')
+  await expect(privacy).toContainText('不保證取消雲端工作或立即刪除雲端暫存')
+  await expect(privacy).toContainText('會保存在 Supabase，關閉頁面仍保留')
+  await expect(privacy).toContainText('此處清除不會刪除防盜作品庫')
+})
+
 test('clear releases source, stems, album and preview, then accepts the same file again', async ({ page }) => {
   const uploads = []
   page.on('request', request => { if (request.method() === 'POST') uploads.push(request.url()) })

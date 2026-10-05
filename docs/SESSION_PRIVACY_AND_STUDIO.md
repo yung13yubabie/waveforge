@@ -19,8 +19,27 @@ and stems in the session, as indicated by the adjacent clear button. Processing 
 manual cleanup to avoid stale async results restoring cleared data.
 
 Cloud separation uploads the full file to the configured Hugging Face Space; copyright
-scanning sends audio samples through the configured Supabase Edge Function to ACRCloud.
+scanning sends raw WAV audio samples through the configured Supabase Edge Function to
+ACRCloud, not only fingerprints. Both require their separate processing buttons; ordinary
+mastering does not invoke either upload. Quick scanning sends one up-to-15-second sample;
+complete scanning sends up to eight such samples from across the song.
 Clearing this page does not retract those requests or delete cloud files.
+
+Adding a copyright-library work while signed in saves its name, file size and user ID
+in Supabase. Its full source File remains in the current page; after reload the library
+entry has no source audio and asks the user to select it again. Scanning also saves
+matched metadata, the raw ACR response and scan timestamps. These records have no
+automatic retention limit in this repository, survive closing the page, and are outside
+the mastering clear button. Deleting a work separately requests deletion of the work and
+its cascading scan-result rows; it does not retract samples already sent to ACRCloud,
+provider logs, backups or notification emails.
+
+Leaving the page is not a reliable erasure or cancellation mechanism. Current pagehide
+handlers stop stem preview, invalidate stem results, destroy stem waveforms and revoke
+master-preview URLs; they do not call the full mastering clear action. Browser history
+may retain a page, and browsers do not guarantee exit handlers run. The app has no
+service worker or IndexedDB audio store. Original files and downloaded exports remain
+on the user's device. JavaScript reference cleanup cannot promise secure memory erasure.
 
 ## Cloud cleanup
 
@@ -37,6 +56,22 @@ The Space source patch was deployed separately at revision
 `a0af4d04accd15321a65fd8cf4d3bb8d54581441`. A GitHub Pages deployment does
 **not** deploy `hf-space/`; future backend changes require a separate Space deployment.
 Do not promise deletion of files from earlier deployments or provider backups.
+The pinned [Demucs CLI](https://github.com/facebookresearch/demucs/blob/v4.0.1/demucs/separate.py)
+prints input and output paths. Generic UI errors and disabled Gradio analytics do not
+redact those service logs; their provider retention is not configured or verified here.
+
+The network client's deadlines cover response bodies: upload/submission JSON and each
+stem download have a 60-second deadline, and the SSE prediction response has a 600-second
+deadline through its completion event. The SSE reader is cancelled and unlocked on
+completion, error or abort. The client accepts a caller AbortSignal, but the current UI's
+generation invalidation does not send server cancellation or deletion requests. A client
+timeout therefore does not prove that Demucs stopped or that uploaded files were deleted.
+
+Retention tests in `tests/audio/hf-demucs.test.js` use fake clocks, mocked fetch responses
+and synthetic streams only. They cover stalled headers/body reads, completed streams,
+caller aborts and reader/timer cleanup. `tests/hf_space/test_app.py` mocks Gradio and
+Demucs to check working-directory ownership. Neither suite proves deployed Gradio cache
+expiry, provider HTTP caches, logging retention, crash recovery or deletion from backups.
 
 ## Module ownership
 
@@ -66,3 +101,7 @@ No React component library was added to the vanilla Vite app.
 Visual review also found and fixed a pre-existing layout error: the guest banner was
 a full-width child in a horizontal flex row, pushing the works/results offscreen.
 It is now a sibling above the columns.
+
+## Integrated lyrics workspace
+
+The lyrics workspace adds localStorage recovery for accepted lyric text, timing and source identity only. It does not persist audio. Source loading, recovery, undo and clear preserve ownership of pending backups; an untouched source-only load never overwrites an unopened previous backup. Manual audio cleanup retains the lyric project and its backup. Text typed into the original-text field must be explicitly applied before it becomes part of the saved lyric project. Sudden process/device termination can still lose edits; download the JSON project for a separate copy.
