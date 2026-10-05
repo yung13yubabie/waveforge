@@ -5,7 +5,7 @@
 - Foundation: local commit `d17a8fc4d8c83d0da96613d66ba1c16b8cb50ff3`, based on remote `3c838187e45635efbaffc4a83a3d38b4c867bdf9`
 - Additional delivery: `WaveForge_Update_2026-10-05.zip`, whose manifest names local implementation commit `3846c0495a07347e856e2c99648a2c5585d94600` and the same remote baseline
 - Its archive has 23 changed files, seven overlapping our foundation. The original archive and both source snapshots remain unchanged
-- Integration is on a separate local branch. No GitHub write was retried, no account setup changed, and no deployment occurred
+- Integration was built on a separate local branch. After authorized publication, the exact tested tree was uploaded to `fix/audio-trust-foundation` and [PR #1](https://github.com/yung13yubabie/waveforge/pull/1), initially as a draft. Main and the deployed site were unchanged at that initial publication
 
 The incoming archive contains source and a patch, but no raw browser test report supporting its stated 471/52/25 result counts. Those counts are not treated as validation of this integration. Its old audio-analysis, peak and HF-client files were not copied over our verified foundation. Its reconstructed planning registry and stale build assets were not adopted.
 
@@ -45,7 +45,19 @@ Backup failure now keeps previous timing in the in-page undo history and reports
 - Independent lyrics-focused review: source and JSDOM regressions checked; it did not rerun the browser suite
 - FFmpeg 7.1.5 independently parses the new SRT/ASS synthetic fixtures. Four start/duration pairs match expected values; ASS→SRT preserves Chinese, English, Japanese and Arabic text. Reports are under `docs/validation/lyrics/`
 
-The original source archive's browser results are not inherited. This environment previously blocked Chromium launch and local cloud-browser access; the integrated browser/UI, mobile visual checks and actual audio-device listening remain NOT RUN here. New and incoming E2E cases are retained for a permitted browser environment. No security flags, alternate host or service were used to bypass that restriction.
+The original source archive's browser results are not inherited. This local environment blocked Chromium launch and local cloud-browser access; no security flags, alternate host or service were used to bypass that restriction. After the authorized PR publication, GitHub-hosted CI independently ran the integrated browser suites successfully.
+
+### GitHub-hosted browser verification
+
+- Source HEAD: `d049ce1218885eb035c0f0f71dad8dce974f3e39`; tree `b21c293a4dffabca9d88c0da695065fdab3a860f`, identical to the locally tested integration
+- [Run 37318408329](https://github.com/yung13yubabie/waveforge/actions/runs/37318408329): all steps PASS on 2026-10-05
+- Browser E2E: 60 PASS; account flows: 4 PASS; built-site regressions: 33 PASS
+- The same run also passed all 580 unit tests, syntax checks, mocked HF Python tests, proposed-spec validation, independent synthetic DSP checks and production build
+- Synthetic artifact `11348234987` includes desktop/mobile screenshots and DSP output; archive SHA-256 `501547bf8483437db5300f2b3bd5cef890ef0172738ea61ef39c2dfb51dca309`
+- Built-site desktop and 390-pixel lyrics screenshots were downloaded and visually inspected; controls and export actions remain within the viewport
+- Actual audio-device listening, long-file stress, other browser engines and independent standards certification are not covered by these results
+
+The install log reports seven dependency advisories (four moderate, three high). A green functional test run is not a clean security audit; dependency impact must be assessed separately.
 
 ## Test data and limits
 
@@ -59,4 +71,4 @@ Key files:
 - `tests/fixtures/lyrics/`
 - `tests/e2e/lyrics.spec.js` and `foundation-recovery.spec.js`
 
-Remaining checks include real browser interactions, long-file hashing/memory cost, all target subtitle players, automatic alignment quality, persistent undo beyond this page and the broader DAW roadmap.
+Remaining checks include broader browser/device coverage, long-file hashing/memory cost, all target subtitle players, automatic alignment quality, persistent undo beyond this page and the broader DAW roadmap.

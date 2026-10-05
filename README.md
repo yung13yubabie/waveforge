@@ -1,6 +1,6 @@
 # WaveForge
 
-新增整合：歌詞手動逐句對時、保存與 LRC／SRT／ASS／TXT 輸出。先看 [這次怎麼用](START_HERE.md)。本地版本尚未推送或部署，自動對時與 AI 換聲仍未完成。
+新增整合：歌詞手動逐句對時、保存與 LRC／SRT／ASS／TXT 輸出。先看 [這次怎麼用](START_HERE.md) 與 [更新紀錄 PR #1](https://github.com/yung13yubabie/waveforge/pull/1)。自動對時與 AI 換聲仍未完成。
 
 線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。不需要離線 App 或本機 AI 模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
 
