@@ -16,6 +16,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      WAVEFORGE_REAL_MODEL_TEST: '0'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,8 +26,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Unit, syntax and production build
+        id: build
         run: |
           npm run lint
           npm run check:capabilities
@@ -35,12 +38,28 @@ jobs:
           mkdir -p artifacts/audio-trust
           node scripts/test-audio-trust.mjs > artifacts/audio-trust/synthetic-results.json
       - name: Install test browser
+        id: browser_install
         run: npx playwright install --with-deps chromium
       - name: Browser and built-site regressions
         run: |
           npm run test:e2e -- --workers=1
           npm run test:account
           npm run test:production
+      - name: Approved local Whisper in a real built-site browser
+        # Independent evidence still runs when another browser regression fails;
+        # the overall job remains failed until every gate passes.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.browser_install.outcome == 'success' }}
+        timeout-minutes: 12
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4174 --strictPort > /tmp/waveforge-model-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4174/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4174/ > /dev/null
+          node scripts/verify-lyrics-model.mjs --download --browser --live-download --server-mode built --approved-revision 5332fcc35e32a33b86612b9a57a89be7906102b1 --test-url http://127.0.0.1:4174/ --cache-dir "$RUNNER_TEMP/waveforge-approved-model" --output artifacts/real-model/browser-smoke-evidence.json
       - name: Save synthetic test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,6 +69,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             artifacts/audio-trust/
+            artifacts/real-model/
             test-results/
             test-results-account/
             test-results-production/

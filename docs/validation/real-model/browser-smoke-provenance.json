@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "evidenceFile": "browser-smoke-evidence.json",
+  "bytes": 75945,
+  "sha256": "aa9530069516c8109ed78678ef2046582f4e62ef71166b7c9abea2a145984487",
+  "sourceRunId": 37384510849,
+  "sourceHeadSha": "67e117742d19ab26fa430d3872c89f536772a7ab",
+  "runUrl": "https://github.com/yung13yubabie/waveforge/actions/runs/37384510849",
+  "artifactCopy": "Exact bytes copied from the downloaded and verified CI artifact; the original report has not been rewritten",
+  "scope": "Built app on localhost, real browser Worker/WASM, live fixed-source model download and UI functional smoke; not manual singing accuracy or deployed-host validation",
+  "browserWasmValidated": true,
+  "liveBrowserModelDownloadValidated": true,
+  "singingAccuracyValidated": false
+}

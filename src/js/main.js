@@ -1,4 +1,6 @@
 import { initLyricsPanel } from './lyrics/panel.js'
+import { initDawPanel } from './daw/panel.js'
+import { decodeDawAsset } from './daw/decode.js'
 import { initAlbumPanel } from './ui/album-panel.js'
 import { renderFinalMaster } from './audio/final-render.js'
 import { assertIntegerHeadroom } from './audio/export-safety.js'
@@ -253,36 +255,80 @@ async function boot() {
     },
     stopPlayback: () => { engine.stop(); engine.clearPlaybackRange(); ws?.pause(); updatePlayBtn(false) },
   })
-  document.addEventListener('wf:mode-change', () => {
+  function stopNonEditorPlayback() {
+    engine.stop(); engine.clearPlaybackRange(); ws?.pause(); updatePlayBtn(false)
+    document.dispatchEvent(new Event('wf:stop-stem-preview'))
+    document.getElementById('final-preview-audio')?.pause()
+    document.getElementById('original-preview-audio')?.pause()
+  }
+  const dawController = initDawPanel({
+    beforePlayback: stopNonEditorPlayback,
+    decodeAsset: decodeDawAsset,
+    onSendToMaster: async (buffer, { name = '多軌混音', signal, isCurrent } = {}) => {
+      const check = () => { if (signal?.aborted || (isCurrent && !isCurrent())) throw new DOMException('已取消混音送出，原母帶仍保留', 'AbortError') }
+      check()
+      if (isLoadingFile) throw new Error('另一份音檔正在載入，請稍候再送出混音')
+      const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i))
+      assertIntegerHeadroom(channels)
+      const file = new File([encodeWAV(channels, buffer.sampleRate, 24)], `${name}.wav`, { type: 'audio/wav' })
+      check()
+      const loaded = await loadFile(file, { signal, isCurrent, blockingOverlay: false })
+      check()
+      if (!loaded) throw new Error('混音尚未成功載入母帶頁；多軌工程仍保留')
+      // The editor switches modes only after retiring its successful job.
+      return true
+    },
+  })
+  document.addEventListener('wf:mode-change', event => {
+    if (event.detail?.mode === 'editor') stopNonEditorPlayback()
+    else dawController.stop()
     if (engine.playbackRange) { engine.stop(); engine.clearPlaybackRange(); updatePlayBtn(false) }
   })
 
   // ── File loading ────────────────────────────────────────
   let isLoadingFile = false
-  async function loadFile(file, { preserveStems = false } = {}) {
+  async function loadFile(file, { preserveStems = false, signal, isCurrent, blockingOverlay = true } = {}) {
     if (!file) return
+    const check = () => { if (signal?.aborted || (isCurrent && !isCurrent())) throw new DOMException('已取消過期的音訊載入', 'AbortError') }
+    check()
     if (isLoadingFile) {
       setStatus('正在載入中，請稍候再試', false)
       return
     }
     isLoadingFile = true
+    const abortLoad = () => engine.cancelPendingLoad()
+    signal?.addEventListener('abort', abortLoad, { once: true })
     const previous = { file: currentFile, buffer: engine.buffer, asset: engine.sourceAsset, ws,
-      offset: Math.min(engine.duration, Math.max(0, engine.currentTime)), upload: [...document.getElementById('upload-text-wrap').childNodes].map(n => n.cloneNode(true)) }
+      offset: Math.min(engine.duration, Math.max(0, engine.currentTime)), upload: [...document.getElementById('upload-text-wrap').childNodes].map(n => n.cloneNode(true)),
+      trim: trimRange && { ...trimRange }, trimActive: document.getElementById('trim-toggle').getAttribute('aria-pressed') === 'true',
+      fileStatus: document.getElementById('session-file-status').textContent }
     const buttons = ['analyze-btn', 'export-btn', 'album-add-btn'].map(id => document.getElementById(id))
     const disabled = buttons.map(button => button.disabled)
     buttons.forEach(button => { button.disabled = true })
     if (!preserveStems) stemController.sourceLoading(file)
     lyricsController.sourceLoading()
     try {
-      await doLoadFile(file, preserveStems)
+      await doLoadFile(file, preserveStems, check, blockingOverlay)
+      check()
       clearPreview()
       lyricsController.sourceAccepted(file, engine.buffer)
       return true
     } catch (err) {
       // Preserve the accepted session on failed replacement. A failed waveform
       // construction may already have disposed the old view, so rebuild it.
-      if (ws !== previous.ws && previous.file) {
-        try { await doLoadFile(previous.file, true) } catch { ws?.destroy(); ws = null }
+      if (ws !== previous.ws) {
+        if (previous.file) {
+          try {
+            await doLoadFile(previous.file, true, undefined, blockingOverlay)
+            if (previous.trim) wsRegions?.addRegion({ ...previous.trim, color: 'rgba(255,75,110,0.25)' })
+            if (previous.trimActive) document.getElementById('trim-toggle').click()
+          } catch { ws?.destroy(); ws = null; wsRegions = null }
+        } else {
+          ws?.destroy(); ws = null; wsRegions = null
+          document.getElementById('waveform-main').replaceChildren(emptyWaveform.cloneNode(true))
+          document.getElementById('waveform-main').setAttribute('aria-label', '主波形：尚未載入音檔')
+          document.getElementById('time-total').textContent = '0:00'
+        }
       }
       engine.stop()
       engine.buffer = previous.buffer
@@ -294,12 +340,14 @@ async function boot() {
       if (engine.duration) ws?.seekTo(previous.offset / engine.duration)
       updatePlayBtn(false)
       document.getElementById('upload-text-wrap').replaceChildren(...previous.upload)
+      document.getElementById('session-file-status').textContent = previous.fileStatus
       buttons.forEach((button, i) => { button.disabled = disabled[i] })
       if (!preserveStems) stemController.sourceFailed(err)
       lyricsController.sourceFailed(previous.file, previous.buffer)
       setStatus(`讀取失敗：${err.message}${previous.file ? `；已保留 ${previous.file.name}` : ''}`, false)
       return false
     } finally {
+      signal?.removeEventListener('abort', abortLoad)
       isLoadingFile = false
     }
   }
@@ -311,6 +359,8 @@ async function boot() {
     const toggleBtn = document.getElementById('trim-toggle')
     const clearBtn  = document.getElementById('trim-clear')
     const rangeOut  = document.getElementById('trim-range')
+    toggleBtn.setAttribute('aria-pressed', 'false')
+    toggleBtn.classList.remove('active')
 
     const showRange = () => {
       if (trimRange) {
@@ -342,7 +392,9 @@ async function boot() {
       showRange()
     })
 
-    toggleBtn.addEventListener('click', () => {
+    // These buttons survive file replacements. Replace their owned handler
+    // rather than accumulating one toggle/clear listener per decoded file.
+    toggleBtn.onclick = () => {
       const active = toggleBtn.getAttribute('aria-pressed') === 'true'
       if (active) {
         disableTrimDrag?.()
@@ -354,18 +406,22 @@ async function boot() {
         toggleBtn.setAttribute('aria-pressed', 'true')
         toggleBtn.classList.add('active')
       }
-    })
+    }
 
-    clearBtn.addEventListener('click', () => {
+    clearBtn.onclick = () => {
       wsRegions.clearRegions()
       trimRange = null
       showRange()
-    })
+    }
 
     showRange()
   }
 
-  async function doLoadFile(file, preserveStems = false) {
+  async function doLoadFile(file, preserveStems = false, check = () => {}, blockingOverlay = true) {
+    check()
+    // Editor transfer owns a cancellable status row. A global overlay would
+    // intercept its Cancel/Clear controls, including while rebuilding rollback.
+    const updateLoadProcessing = (...args) => { if (blockingOverlay) setProcessing(...args) }
 
     const validTypes = ['audio/mpeg','audio/wav','audio/x-wav','audio/flac','audio/x-flac','audio/aac','audio/mp4','audio/x-m4a','audio/ogg']
     const ext = file.name.split('.').pop().toLowerCase()
@@ -394,12 +450,13 @@ async function boot() {
     }
 
     setStatus('讀取音訊...', true)
-    setProcessing(true, '讀取音訊檔案...', 5)
+    updateLoadProcessing(true, '讀取音訊檔案...', 5)
 
     try {
       // Two copies needed: decodeAudioData DETACHES the buffer it receives.
       // engineBuf goes to the engine (gets detached); wsBuf stays intact for WaveSurfer.
       const wsBuf     = await file.arrayBuffer()
+      check()
       const engineBuf = wsBuf.slice(0)
       // Bound the decode: a malformed-but-valid-header file can hang
       // decodeAudioData indefinitely, freezing the tab with no feedback.
@@ -414,8 +471,9 @@ async function boot() {
           }, 30000) }),
         ])
       } finally { clearTimeout(decodeTimeout) }
+      check()
 
-      setProcessing(true, '渲染波形...', 30)
+      updateLoadProcessing(true, '渲染波形...', 30)
 
       // Load into WaveSurfer for visual display
       if (ws) ws.destroy()
@@ -439,6 +497,7 @@ async function boot() {
       initTrimControls()
 
       await ws.loadBlob(new Blob([wsBuf]))
+      check()
 
       // WaveSurfer is the VISUAL clock only — all audible audio comes from the
       // engine (whose A/B crossfade selects dry vs processed). Unmuted, it
@@ -458,7 +517,7 @@ async function boot() {
         updatePlayBtn(false)
       })
 
-      setProcessing(false, '', 100)
+      updateLoadProcessing(false, '', 100)
 
       // Fresh loudness timeline per loaded track
       loudnessHistory.clear()
@@ -521,7 +580,7 @@ async function boot() {
       setDot('active')
 
     } catch (err) {
-      setProcessing(false, '', 0)
+      updateLoadProcessing(false, '', 0)
       setStatus(`讀取失敗：${err.message}`, false)
       console.error('[WaveForge] loadFile error', err)
       throw err
@@ -879,7 +938,7 @@ async function boot() {
 
   // Keyboard: Space → play/pause; Ctrl/Cmd+Z undo; Ctrl/Cmd+Shift+Z (or Ctrl+Y) redo
   document.addEventListener('keydown', e => {
-    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.target.closest('#mode-lyrics') || e.target.matches('input, textarea, select, [contenteditable="true"]')) return
+    if (document.getElementById('app')?.classList.contains('mode-editor') || e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.target.closest('#mode-lyrics') || e.target.matches('input, textarea, select, [contenteditable="true"]')) return
     const mod = e.ctrlKey || e.metaKey
     if (mod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault()

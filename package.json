@@ -2,7 +2,7 @@
   "name": "waveforge",
   "version": "0.1.0",
   "private": true,
-  "description": "Professional mastering DAW \u2014 WaveForge",
+  "description": "Professional mastering DAW — WaveForge",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,15 +22,21 @@
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
+    "@huggingface/transformers": "3.8.1",
     "@supabase/supabase-js": "^2.108.2",
     "wavesurfer.js": "^7.8.6"
   },
+  "overrides": {
+    "@huggingface/transformers": {
+      "sharp": "0.35.4"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@vitest/coverage-v8": "^4.1.8",
-    "@vitest/ui": "^4.1.8",
+    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/ui": "4.1.11",
     "jsdom": "^25.0.1",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vitest": "4.1.11"
   }
 }

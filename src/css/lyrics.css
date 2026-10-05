@@ -35,3 +35,43 @@
   #app.mode-lyrics { width: 100%; }
   #app.mode-lyrics .lyrics-panel { overflow: visible; }
 }
+
+/* Analysis belongs to the existing editor: stable transport, no modal or audio UI sounds. */
+.lyrics-alignment { margin-top: 18px; padding: 18px; border: 1px solid var(--c-border); border-radius: var(--r-lg); background: var(--c-bg-surface); }
+.lyrics-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lyrics-section-heading h2 { margin: 0; font-size: 17px; }
+.lyrics-local-badge { font-size: 11px; color: var(--c-primary); border: 1px solid var(--c-border-focus); border-radius: var(--r-full); padding: 4px 9px; }
+.lyrics-model-disclosure { padding: 10px 14px; margin: 14px 0; background: var(--c-bg-input); border-radius: var(--r-md); }
+.lyrics-model-links { display: flex; flex-wrap: wrap; gap: 18px; font-size: 12px; margin: 8px 0; }
+.lyrics-model-links a { color: var(--c-primary); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.lyrics-panel .lyrics-check { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; }
+.lyrics-check input { margin-top: 5px; flex: 0 0 auto; }
+#lyrics-language { max-width: 330px; }
+.lyrics-panel .lyrics-primary { min-height: 44px; background: var(--c-primary); color: var(--c-text-inv); border-color: var(--c-primary); font-weight: 600; }
+.lyrics-panel button, .lyrics-model-links a { transition: border-color 120ms ease, background-color 120ms ease; }
+.lyrics-panel :is(button, input, textarea, select, a, summary, canvas):focus-visible { outline: 2px solid var(--c-primary); outline-offset: 3px; }
+.lyrics-analysis-progress { min-height: 44px; padding: 10px 12px; border-left: 3px solid var(--c-primary); background: var(--c-primary-dim); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.lyrics-analysis-progress[aria-busy=true] { border-left-color: var(--c-orange); }
+#lyrics-model-progress { width: 100%; height: 8px; margin-top: 8px; accent-color: var(--c-primary); }
+.lyrics-proposal { border-top: 1px solid var(--c-border); margin-top: 18px; padding-top: 18px; }
+.lyrics-proposal h3 { font-size: 15px; font-weight: 600; }
+.lyrics-proposal-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; padding: 4px; }
+.lyrics-proposal-list button { white-space: pre-wrap; overflow-wrap: anywhere; }
+.lyrics-proposal-list button[aria-pressed=true] { border-color: var(--c-primary); background: var(--c-primary-muted); }
+.lyrics-line[data-timing-status=unresolved] { border-left: 3px solid var(--c-orange); }
+.lyrics-line[data-timing-status=confirmed] { border-left: 3px solid var(--c-primary); }
+.lyrics-line-evidence { padding: 12px; margin: 12px 0; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-bg-input); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.lyrics-panel [hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .lyrics-alignment { padding: 14px; }
+  .lyrics-alignment .lyrics-actions > button { flex: 1 1 150px; }
+  .lyrics-model-disclosure { padding: 10px; }
+  #lyrics-language { max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-panel button, .lyrics-model-links a { transition: none; }
+}
+@media (forced-colors: active) {
+  .lyrics-line[aria-pressed=true], .lyrics-proposal-list button[aria-pressed=true] { outline: 2px solid Highlight; outline-offset: -3px; }
+  .lyrics-panel :is(button, input, textarea, select, a, summary, canvas):focus-visible { outline-color: Highlight; }
+}

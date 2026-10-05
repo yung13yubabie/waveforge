@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-05T21:54:00Z",
+  "status": "blocked-before-browser-start",
+  "backend": "system-chromium-headless",
+  "browserWasmValidated": false,
+  "command": [
+    "/usr/bin/chromium",
+    "--headless",
+    "--user-data-dir=/tmp/waveforge-browser-probe",
+    "--dump-dom",
+    "about:blank"
+  ],
+  "exitCode": 134,
+  "errors": [
+    "Crash Reports settings.dat: Read-only file system",
+    "FATAL:chrome/browser/process_singleton_posix.cc:297: socket() failed: Operation not permitted (1)"
+  ],
+  "securityBypassAttempted": false,
+  "scope": "Normal local Chromium startup failed; no Worker, WASM inference, browser network, or cache result has been validated in this environment."
+}
