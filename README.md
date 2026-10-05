@@ -2,7 +2,9 @@
 
 新增整合：歌詞手動逐句對時、保存與 LRC／SRT／ASS／TXT 輸出。先看 [這次怎麼用](START_HERE.md) 與 [更新紀錄 PR #1](https://github.com/yung13yubabie/waveforge/pull/1)。自動對時與 AI 換聲仍未完成。
 
-線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。不需要離線 App 或本機 AI 模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
+此開發分支已接上本機自動對時管線，並獲准下載固定來源模型、完成完整性檢查與真實英文清唱 Node CPU 測試。瀏覽器 WASM／UI 仍待 CI，歌唱時間邊界與多語準確度尚未校準，不保證自動對準。詳見 [實作範圍與待驗收關卡](docs/validation/LOCAL_LYRICS_ALIGNMENT_STATUS.md) 與 [真實模型證據](docs/validation/real-model/README.md)；這些分支結果不代表正式網站已更新。
+
+線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。一般母帶處理不需離線 App 或 AI 模型；自動歌詞對時需同意後下載瀏覽器本機模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
 
 > 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 WAV / MP3。
 

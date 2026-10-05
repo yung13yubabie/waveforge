@@ -1,0 +1,81 @@
+/* Editor has its own real transport and export settings. Never display unrelated master controls. */
+.mode-tab[data-mode=editor] { min-height: 44px; }
+#app.mode-editor { grid-template: var(--header-h) auto minmax(0, 1fr) / minmax(0, 1fr); }
+#app.mode-editor > .header { grid-row: 1; }
+#app.mode-editor > .mode-nav { grid-row: 2; min-height: 48px; flex-wrap: wrap; }
+#app.mode-editor > :is(.analysis-bar, .transport, .chain-panel),
+#app.mode-editor .header > :is(.upload-zone, .header-actions, .session-privacy) { display: none; }
+#app.mode-editor > .daw-panel { grid-column: 1 / -1; grid-row: 3; }
+.daw-panel { display: block; padding: 24px 24px 110px; overflow: auto; min-width: 0; user-select: text; scroll-padding-block: 20px 100px; }
+.daw-panel[hidden], .daw-panel [hidden] { display: none !important; }
+.daw-heading, .daw-project-bar, .daw-section-title, .daw-status-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.daw-heading { margin-bottom: 20px; }
+.daw-heading h1 { margin-top: 6px; font-size: 25px; font-weight: 600; }
+.daw-eyebrow { font-size: 11px; letter-spacing: 1.5px; color: var(--c-primary); }
+.daw-badge { border: 1px solid var(--c-border-focus); border-radius: 20px; color: var(--c-primary); padding: 8px 12px; font-size: 12px; }
+.daw-note, .daw-help p { font-size: 12px; line-height: 1.9; color: var(--c-text-2); margin: 8px 0; overflow-wrap: anywhere; }
+.daw-project-bar { border-block: 1px solid var(--c-border); padding: 14px 0; }
+.daw-project-name { flex: 1 1 180px; max-width: 300px; }
+#daw-save-state { font-size: 13px; color: var(--c-primary); }
+.daw-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.daw-import-bar { margin-top: 18px; }
+.daw-panel button, .daw-panel input:not([type=checkbox],[type=range]), .daw-panel select { min-height: 44px; border: 1px solid var(--c-border); border-radius: 7px; padding: 9px 12px; font: inherit; background: var(--c-bg-surface); color: var(--c-text-1); }
+.daw-panel button { cursor: pointer; font-size: 12px; transition: background-color 120ms, border-color 120ms; }
+.daw-panel button:hover:not(:disabled) { border-color: var(--c-primary); background: var(--c-primary-dim); }
+.daw-panel :is(button, input, select):disabled { opacity: .45; cursor: not-allowed; }
+.daw-panel button[aria-pressed=true] { border-color: var(--c-primary); background: var(--c-primary-muted); }
+.daw-panel .daw-primary { color: var(--c-text-inv); background: var(--c-primary); border-color: var(--c-primary); font-weight: 600; }
+.daw-panel .daw-primary:hover:not(:disabled) { background: var(--c-primary-h); }
+.daw-panel label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.6; }
+.daw-panel .daw-check { flex-direction: row; align-items: center; min-height: 44px; gap: 8px; }
+.daw-panel input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--c-primary); }
+.daw-panel input[type=range] { accent-color: var(--c-primary); min-height: 30px; }
+.daw-inline input { width: 100px; }
+.daw-status-row { min-height: 60px; margin: 8px 0; }
+#daw-status { font-size: 13px; line-height: 1.8; color: var(--c-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+#daw-status[data-error=true] { color: var(--c-danger); }
+.daw-editor-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 300px); gap: 18px; align-items: start; }
+.daw-arrangement { min-width: 0; }
+.daw-section-title { padding: 0 0 12px; font-size: 12px; }
+.daw-panel h2 { font-size: 15px; font-weight: 600; line-height: 1.8; overflow-wrap: anywhere; }
+#daw-summary { color: var(--c-text-2); }
+.daw-timeline { --daw-label-width: 180px; --daw-lane-width: 1440px; overflow: auto; min-height: 260px; max-height: 640px; border: 1px solid var(--c-border); border-radius: 10px; background: var(--c-bg-input); position: relative; }
+.daw-timeline[data-drop=true] { outline: 2px dashed var(--c-primary); }
+.daw-ruler { width: calc(var(--daw-label-width) + var(--daw-lane-width)); display: flex; min-height: 40px; position: sticky; top: 0; z-index: 4; background: var(--c-bg-surface); border-bottom: 1px solid var(--c-border); }
+.daw-ruler-label { position: sticky; left: 0; width: var(--daw-label-width); flex-shrink: 0; padding: 12px; background: var(--c-bg-surface); z-index: 2; font-size: 11px; }
+.daw-ruler-lane { position: relative; width: var(--daw-lane-width); cursor: crosshair; }
+.daw-tick { position: absolute; padding: 10px 4px; height: 100%; border-left: 1px solid var(--c-border); font: 10px var(--font-mono); color: var(--c-text-2); pointer-events: none; }
+.daw-track { display: flex; width: calc(var(--daw-label-width) + var(--daw-lane-width)); border-bottom: 1px solid var(--c-border); min-height: 142px; }
+.daw-track-controls { width: var(--daw-label-width); flex-shrink: 0; padding: 10px; position: sticky; left: 0; z-index: 3; background: var(--c-bg-surface); border-right: 1px solid var(--c-border); }
+.daw-track-controls .daw-track-name { font-size: 12px; font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+.daw-track-controls .daw-actions { gap: 5px; }
+.daw-track-controls button { padding: 7px 9px; }
+.daw-track-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
+.daw-track-mix input { width: 100%; min-width: 0; padding: 5px !important; }
+.daw-lane { position: relative; width: var(--daw-lane-width); flex-shrink: 0; background-image: linear-gradient(to right, var(--c-border) 1px, transparent 1px); background-size: var(--daw-beat-width, 24px) 100%; cursor: crosshair; }
+.daw-panel .daw-clip { position: absolute; height: 92px; min-width: 12px; top: 20px; padding: 5px; overflow: hidden; text-align: left; border-color: #718594; background: #263641; touch-action: pan-y; cursor: grab; }
+.daw-panel .daw-clip:nth-child(2n) { background: #253d39; }
+.daw-panel .daw-clip[aria-pressed=true] { border: 2px solid var(--c-primary); background: #28423c; box-shadow: 0 0 0 1px var(--c-primary); z-index: 2; }
+.daw-clip-name { display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.daw-wave { width: 100%; height: 55px; display: block; color: #b1cfcc; pointer-events: none; }
+.daw-wave path { fill: currentColor; }
+.daw-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--c-primary); z-index: 2; pointer-events: none; }
+.daw-empty { padding: 64px 24px; font-size: 15px; line-height: 2; color: var(--c-text-1); position: sticky; left: 0; }
+.daw-empty span { font-size: 12px; color: var(--c-text-2); }
+.daw-inspector { background: var(--c-bg-surface); border: 1px solid var(--c-border); border-radius: 10px; padding: 16px; min-width: 0; }
+.daw-inspector fieldset { border: 0; padding: 0; min-width: 0; }
+.daw-inspector label { margin-top: 10px; }
+.daw-inspector input, .daw-inspector select { min-width: 0; width: 100%; }
+.daw-inspector button { margin-top: 8px; }
+.daw-inspector .daw-actions button { flex: 1; }
+.daw-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.daw-panel summary { padding: 12px 0; min-height: 44px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.daw-delivery, .daw-help { border-top: 1px solid var(--c-border); padding-block: 8px; margin-top: 20px; }
+.daw-transport { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px; margin: 0; border-top: 1px solid var(--c-border-focus); background: #17221ffa; box-shadow: 0 -6px 20px #0003; }
+.daw-seek-label { flex: 1 1 160px; }
+#daw-time { font: 12px var(--font-mono); white-space: nowrap; }
+.daw-panel :is(button, input, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--c-primary); outline-offset: 3px; }
+@media (max-width: 1000px) { .daw-editor-grid { grid-template-columns: minmax(0, 1fr); } .daw-inspector fieldset { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; align-items: end; } .daw-inspector fieldset > details { grid-column: 1 / -1; } }
+@media (max-width: 600px) { #app.mode-editor { height: auto; min-height: 100dvh; overflow: visible; } .daw-panel { padding: 16px 12px 230px; overflow: visible; } .daw-heading h1 { font-size: 21px; } .daw-panel .daw-inspector fieldset { display: block; } .daw-transport { gap: 6px 8px; } .daw-timeline { --daw-label-width: 150px; max-height: 520px; } .daw-project-bar .daw-actions, .daw-import-bar { width: 100%; } .daw-heading .daw-badge { display: none; } #app.mode-editor .mode-nav { padding-inline: 8px; } #app.mode-editor .mode-tab { padding-inline: 12px; } }
+@media (prefers-reduced-motion: reduce) { .daw-panel *, .daw-panel *::before, .daw-panel *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+@media (forced-colors: active) { .daw-panel .daw-clip[aria-pressed=true] { outline: 3px solid Highlight; } .daw-wave { color: CanvasText; } }

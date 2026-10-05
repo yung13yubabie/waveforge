@@ -16,13 +16,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      WAVEFORGE_REAL_MODEL_TEST: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Build and verify without backend credentials
         run: |
           npm run build

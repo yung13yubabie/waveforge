@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-10-05T21:56:28.423Z",
+  "completedAt": "2026-10-05T21:57:12.733Z",
+  "status": "graph-passed",
+  "model": "Xenova/whisper-tiny",
+  "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+  "transformersVersion": "3.8.1",
+  "backend": "node-cpu",
+  "browserWasmValidated": false,
+  "singingAccuracyValidated": false,
+  "fixtureHasManualGold": false,
+  "files": [
+    {
+      "path": "onnx/encoder_model.onnx",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model.onnx",
+      "bytes": 32909539,
+      "sha256": "39e81b6c86a5b2b4beda1bb3145486a769d594801f780a66cad1ae72c7ad2c5e",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "onnx/decoder_model_merged_quantized.onnx",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+      "bytes": 30727765,
+      "sha256": "6c0c125986b007d2e3734bec84c18bda0152071b90b87fadac6d7764499927a0",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/config.json",
+      "bytes": 2248,
+      "sha256": "2b2e4e519084e0ea028b19b153f95202735a971870d6844aa26e559edd292e94",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "generation_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/generation_config.json",
+      "bytes": 3716,
+      "sha256": "68ac791fcb4999461a313472125042934656240ba1cba7d1c2627fcbb19ac24c",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+      "bytes": 339,
+      "sha256": "a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+      "bytes": 2480466,
+      "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+      "verified": true,
+      "source": "download"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer_config.json",
+      "bytes": 282683,
+      "sha256": "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce",
+      "verified": true,
+      "source": "download"
+    }
+  ],
+  "graph": {
+    "backend": "onnxruntime-node/cpu",
+    "inputNames": [
+      "input_ids",
+      "encoder_hidden_states",
+      "past_key_values.0.decoder.key",
+      "past_key_values.0.decoder.value",
+      "past_key_values.0.encoder.key",
+      "past_key_values.0.encoder.value",
+      "past_key_values.1.decoder.key",
+      "past_key_values.1.decoder.value",
+      "past_key_values.1.encoder.key",
+      "past_key_values.1.encoder.value",
+      "past_key_values.2.decoder.key",
+      "past_key_values.2.decoder.value",
+      "past_key_values.2.encoder.key",
+      "past_key_values.2.encoder.value",
+      "past_key_values.3.decoder.key",
+      "past_key_values.3.decoder.value",
+      "past_key_values.3.encoder.key",
+      "past_key_values.3.encoder.value",
+      "use_cache_branch"
+    ],
+    "outputNames": [
+      "logits",
+      "present.0.decoder.key",
+      "present.0.decoder.value",
+      "present.0.encoder.key",
+      "present.0.encoder.value",
+      "present.1.decoder.key",
+      "present.1.decoder.value",
+      "present.1.encoder.key",
+      "present.1.encoder.value",
+      "present.2.decoder.key",
+      "present.2.decoder.value",
+      "present.2.encoder.key",
+      "present.2.encoder.value",
+      "present.3.decoder.key",
+      "present.3.decoder.value",
+      "present.3.encoder.key",
+      "present.3.encoder.value",
+      "decoder_attentions.0",
+      "decoder_attentions.1",
+      "decoder_attentions.2",
+      "decoder_attentions.3",
+      "cross_attentions.0",
+      "cross_attentions.1",
+      "cross_attentions.2",
+      "cross_attentions.3"
+    ],
+    "requiredCrossAttentionOutputsPresent": true
+  },
+  "runs": [],
+  "limitations": [
+    "Node CPU execution does not verify browser Worker, WASM, browser caching, or browser network behavior.",
+    "The CC0 fixture has no manually verified transcript or timestamp gold; no recognition/boundary accuracy metric is claimed.",
+    "One English singing excerpt does not validate Mandarin, multilingual, mixed-language, or full-song quality."
+  ],
+  "totalVerifiedBytes": 66406756
+}

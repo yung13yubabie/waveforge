@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="/src/css/audio-trust.css">
   <link rel="stylesheet" href="/src/css/studio.css">
   <link rel="stylesheet" href="/src/css/lyrics.css">
+  <link rel="stylesheet" href="/src/css/daw.css">
 </head>
 <body>
 
@@ -146,6 +147,7 @@
             aria-selected="false" aria-controls="mode-stems">分軌母帶</button>
     <button class="mode-tab" role="tab" data-mode="antitheft"
             aria-selected="false" aria-controls="mode-antitheft">防盜偵測</button>
+    <button id="tab-editor" class="mode-tab" role="tab" data-mode="editor" aria-selected="false" aria-controls="mode-editor">多軌剪輯</button>
     <button id="tab-lyrics" class="mode-tab" role="tab" data-mode="lyrics" aria-selected="false" aria-controls="mode-lyrics">歌詞對時</button>
     <div class="mode-nav-auth">
       <button class="auth-login-pill" id="auth-login-pill">登入 / 註冊</button>
@@ -1141,6 +1143,88 @@
   </section>
 
   <!-- ── Transport bar ────────────────────────────────────── -->
+  <!-- Local, non-destructive multitrack editor. Controls are owned by daw/panel.js. -->
+  <section class="workspace mode-panel daw-panel" id="mode-editor" role="tabpanel" aria-labelledby="tab-editor" hidden>
+    <div class="daw-heading">
+      <div><p class="daw-eyebrow">LOCAL AUDIO WORKSPACE</p><h1>把每一段，放在對的位置</h1><p class="daw-note">剪片段、調整各軌音量，再把完整混音送往母帶處理。原始錄音保持不變。</p></div>
+      <span class="daw-badge">音訊留在此瀏覽器</span>
+    </div>
+    <div class="daw-project-bar">
+      <label class="daw-project-name">專案名稱<input id="daw-name" maxlength="120" value="未命名專案" autocomplete="off"></label>
+      <div><p id="daw-save-state" role="status">尚無修改</p><p class="daw-note">關頁前請下載工程；本頁不會自動保存音訊</p></div>
+      <div class="daw-actions">
+        <button type="button" data-daw="undo" disabled>復原</button><button type="button" data-daw="redo" disabled>重做</button>
+        <button type="button" data-daw="save" disabled>下載工程</button><button type="button" data-daw="open">開啟工程</button>
+        <button type="button" data-daw="clear">清除此專案</button>
+      </div>
+    </div>
+    <div class="daw-actions daw-import-bar">
+      <button type="button" data-daw="import" class="daw-primary">＋ 匯入音檔</button>
+      <input id="daw-audio-files" type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac" multiple hidden>
+      <input id="daw-project-file" type="file" accept=".zip,.waveforge.zip,application/zip" hidden>
+      <button type="button" data-daw="add-track">＋ 空白音軌</button>
+      <label class="daw-inline">拍速 BPM<input id="daw-tempo" type="number" min="20" max="300" step="1" value="120"></label>
+      <label class="daw-check"><input id="daw-snap" type="checkbox" checked> 移動時吸附拍格</label>
+      <label class="daw-inline">格線<select id="daw-grid"><option value="1">一拍</option><option value="0.5">半拍</option><option value="0.25">四分之一拍</option></select></label>
+      <label class="daw-inline">放大時間軸<select id="daw-zoom"><option value="24">24 px / 秒</option><option value="48" selected>48 px / 秒</option><option value="96">96 px / 秒</option></select></label>
+    </div>
+    <p class="daw-note">拍速只改格線，不會把錄音唱快或拉長。每個音檔新增一軌，起點在 0 秒；最多 16 軌、256 片段、10 分鐘，每個原檔最多 64 MiB。</p>
+    <div class="daw-status-row"><p id="daw-status" role="status" aria-live="polite">先匯入伴奏、人聲或其他錄音，再選取要修改的片段</p><button type="button" data-daw="cancel" hidden>取消目前工作</button></div>
+    <div class="daw-editor-grid">
+      <div class="daw-arrangement">
+        <div class="daw-section-title"><h2>音軌與片段</h2><span id="daw-summary">0 軌 · 0 片段</span></div>
+        <div id="daw-timeline" class="daw-timeline" tabindex="0" aria-label="多軌時間軸，選取片段後可用左右方向鍵移動，Delete 刪除">
+          <div id="daw-ruler" class="daw-ruler" aria-label="時間刻度"></div>
+          <div id="daw-tracks"></div>
+          <p id="daw-empty" class="daw-empty">把音檔拖到這裡，開始編排<br><span>音檔只在裝置內解碼，不上傳到模型或伺服器</span></p>
+        </div>
+      </div>
+      <aside class="daw-inspector" aria-label="所選片段參數">
+        <p class="daw-eyebrow">正在修改</p><h2 id="daw-selection-title">尚未選取片段</h2>
+        <p id="daw-selection-range" class="daw-note">點選波形，這裡只修改該片段</p>
+        <fieldset id="daw-clip-fields" disabled>
+          <label>片段名稱<input id="daw-clip-name" maxlength="120"></label>
+          <div class="daw-actions"><button type="button" data-daw="earlier">← 提早</button><button type="button" data-daw="later">晚一點 →</button></div>
+          <p class="daw-note">把這句提早／晚一點：吸附開啟時移動一格，關閉時移動 10 毫秒</p>
+          <div class="daw-two"><label>開始位置（秒）<input id="daw-clip-at" type="number" min="0" max="600" step="0.001"></label><label>放在哪一軌<select id="daw-clip-track"></select></label></div>
+          <button type="button" data-daw="move">套用位置與音軌</button>
+          <div class="daw-two"><label>保留起點（秒）<input id="daw-trim-start" type="number" min="0" step="0.001"></label><label>保留終點（秒）<input id="daw-trim-end" type="number" min="0" step="0.001"></label></div>
+          <button type="button" data-daw="trim">裁掉所選範圍外的聲音</button>
+          <p class="daw-note">以時間軸秒數保留目前片段的一部分，不會改變音高或播放速度；復原可找回</p>
+          <div class="daw-actions"><button type="button" data-daw="split">在播放位置切開</button><button type="button" data-daw="duplicate">複製到片段後方</button><button type="button" data-daw="delete">刪除此片段</button></div>
+          <details><summary>細調音量與接縫</summary>
+            <label>片段音量（dB）<input id="daw-clip-gain" type="number" min="-60" max="12" step="0.5"></label>
+            <div class="daw-two"><label>淡入（秒）<input id="daw-fade-in" type="number" min="0" step="0.01"></label><label>淡出（秒）<input id="daw-fade-out" type="number" min="0" step="0.01"></label></div>
+            <button type="button" data-daw="fades">套用淡入與淡出</button><p class="daw-note">讓片段開頭／尾端慢慢變大聲／變小聲；淡入與淡出合計不能超過片段長度</p>
+          </details>
+        </fieldset>
+      </aside>
+    </div>
+    <details class="daw-delivery" open><summary>混音交付</summary>
+      <p class="daw-note">輸出範圍：0 秒到最後一個片段結尾，含空白與各軌混音。同軌重疊片段會同時混合。靜音／獨聽、片段剪輯、音量、左右聲道與淡入淡出都會套用；不含母帶效果與浮水印。試聽與 WAV 使用同一份渲染結果。</p>
+      <div class="daw-actions">
+        <label class="daw-inline">總混音音量（dB）<input id="daw-master-gain" type="number" min="-60" max="12" step="0.5" value="0"></label>
+        <label class="daw-inline">混音取樣率<select id="daw-sample-rate"><option value="44100">44.1 kHz</option><option value="48000" selected>48 kHz</option><option value="96000">96 kHz</option></select></label>
+        <label class="daw-inline">WAV 位元深度<select id="daw-bit-depth"><option value="24">24-bit</option><option value="16">16-bit + TPDF dither</option></select></label>
+        <button type="button" data-daw="export" disabled>下載立體聲混音 WAV</button><button type="button" data-daw="master" disabled>送往母帶處理</button>
+      </div><p id="daw-render-info" class="daw-note">尚未產生混音；採樣峰值或估計 True Peak 超過 0 dBFS 會停止 WAV 輸出，請先降低總混音音量</p>
+    </details>
+    <details class="daw-help"><summary>操作、保存與目前的界線</summary>
+      <p>匯入 → 點選片段 → 移動／裁切 → 試聽 → 下載工程或混音。可以拖曳片段來移動；也可用右側數值或左右方向鍵精準移動，空白鍵播放／暫停，Ctrl／⌘ Z 復原。</p>
+      <p>網站不用另外安裝；關閉分頁會停止本次處理，本頁音訊未自動保存。離開前下載工程；重開網站再載入工程即可繼續。</p>
+      <p>開啟工程僅接受此編輯器直接下載的 ZIP；請勿先解壓、重新壓縮或使用其他工具改寫。此工程 ZIP 保存原音檔＋多軌剪輯／音量設定，尚不自動收錄母帶頁參數或歌詞草稿。工程 ZIP 含原始音檔和編輯設定，包括裁掉但仍留在原檔中的聲音。分享前請確認你願意把這些原音交給收件人。已下載檔案留在裝置，直到你自行刪除；本頁不會自動備份。</p>
+      <p>開啟／下載工程可在切換到其他工作區後繼續；返回此頁可取消。切換工作區會停止多軌試聽，並取消尚在送往母帶頁的工作。</p>
+      <p>清除此專案會停止試聽，釋放此多軌專案與復原紀錄的音訊參照；不是安全抹除記憶體，也不會刪除裝置原檔、下載檔、母帶工作階段或歌詞。</p>
+      <p>這是有容量上限的瀏覽器音訊剪輯器。工程 ZIP 上限 256 MiB，編輯器保守工作預算 512 MiB；時長、取樣率與原檔大小會共同影響容量。尚無 MIDI、錄音、音高修正、時間伸縮、自動化、效果器插槽、母線或 AI 重唱；波形表示音量起伏，並非音高曲線。解碼格式依瀏覽器支援，超出編輯器的保守 RAM 估算／時長上限會保留原專案並拒絕作業；瀏覽器與音訊引擎內部仍可能使用更多記憶體。</p>
+    </details>
+    <div class="daw-transport" role="toolbar" aria-label="多軌專案播放控制">
+      <button type="button" data-daw="begin" aria-label="回到專案開頭">|←</button><button type="button" data-daw="play" class="daw-primary" disabled>播放混音</button><button type="button" data-daw="stop" disabled>停止</button>
+      <label class="daw-check"><input id="daw-loop" type="checkbox"> 循環所選片段</label>
+      <label class="daw-seek-label">播放位置<input id="daw-seek" type="range" min="0" max="0" step="0.01" value="0" aria-label="多軌播放位置（秒）"></label>
+      <output id="daw-time">00:00.000 / 00:00.000</output>
+    </div>
+  </section>
+
   <section class="workspace mode-panel lyrics-panel" id="mode-lyrics" role="tabpanel" aria-labelledby="tab-lyrics" hidden>
     <div class="lyrics-heading"><div><p class="lyrics-eyebrow">歌詞工作台</p><h1>原文歌詞・逐句對時</h1></div><span id="lyrics-position">0.000 s</span></div>
     <p id="lyrics-source" class="lyrics-note"></p>
@@ -1152,15 +1236,43 @@
     <p id="lyrics-save-status" class="lyrics-note">這份工程只保存歌詞與時間，音檔請另外保留。套用歌詞或修改時間後，會備份在這個瀏覽器。</p>
     <details class="lyrics-original" open><summary>一行一句・貼上歌詞</summary>
       <label for="lyrics-raw">貼上原本的歌詞（空行與重複句都會保留）</label><textarea id="lyrics-raw" rows="5" maxlength="200000" placeholder="一行一句，保留你提供的原文"></textarea>
-      <div class="lyrics-actions"><button data-command="lyrics.apply">套用歌詞</button><button disabled title="自動對時尚未完成；這版請逐句記錄開始與結束">自動對時（尚未完成）</button></div>
+      <div class="lyrics-actions"><button data-command="lyrics.apply">套用歌詞</button></div>
       <p class="lyrics-note">貼上後先按「套用歌詞」。改用另一份原文會清除已設定的時間，可復原。不會唱出的行可取消「此行有演唱」。</p>
     </details>
+    <section class="lyrics-alignment" aria-labelledby="lyrics-alignment-heading">
+      <div class="lyrics-section-heading"><h2 id="lyrics-alignment-heading">先找時間，再聽一次</h2><span class="lyrics-local-badge">瀏覽器本機分析</span></div>
+      <p class="lyrics-note">以你套用的原文尋找時間，不改字、不補詞。找不到的句子會留下標記；新時間需先採用，再逐句試聽確認。</p>
+      <div class="lyrics-model-disclosure">
+        <p id="lyrics-model-info" class="lyrics-note"></p>
+        <p class="lyrics-note">模型檔案從外部來源下載，執行檔由本網站提供；音訊與歌詞留在此瀏覽器。下載及分析可能較久，也會使用裝置記憶體。網路、快取或裝置效能不足時，仍可使用下方手動對時。</p>
+        <div class="lyrics-model-links"><a id="lyrics-model-link" target="_blank" rel="noopener noreferrer">模型來源</a><a id="lyrics-license-link" target="_blank" rel="noopener noreferrer">模型授權</a></div>
+        <label class="lyrics-check"><input id="lyrics-model-consent" type="checkbox"> 我同意下載上述模型與執行檔，並在此瀏覽器分析</label>
+        <div class="lyrics-actions"><button data-command="lyrics.align.clear-cache">刪除下載的模型</button></div><p class="lyrics-note">只刪除此瀏覽器的模型快取，不刪原音檔或歌詞工程。下次分析需重新下載。</p>
+      </div>
+      <label for="lyrics-language">這段主要演唱語言</label>
+      <select id="lyrics-language" aria-describedby="lyrics-language-help">
+        <option value="">請選擇演唱語言</option><option value="zh">國語／普通話</option><option value="en">英語</option><option value="ja">日語</option><option value="ar">阿拉伯語</option><option value="es">西班牙語</option><option value="fr">法語</option><option value="de">德語</option><option value="ko">韓語</option>
+      </select>
+      <p id="lyrics-language-help" class="lyrics-note">請選這段主要演唱語言；混合語言或方言可能需分段重找／手動對時。已完成英文清唱 CPU 測試；瀏覽器仍待驗證，歌唱時間邊界與多語準確度尚未校準，不保證自動對準。</p>
+      <div class="lyrics-actions"><button class="lyrics-primary" data-command="lyrics.align">自動找每句時間</button><button data-command="lyrics.align.unresolved">重找待確認句</button><button data-command="lyrics.align.cancel">取消分析</button></div>
+      <p id="lyrics-alignment-availability" class="lyrics-note"></p>
+      <div id="lyrics-alignment-progress" class="lyrics-analysis-progress" role="status" aria-live="polite"><p id="lyrics-alignment-message">尚未開始分析</p><progress id="lyrics-model-progress" aria-label="模型檔案準備" hidden></progress></div>
+      <div id="lyrics-proposal" class="lyrics-proposal" hidden>
+        <h3>檢查這次找到的時間</h3><p id="lyrics-proposal-summary" class="lyrics-note"></p>
+        <p class="lyrics-note">點一句查看目前與新時間，也可先試聽新時間。未採用的候選不會存入工程。採用整批算一次操作，可按「復原」全部退回；仍需逐句確認才可匯出字幕。</p>
+        <div id="lyrics-proposal-list" class="lyrics-proposal-list" role="group" aria-label="這次分析的句子"></div>
+        <div class="lyrics-actions"><button class="lyrics-primary" data-command="lyrics.align.adopt">採用這批時間</button><button data-command="lyrics.align.discard">保留目前時間</button></div>
+      </div>
+    </section>
     <div class="lyrics-editor">
       <div><h2>逐行歌詞</h2><div id="lyrics-list" class="lyrics-list" role="group" aria-label="逐行選取"></div></div>
       <div class="lyrics-detail"><p id="lyrics-selected-id" class="lyrics-eyebrow"></p><h2 id="lyrics-selected-text"></h2>
         <canvas id="lyrics-waveform" tabindex="0" role="slider" aria-label="音訊定位（左右鍵 100ms、Shift 10ms、Home／End）" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
         <p class="lyrics-note">點波形定位；左右鍵 100ms，Shift 10ms。固定播放列控制同一首音檔；試聽使用目前母帶處理，歌詞不改變音訊。</p>
         <label><input id="lyrics-sung" type="checkbox"> 此行有演唱</label>
+        <label class="lyrics-check"><input id="lyrics-manual-lock" type="checkbox"> 保留我調的時間（自動分析不覆蓋）</label>
+        <div id="lyrics-line-evidence" class="lyrics-line-evidence" hidden><p id="lyrics-candidate-times"></p><p id="lyrics-candidate-reasons" class="lyrics-note"></p><p class="lyrics-note">文字吻合程度是辨識文字與原文的比對依據，不是辨識正確率。</p><button data-command="lyrics.align.play">試聽新時間</button></div>
+        <div class="lyrics-actions"><button data-command="lyrics.align.selected">只重找這一句</button></div>
         <div class="lyrics-times"><label>句首（秒）<input id="lyrics-start-value" type="number" min="0" step="0.001" aria-label="句首秒數"></label><label>句尾（秒）<input id="lyrics-end-value" type="number" min="0" step="0.001" aria-label="句尾秒數"></label></div>
         <div class="lyrics-actions"><button data-command="lyrics.start">記錄句首</button><button data-command="lyrics.end">記錄句尾</button><button data-command="lyrics.confirm">確認此句</button><button data-command="lyrics.reset">清除時間</button></div>
         <div class="lyrics-actions"><button data-command="lyrics.previous">上一行</button><button data-command="lyrics.next">下一行</button><button data-command="lyrics.play">播放此句</button><button data-command="lyrics.stop">停止</button><label><input id="lyrics-loop" type="checkbox"> 循環此句</label></div>

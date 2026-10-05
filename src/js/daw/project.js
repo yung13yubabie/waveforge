@@ -1,0 +1,273 @@
+/** Bounded, non-destructive audio editing. Times are seconds; tempo is grid-only. */
+export const PROJECT_SCHEMA = 'waveforge.project.v1'
+export const DAW_LIMITS = Object.freeze({
+  maxDurationSeconds: 600, maxTracks: 16, maxClips: 256, maxAssets: 64,
+  maxDecodedBytes: 256 * 1024 * 1024, maxRenderBytes: 256 * 1024 * 1024,
+  maxCombinedBytes: 512 * 1024 * 1024, maxEnvelopePoints: 8,
+})
+const OUTPUT_RATES = [44100, 48000, 96000]
+const EPSILON = 1e-9
+const clone = value => JSON.parse(JSON.stringify(value))
+const fail = message => { throw new Error(`DAW: ${message}`) }
+const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
+function number(value, label, min, max) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) fail(`${label} must be ${min}–${max}`)
+}
+function integer(value, label, min, max) {
+  number(value, label, min, max)
+  if (!Number.isSafeInteger(value)) fail(`${label} must be an integer`)
+}
+function text(value, label, max = 256) {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) fail(`${label} must be 1–${max} characters`)
+}
+function id(value, label) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) fail(`${label} is invalid`)
+}
+function object(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) fail(`${label} must be plain metadata`)
+}
+function onlyKeys(value, allowed, label) {
+  object(value, label)
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${label}: unsupported field ${key}`)
+}
+function array(value, label, max) {
+  if (!Array.isArray(value) || value.length > max) fail(`${label} exceeds the ${max} item limit`)
+}
+function unique(value, seen, label) {
+  id(value, label)
+  if (seen.has(value)) fail(`duplicate ${label}: ${value}`)
+  seen.add(value)
+}
+export function generateId(prefix = 'id') {
+  const suffix = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${suffix}`
+}
+export function createProject(options = {}) {
+  const project = { schema: PROJECT_SCHEMA, id: generateId('project'), revision: 0,
+    name: 'Untitled project', masterGainDb: 0, sampleRate: 48000, tempo: 120, timeSignature: [4, 4], assets: [], tracks: [], ...options }
+  validateProject(project)
+  return clone(project)
+}
+export function getProjectDuration(project) {
+  return Math.max(0, ...project.tracks.flatMap(track => track.clips.map(clip => clip.atSeconds + clip.durationSeconds)))
+}
+export function getDecodedBytes(project) {
+  return project.assets.reduce((total, asset) => total + (asset.length ?? Math.ceil(asset.duration * asset.sampleRate)) * asset.channels * 4, 0)
+}
+export function validateProject(project) {
+  onlyKeys(project, ['schema', 'id', 'revision', 'name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'assets', 'tracks'], 'project')
+  if (project.schema !== PROJECT_SCHEMA) fail('unsupported project schema')
+  id(project.id, 'project ID'); text(project.name, 'project name')
+  integer(project.revision, 'revision', 0, Number.MAX_SAFE_INTEGER - 1)
+  if (!OUTPUT_RATES.includes(project.sampleRate)) fail('output sample rate must be 44100, 48000 or 96000 Hz')
+  number(project.tempo, 'tempo', 20, 300)
+  number(project.masterGainDb, 'master gain dB', -60, 12)
+  if (!Array.isArray(project.timeSignature) || project.timeSignature.length !== 2) fail('invalid time signature')
+  integer(project.timeSignature[0], 'time signature numerator', 1, 16)
+  if (![1, 2, 4, 8, 16].includes(project.timeSignature[1])) fail('invalid time signature denominator')
+  array(project.assets, 'assets', DAW_LIMITS.maxAssets)
+  array(project.tracks, 'tracks', DAW_LIMITS.maxTracks)
+  const assetIds = new Set(), trackIds = new Set(), clipIds = new Set()
+  const assets = new Map()
+  for (const asset of project.assets) {
+    onlyKeys(asset, ['id', 'name', 'hash', 'duration', 'sampleRate', 'channels', 'length', 'sourceSampleRate', 'decodeBackend'], 'asset')
+    unique(asset.id, assetIds, 'asset ID'); text(asset.name, 'asset name')
+    if (asset.hash !== undefined && asset.hash !== '' && (typeof asset.hash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(asset.hash))) fail('asset hash must be SHA-256 hex')
+    number(asset.duration, 'asset duration', Number.MIN_VALUE, DAW_LIMITS.maxDurationSeconds)
+    integer(asset.sampleRate, 'asset sample rate', 8000, 192000)
+    if (asset.duration < 1 / asset.sampleRate) fail('asset must contain at least one sample')
+    integer(asset.channels, 'asset channels', 1, 2)
+    if (asset.length !== undefined) {
+      integer(asset.length, 'asset frame count', 1, DAW_LIMITS.maxDurationSeconds * asset.sampleRate)
+      if (Math.abs(asset.length / asset.sampleRate - asset.duration) > 1 / asset.sampleRate + EPSILON) fail('asset frame count does not match duration')
+    }
+    if (asset.sourceSampleRate !== undefined && asset.sourceSampleRate !== null) integer(asset.sourceSampleRate, 'source sample rate', 8000, 192000)
+    if (asset.decodeBackend !== undefined) text(asset.decodeBackend, 'decode backend', 80)
+    assets.set(asset.id, asset)
+  }
+  if (getDecodedBytes(project) > DAW_LIMITS.maxDecodedBytes) fail('decoded assets exceed 256 MiB; use shorter source files')
+  let clipCount = 0
+  for (const track of project.tracks) {
+    onlyKeys(track, ['id', 'name', 'gainDb', 'pan', 'mute', 'solo', 'clips'], 'track')
+    unique(track.id, trackIds, 'track ID'); text(track.name, 'track name')
+    number(track.gainDb, 'track gain dB', -60, 12); number(track.pan, 'track pan', -1, 1)
+    if (typeof track.mute !== 'boolean' || typeof track.solo !== 'boolean') fail('mute and solo must be booleans')
+    array(track.clips, 'track clips', DAW_LIMITS.maxClips)
+    clipCount += track.clips.length
+    if (clipCount > DAW_LIMITS.maxClips) fail('project exceeds 256 clips')
+    for (const clip of track.clips) {
+      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope'], 'clip')
+      unique(clip.id, clipIds, 'clip ID'); text(clip.name, 'clip name')
+      const asset = assets.get(clip.assetId)
+      if (!asset) fail(`clip ${clip.id} has missing asset ${clip.assetId}`)
+      number(clip.atSeconds, 'clip position', 0, DAW_LIMITS.maxDurationSeconds)
+      number(clip.offsetSeconds, 'source offset', 0, asset.duration)
+      number(clip.durationSeconds, 'clip duration', 1 / asset.sampleRate, asset.duration)
+      if (clip.atSeconds + clip.durationSeconds > DAW_LIMITS.maxDurationSeconds + EPSILON) fail('timeline exceeds 600 seconds')
+      if (clip.offsetSeconds + clip.durationSeconds > asset.duration + EPSILON) fail('clip extends beyond its source')
+      number(clip.gainDb, 'clip gain dB', -60, 12)
+      number(clip.fadeInSeconds, 'fade in', 0, clip.durationSeconds)
+      number(clip.fadeOutSeconds, 'fade out', 0, clip.durationSeconds)
+      if (clip.fadeInSeconds + clip.fadeOutSeconds > clip.durationSeconds + EPSILON) fail('clip fades overlap; shorten a fade')
+      if (clip.gainEnvelope !== undefined) {
+        array(clip.gainEnvelope, 'gain envelope', DAW_LIMITS.maxEnvelopePoints)
+        if (clip.gainEnvelope.length < 2) fail('gain envelope needs start and end points')
+        let previous = -1
+        for (const point of clip.gainEnvelope) {
+          onlyKeys(point, ['timeSeconds', 'value'], 'gain envelope point')
+          number(point.timeSeconds, 'envelope time', 0, clip.durationSeconds)
+          number(point.value, 'envelope gain', 0, 1)
+          if (point.timeSeconds <= previous) fail('gain envelope points must be strictly ordered')
+          previous = point.timeSeconds
+        }
+        if (clip.gainEnvelope[0].timeSeconds !== 0 || Math.abs(previous - clip.durationSeconds) > EPSILON) fail('gain envelope must span the clip')
+      }
+    }
+  }
+  return project
+}
+/** Envelope uses linear amplitude ramps, never dB interpolation. */
+export function getClipEnvelope(clip) {
+  if (clip.gainEnvelope) return clone(clip.gainEnvelope)
+  const points = [{ timeSeconds: 0, value: clip.fadeInSeconds > 0 ? 0 : 1 }]
+  if (clip.fadeInSeconds > 0) points.push({ timeSeconds: clip.fadeInSeconds, value: 1 })
+  const fadeOutStart = clip.durationSeconds - clip.fadeOutSeconds
+  if (fadeOutStart > points.at(-1).timeSeconds && clip.fadeOutSeconds > 0) points.push({ timeSeconds: fadeOutStart, value: 1 })
+  if (clip.durationSeconds > points.at(-1).timeSeconds) points.push({ timeSeconds: clip.durationSeconds, value: clip.fadeOutSeconds > 0 ? 0 : 1 })
+  return points
+}
+export function envelopeValueAt(points, seconds) {
+  if (seconds <= points[0].timeSeconds) return points[0].value
+  for (let index = 1; index < points.length; index++) {
+    const left = points[index - 1], right = points[index]
+    if (seconds <= right.timeSeconds) {
+      const fraction = (seconds - left.timeSeconds) / (right.timeSeconds - left.timeSeconds)
+      return left.value + (right.value - left.value) * fraction
+    }
+  }
+  return points.at(-1).value
+}
+function sliceClip(clip, start, end) {
+  const durationSeconds = end - start, points = getClipEnvelope(clip)
+  const gainEnvelope = [{ timeSeconds: 0, value: envelopeValueAt(points, start) },
+    ...points.filter(point => point.timeSeconds > start && point.timeSeconds < end).map(point => ({ ...point, timeSeconds: point.timeSeconds - start })),
+    { timeSeconds: durationSeconds, value: envelopeValueAt(points, end) }]
+  return { ...clip, atSeconds: clip.atSeconds + start, offsetSeconds: clip.offsetSeconds + start,
+    durationSeconds, fadeInSeconds: Math.min(durationSeconds, Math.max(0, clip.fadeInSeconds - start)),
+    fadeOutSeconds: Math.min(durationSeconds, Math.max(0, end - (clip.durationSeconds - clip.fadeOutSeconds))), gainEnvelope }
+}
+function makeTrack(input = {}) {
+  return { id: generateId('track'), name: 'Audio track', gainDb: 0, pan: 0, mute: false, solo: false, clips: [], ...input }
+}
+function makeClip(project, input) {
+  object(input, 'clip')
+  const asset = project.assets.find(candidate => candidate.id === input.assetId)
+  if (!asset) fail('cannot add a clip without its source asset')
+  return { id: generateId('clip'), assetId: asset.id, name: asset.name, atSeconds: 0,
+    offsetSeconds: 0, durationSeconds: asset.duration - (input.offsetSeconds ?? 0),
+    gainDb: 0, fadeInSeconds: 0, fadeOutSeconds: 0, ...input }
+}
+function trackById(project, trackId) {
+  const track = project.tracks.find(candidate => candidate.id === trackId)
+  if (!track) fail(`track not found: ${trackId}`)
+  return track
+}
+function clipById(track, clipId) {
+  const clip = track.clips.find(candidate => candidate.id === clipId)
+  if (!clip) fail(`clip not found: ${clipId}`)
+  return clip
+}
+function patch(target, changes, allowed, label) {
+  onlyKeys(changes, allowed, label)
+  Object.assign(target, clone(changes))
+}
+/** Every successful command returns independent metadata; failed commands do not touch input. */
+export function applyCommand(project, command) {
+  validateProject(project); object(command, 'command')
+  const next = clone(project)
+  switch (command.type) {
+    case 'project.update': patch(next, command.patch, ['name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature'], 'project patch'); break
+    case 'asset.add': next.assets.push(clone(command.asset)); break
+    case 'track.add': next.tracks.push(makeTrack(command.track ? clone(command.track) : {})); break
+    case 'track.remove': {
+      trackById(next, command.trackId)
+      next.tracks = next.tracks.filter(track => track.id !== command.trackId); break
+    }
+    case 'track.duplicate': {
+      const source = trackById(next, command.trackId)
+      next.tracks.push({ ...clone(source), id: command.newId ?? generateId('track'), name: `${source.name.slice(0, 249)} copy`,
+        clips: source.clips.map(clip => ({ ...clone(clip), id: generateId('clip') })) }); break
+    }
+    case 'track.update': patch(trackById(next, command.trackId), command.patch, ['name', 'gainDb', 'pan', 'mute', 'solo'], 'track patch'); break
+    case 'clip.add': trackById(next, command.trackId).clips.push(makeClip(next, clone(command.clip))); break
+    case 'clip.remove': {
+      const track = trackById(next, command.trackId); clipById(track, command.clipId)
+      track.clips = track.clips.filter(clip => clip.id !== command.clipId); break
+    }
+    case 'clip.move': {
+      const track = trackById(next, command.trackId), clip = clipById(track, command.clipId)
+      clip.atSeconds = command.atSeconds
+      if (command.toTrackId && command.toTrackId !== track.id) {
+        const target = trackById(next, command.toTrackId)
+        track.clips = track.clips.filter(candidate => candidate.id !== clip.id); target.clips.push(clip)
+      }
+      break
+    }
+    case 'clip.duplicate': {
+      const track = trackById(next, command.trackId), clip = clipById(track, command.clipId)
+      const target = command.toTrackId ? trackById(next, command.toTrackId) : track
+      target.clips.push({ ...clone(clip), id: command.newId ?? generateId('clip'),
+        atSeconds: command.atSeconds ?? clip.atSeconds + clip.durationSeconds }); break
+    }
+    case 'clip.split': {
+      const track = trackById(next, command.trackId), clip = clipById(track, command.clipId)
+      number(command.atSeconds, 'split position', clip.atSeconds, clip.atSeconds + clip.durationSeconds)
+      const cut = command.atSeconds - clip.atSeconds
+      if (cut <= 0 || cut >= clip.durationSeconds) fail('split must be inside the clip')
+      track.clips.splice(track.clips.indexOf(clip), 1, sliceClip(clip, 0, cut),
+        { ...sliceClip(clip, cut, clip.durationSeconds), id: command.newId ?? generateId('clip') }); break
+    }
+    case 'clip.trim': {
+      const track = trackById(next, command.trackId), clip = clipById(track, command.clipId)
+      number(command.startSeconds, 'trim start', clip.atSeconds, clip.atSeconds + clip.durationSeconds)
+      number(command.endSeconds, 'trim end', command.startSeconds, clip.atSeconds + clip.durationSeconds)
+      track.clips.splice(track.clips.indexOf(clip), 1, sliceClip(clip, command.startSeconds - clip.atSeconds, command.endSeconds - clip.atSeconds)); break
+    }
+    case 'clip.update': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      patch(clip, command.patch, ['name', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds'], 'clip patch')
+      // Explicit fade edits intentionally replace a cropped envelope. Gain/name edits preserve it.
+      if (own(command.patch, 'fadeInSeconds') || own(command.patch, 'fadeOutSeconds')) delete clip.gainEnvelope
+      break
+    }
+    default: fail(`unsupported command ${command.type}`)
+  }
+  next.revision = project.revision + 1
+  validateProject(next)
+  return next
+}
+/** Registration never copies or alters PCM. Original file blobs are retained by the caller. */
+export function registerAudioBuffer(project, buffers, buffer, options = {}) {
+  if (!(buffers instanceof Map)) fail('runtime buffers must be a Map')
+  if (!buffer || typeof buffer.getChannelData !== 'function') fail('decoded AudioBuffer required')
+  const asset = { id: options.id ?? generateId('asset'), name: options.name ?? 'Imported audio', hash: options.hash ?? '',
+    duration: buffer.duration, sampleRate: buffer.sampleRate, channels: buffer.numberOfChannels, length: buffer.length }
+  if (options.sourceSampleRate !== undefined) asset.sourceSampleRate = options.sourceSampleRate
+  if (options.decodeBackend !== undefined) asset.decodeBackend = options.decodeBackend
+  const next = applyCommand(project, { type: 'asset.add', asset })
+  const heldBuffers = new Set([...buffers.values(), buffer])
+  let heldBytes = 0
+  for (const held of heldBuffers) {
+    if (!held || !Number.isSafeInteger(held.length) || !Number.isSafeInteger(held.numberOfChannels)) fail('invalid runtime audio buffer')
+    heldBytes += held.length * held.numberOfChannels * 4
+  }
+  if (heldBytes > DAW_LIMITS.maxDecodedBytes || buffers.size >= DAW_LIMITS.maxAssets) fail('retained audio and undo sources exceed the 256 MiB / 64 asset limit; start a new project')
+  if (buffers.has(asset.id)) fail('runtime buffer ID already exists')
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const data = buffer.getChannelData(channel)
+    if (!(data instanceof Float32Array) || data.length !== buffer.length) fail('invalid decoded PCM channel')
+    for (let index = 0; index < data.length; index++) if (!Number.isFinite(data[index])) fail('decoded PCM contains non-finite samples')
+  }
+  buffers.set(asset.id, buffer)
+  return { project: next, asset: next.assets.at(-1) }
+}
