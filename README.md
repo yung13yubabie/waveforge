@@ -1,5 +1,7 @@
 # WaveForge
 
+新增整合：歌詞手動逐句對時、保存與 LRC／SRT／ASS／TXT 輸出。先看 [這次怎麼用](START_HERE.md)。本地版本尚未推送或部署，自動對時與 AI 換聲仍未完成。
+
 線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。不需要離線 App 或本機 AI 模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
 
 > 載入音檔 → A/B/C/D 快照對比 → 調整處理鏈 → 量測響度 → 輸出 WAV / MP3。
@@ -80,11 +82,11 @@ npm run dev        # http://localhost:5173/
 |------|---------|
 | **曲風偵測** | **尚未實作**，需要 ML 後端服務。UI 顯示「—」。 |
 | **作品音訊指紋** | **尚未實作** ACRCloud custom fingerprint 上傳。上傳作品只建立記錄，UI 誠實顯示「已建立作品記錄」。 |
-| **即時 Peak Limiter** | 使用 `DynamicsCompressor`（ratio=20），控數位峰值；**不保證** inter-sample peak 不超 ceiling。輸出時可勾選「真 True-Peak 限幅」（4× oversampled 離線限制器）保證檔案 ISP ≤ ceiling。 |
-| **BPM / Key 分析** | 只分析前 45 秒（BPM）/ 30 秒（Key）。長前奏曲目結果可能不代表全曲。 |
+| **即時 Peak Limiter** | 使用 `DynamicsCompressor`（ratio=20），控數位峰值；**不保證** inter-sample peak 不超 ceiling。輸出時可勾選「真 True-Peak 限幅」（4× oversampled 離線限制器）以 4× 峰值估測器校驗量化／編碼前浮點 PCM；WAV 量化與 MP3 編碼後峰值尚未複檢。 |
+| **BPM / Key 分析** | 分析前 45 秒（BPM）/ 在前 30 秒抽樣 8 個視窗（Key）。長前奏曲目結果可能不代表全曲。 |
 | **來源位元率偵測** | 以「檔案大小 ÷ 時長」估算，VBR 檔案顯示的是平均位元率。 |
 
-已**正確實作並驗證**：LUFS（BS.1770-4 兩段式 gating）、True Peak（4× oversampling）、24-bit WAV 編碼、共享即時／匯出處理圖。
+已實作並有回歸測試：LUFS（BS.1770-4 兩段式 gating）、True Peak（4× 峰值估測）、24-bit WAV 編碼、共享即時／匯出處理圖。相同估測器的回歸通過不等於獨立標準認證或編碼後峰值保證。
 
 ---
 
@@ -170,3 +172,10 @@ Vite 8 · vanilla JS ES2022 · Web Audio API（AudioWorklet）· WaveSurfer.js 7
 - 分軌母帶可匯入既有 vocals/drums/bass/other（或中文名稱）四軌，同步試聽 EQ／壓縮／Pan／音量，再 Bounce。超峰值阻擋送入整數 WAV，需降音量或自行勾選 Normalize Bounce。
 - [音訊稽核及限制](docs/DAW_ARCHITECTURE_AUDIT.md)、[人聲漂移偵測設計](docs/VOCAL_DRIFT_ARCHITECTURE.md)。偵測模型及修復模型尚未接入。
 - `npm run lint` 執行 JavaScript 語法檢查；`npm run test:e2e -- --workers=1` 驗證真實瀏覽器音訊及使用者操作；build 後執行 `npm run test:production` 驗證實際 dist。建置輸出是網站 `dist/`，不產生離線安裝包。
+
+## 2026-10-05 foundation repair / DAW planning
+
+- [本次音訊稽核與已修範圍](docs/AUDIO_FOUNDATION_AUDIT_2026-10-05.md)
+- [檔案留存與雲端清理的實際邊界](docs/FILE_RETENTION_AUDIT_2026-10-05.md)
+- [未來功能與介面規格（尚未實作）](docs/planning/README.md)
+- `npm run test:audio-trust`：不安裝額外模型即可重現的合成音訊回歸；不是歌唱模型品質驗證

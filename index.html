@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/src/css/layout.css">
   <link rel="stylesheet" href="/src/css/audio-trust.css">
   <link rel="stylesheet" href="/src/css/studio.css">
+  <link rel="stylesheet" href="/src/css/lyrics.css">
 </head>
 <body>
 
@@ -64,8 +65,10 @@
       <summary>檔案與隱私</summary>
       <div class="session-privacy-body">
         <strong>你的音檔，清楚掌握</strong>
-        <p>一般母帶處理在本頁記憶體內完成，不會上傳音檔。選取檔案後會保留至清除或關閉頁面，以便繼續編輯。</p>
-        <p>使用「開始分軌」會上傳至 Hugging Face；版權掃描會送出音訊片段。清除此頁無法撤回已送往雲端的資料。</p>
+        <p>一般母帶處理在本頁記憶體內完成，不會上傳音檔。音檔會留在本頁供編輯；清除會釋放程式持有的音訊參照，不代表安全抹除記憶體。</p>
+        <p>按「開始分軌」才會將整首音檔送往 Hugging Face；按版權掃描才會經 Supabase 將音訊片段送往 ACRCloud。清除或離開頁面不會撤回資料，也不保證取消雲端工作或立即刪除雲端暫存。</p>
+        <p>登入後建立的防盜作品名稱、檔案大小與掃描紀錄會保存在 Supabase，關閉頁面仍保留。此處清除不會刪除防盜作品庫；請在該作品庫另行管理。</p>
+        <p>裝置上的原檔與已下載檔案、已存預設及登入狀態也會保留。歌詞文字與時間會在修改後備份於此瀏覽器，不含音檔；清除音訊不刪除歌詞備份。</p>
         <label><input id="clear-after-export" type="checkbox"> 單曲輸出後清除母帶工作階段</label>
         <button id="clear-session-btn" class="header-btn" type="button">清除音檔、分軌與專輯</button>
         <p id="session-file-status" role="status">尚未載入音檔。</p>
@@ -143,6 +146,7 @@
             aria-selected="false" aria-controls="mode-stems">分軌母帶</button>
     <button class="mode-tab" role="tab" data-mode="antitheft"
             aria-selected="false" aria-controls="mode-antitheft">防盜偵測</button>
+    <button id="tab-lyrics" class="mode-tab" role="tab" data-mode="lyrics" aria-selected="false" aria-controls="mode-lyrics">歌詞對時</button>
     <div class="mode-nav-auth">
       <button class="auth-login-pill" id="auth-login-pill">登入 / 註冊</button>
       <button class="auth-avatar" id="auth-avatar" hidden aria-label="帳號選單" aria-haspopup="true" aria-expanded="false">?</button>
@@ -691,16 +695,16 @@
               </div>
             </div>
           </div>
-          <label class="eq-linphase-row" data-tooltip="輸出時以 4× 過採樣離線限幅，保證檔案 true peak ≤ 天花板（預覽仍為低延遲峰值限幅）">
+          <label class="eq-linphase-row" data-tooltip="WAV 量化與 MP3 編碼前使用 4× 峰值估測限幅並校驗；尚未複檢編碼後檔案。主播放器仍是低延遲峰值控制">
             <input type="checkbox" id="lim-truepeak">
             <span>真 True-Peak 限幅（輸出時）</span>
           </label>
           <!-- IRC mode selection: Web Audio 無法實作 IRC，誠實停用 -->
           <div style="font-size:10px;color:var(--c-text-3);margin-bottom:6px">
-            IRC 演算法模式 <span class="phase-badge">需後端離線渲染</span>
+            IRC 演算法模式 <span class="phase-badge">尚未提供</span>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap"
-               data-tooltip="瀏覽器 DynamicsCompressor 無法實作 IRC 演算法；此選項需後端渲染支援">
+               data-tooltip="目前未提供 IRC 演算法，這些停用按鈕不會改變聲音">
             <button class="vinyl-format-btn" data-irc="I" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC I</button>
             <button class="vinyl-format-btn" data-irc="II" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC II</button>
             <button class="vinyl-format-btn" data-irc="III" disabled style="flex:0;padding:3px 8px;font-size:10px;opacity:0.4;cursor:not-allowed">IRC III</button>
@@ -759,7 +763,7 @@
           </label>
           <div>
             <div class="module-name">Vinyl Cut Mode</div>
-            <div class="module-name-cn">黑膠刻版 — 真實 RIAA 標準</div>
+            <div class="module-name-cn">黑膠時長提示 — 不含 RIAA 處理</div>
           </div>
           <span class="module-expand" aria-hidden="true">▼</span>
         </div>
@@ -1137,6 +1141,41 @@
   </section>
 
   <!-- ── Transport bar ────────────────────────────────────── -->
+  <section class="workspace mode-panel lyrics-panel" id="mode-lyrics" role="tabpanel" aria-labelledby="tab-lyrics" hidden>
+    <div class="lyrics-heading"><div><p class="lyrics-eyebrow">歌詞工作台</p><h1>原文歌詞・逐句對時</h1></div><span id="lyrics-position">0.000 s</span></div>
+    <p id="lyrics-source" class="lyrics-note"></p>
+    <div class="lyrics-actions">
+      <button data-command="lyrics.save">下載工程</button><button data-command="lyrics.open">開啟工程</button><button data-command="lyrics.recover">恢復上次</button>
+      <button data-command="lyrics.undo">復原</button><button data-command="lyrics.redo">重做</button>
+      <input id="lyrics-project-file" type="file" accept=".json,application/json" hidden aria-label="歌詞工程 JSON">
+    </div>
+    <p id="lyrics-save-status" class="lyrics-note">這份工程只保存歌詞與時間，音檔請另外保留。套用歌詞或修改時間後，會備份在這個瀏覽器。</p>
+    <details class="lyrics-original" open><summary>一行一句・貼上歌詞</summary>
+      <label for="lyrics-raw">貼上原本的歌詞（空行與重複句都會保留）</label><textarea id="lyrics-raw" rows="5" maxlength="200000" placeholder="一行一句，保留你提供的原文"></textarea>
+      <div class="lyrics-actions"><button data-command="lyrics.apply">套用歌詞</button><button disabled title="自動對時尚未完成；這版請逐句記錄開始與結束">自動對時（尚未完成）</button></div>
+      <p class="lyrics-note">貼上後先按「套用歌詞」。改用另一份原文會清除已設定的時間，可復原。不會唱出的行可取消「此行有演唱」。</p>
+    </details>
+    <div class="lyrics-editor">
+      <div><h2>逐行歌詞</h2><div id="lyrics-list" class="lyrics-list" role="group" aria-label="逐行選取"></div></div>
+      <div class="lyrics-detail"><p id="lyrics-selected-id" class="lyrics-eyebrow"></p><h2 id="lyrics-selected-text"></h2>
+        <canvas id="lyrics-waveform" tabindex="0" role="slider" aria-label="音訊定位（左右鍵 100ms、Shift 10ms、Home／End）" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
+        <p class="lyrics-note">點波形定位；左右鍵 100ms，Shift 10ms。固定播放列控制同一首音檔；試聽使用目前母帶處理，歌詞不改變音訊。</p>
+        <label><input id="lyrics-sung" type="checkbox"> 此行有演唱</label>
+        <div class="lyrics-times"><label>句首（秒）<input id="lyrics-start-value" type="number" min="0" step="0.001" aria-label="句首秒數"></label><label>句尾（秒）<input id="lyrics-end-value" type="number" min="0" step="0.001" aria-label="句尾秒數"></label></div>
+        <div class="lyrics-actions"><button data-command="lyrics.start">記錄句首</button><button data-command="lyrics.end">記錄句尾</button><button data-command="lyrics.confirm">確認此句</button><button data-command="lyrics.reset">清除時間</button></div>
+        <div class="lyrics-actions"><button data-command="lyrics.previous">上一行</button><button data-command="lyrics.next">下一行</button><button data-command="lyrics.play">播放此句</button><button data-command="lyrics.stop">停止</button><label><input id="lyrics-loop" type="checkbox"> 循環此句</label></div>
+        <p class="lyrics-note">播放到這句開頭時按「記錄句首」，唱完按「記錄句尾」，也可直接填秒數。快捷鍵 Alt+[／Alt+]；每句請自行試聽確認。</p>
+      </div>
+    </div>
+    <div class="lyrics-delivery"><h2>字幕交付</h2><div class="lyrics-actions"><label>字幕顯示偏移（ms）<input id="lyrics-offset" type="number" min="-60000" max="60000" step="1" value="0"></label><label><input id="lyrics-overlap" type="checkbox"> 允許 SRT／ASS 逐句重疊（LRC 不支援）</label></div>
+      <p class="lyrics-note">SRT 精度 1ms；LRC／ASS 精度 10ms。TXT 保留原文，不要求時間。LRC 在句尾加入空事件以保留間奏；不提供逐字卡拉 OK。</p>
+      <pre id="lyrics-diagnostics" aria-label="時間檢查"></pre>
+      <div class="lyrics-actions"><button data-command="lyrics.export.lrc">匯出 LRC</button><button data-command="lyrics.export.srt">匯出 SRT</button><button data-command="lyrics.export.ass">匯出 ASS</button><button data-command="lyrics.export.txt">匯出 TXT</button></div>
+    </div>
+    <details class="lyrics-command"><summary>搜尋歌詞命令</summary><label>搜尋<input id="lyrics-command-search" type="search"></label><label>可用命令<select id="lyrics-command-select"></select></label><button id="lyrics-command-run">執行命令</button></details>
+    <p id="lyrics-status" role="status" aria-live="polite"></p>
+  </section>
+
   <footer class="transport" role="toolbar" aria-label="播放控制">
     <div class="transport-time" aria-live="polite" aria-atomic="true">
       <span id="time-current">0:00</span>

@@ -1,0 +1,53 @@
+{
+  "schema": "waveforge.lyrics.v1",
+  "revision": 0,
+  "rawText": "第一句\nHello, world\nこんにちは\nمرحبا بالعالم\n",
+  "source": {
+    "name": "synthetic-timing.wav",
+    "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "duration": 8
+  },
+  "displayOffsetMs": 0,
+  "lines": [
+    {
+      "id": "line-1",
+      "text": "第一句",
+      "sung": true,
+      "start": 0.1,
+      "end": 1.5,
+      "confirmed": true
+    },
+    {
+      "id": "line-2",
+      "text": "Hello, world",
+      "sung": true,
+      "start": 2,
+      "end": 3,
+      "confirmed": true
+    },
+    {
+      "id": "line-3",
+      "text": "こんにちは",
+      "sung": true,
+      "start": 3.5,
+      "end": 4.5,
+      "confirmed": true
+    },
+    {
+      "id": "line-4",
+      "text": "مرحبا بالعالم",
+      "sung": true,
+      "start": 5,
+      "end": 6,
+      "confirmed": true
+    },
+    {
+      "id": "line-5",
+      "text": "",
+      "sung": false,
+      "start": null,
+      "end": null,
+      "confirmed": false
+    }
+  ]
+}

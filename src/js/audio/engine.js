@@ -128,6 +128,7 @@ export class AudioEngine {
     await this.init()
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     this.stop()
+    this.clearPlaybackRange()
     const asset = await decodeSourceAsset(arrayBuffer, this.ctx)
     if (generation !== this._loadGen) throw new Error('已取消過期的音訊載入')
     this.stop() // also invalidate playback restarted while decode was pending
@@ -157,15 +158,20 @@ export class AudioEngine {
     }
     const src = this.ctx.createBufferSource()
     src.buffer = this.buffer
-    src.loop = this._loop
+    src.loop = this.playbackRange?.loop ?? this.loop
+    if (this.playbackRange) {
+      src.loopStart = this.playbackRange.start
+      src.loopEnd = this.playbackRange.end
+      if (this.pauseOffset < src.loopStart || this.pauseOffset >= src.loopEnd) this.pauseOffset = src.loopStart
+    }
     src.onended = () => {
       // Identity check, not just the isPlaying flag: a source replaced by
       // seek/stop fires onended LATE (async dispatch) — after a new source is
       // already playing. Acting on it froze the progress bar at 0:00 and let
       // a second source stack on top (perceived as A+B playing together).
-      if (this.source === src && this.isPlaying && !this._loop) {
+      if (this.source === src && this.isPlaying && !src.loop) {
         this.isPlaying = false
-        this.pauseOffset = 0
+        this.pauseOffset = this.playbackRange?.end ?? 0
         this._onEnded?.()
       }
     }
@@ -173,14 +179,15 @@ export class AudioEngine {
     // Connect source to both paths
     src.connect(this.nodes.inputGain)
     src.connect(this.nodes.bypassGain)
-    src.start(0, this.pauseOffset)
+    if (this.playbackRange && !this.playbackRange.loop) src.start(0, this.pauseOffset, this.playbackRange.end - this.pauseOffset)
+    else src.start(0, this.pauseOffset)
     this.startTime = this.ctx.currentTime - this.pauseOffset
     this.isPlaying = true
   }
 
   pause() {
     if (!this.isPlaying) return
-    this.pauseOffset = this.ctx.currentTime - this.startTime
+    this.pauseOffset = this.currentTime
     // Clear isPlaying BEFORE stop(): onended fires on manual stop too, and
     // must not be mistaken for natural end-of-track.
     this.isPlaying = false
@@ -209,14 +216,36 @@ export class AudioEngine {
     const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0))
     const wasPlaying = this.isPlaying
     this.stop()
+    if (this.playbackRange && (f * this.duration < this.playbackRange.start || f * this.duration >= this.playbackRange.end)) this.clearPlaybackRange()
     this.pauseOffset = f * this.duration
     // ctx is already running when seeking mid-playback; resume failure can't occur
     if (wasPlaying) this.play().catch(err => this._onError?.(err))
   }
 
+  async playRange(start, end, loop = false) {
+    if (!this.buffer || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > this.duration || start >= end) throw new Error('句子播放範圍無效')
+    this.stop(); this.clearPlaybackRange()
+    this.playbackRange = { start, end, loop }
+    this.pauseOffset = start
+    await this.play()
+  }
+
+  clearPlaybackRange() {
+    if (!this.playbackRange) return
+    this.playbackRange = null
+    if (this.source) { this.source.loop = this.loop; this.source.loopStart = 0; this.source.loopEnd = 0 }
+  }
+
   get currentTime() {
     if (!this.ctx) return 0
-    if (this.isPlaying) return this.ctx.currentTime - this.startTime
+    if (this.isPlaying) {
+      const elapsed = this.ctx.currentTime - this.startTime
+      if (this.playbackRange?.loop ?? this.loop) {
+        const start = this.playbackRange?.start ?? 0, end = this.playbackRange?.end ?? this.duration
+        if (end > start && elapsed >= end) return start + ((elapsed - start) % (end - start))
+      }
+      return this.playbackRange ? Math.min(this.playbackRange.end, elapsed) : elapsed
+    }
     return this.pauseOffset
   }
 
@@ -529,7 +558,7 @@ export class AudioEngine {
     return magOut
   }
 
-  set loop(v) { this._loop = v; if (this.source) this.source.loop = v }
+  set loop(v) { this._loop = v; if (this.source && !this.playbackRange) this.source.loop = v }
   get loop() { return this._loop ?? false }
 
   onLufs(cb) { this._onLufs = cb }

@@ -116,17 +116,21 @@ export function detectKey(audioBuffer) {
   const N    = mono.length
 
   // Hann window coefficients (pre-computed once per FRAME size)
-  const FRAME = 4096
-  if (N < FRAME) return { key: null, scale: null, confidence: 0 }
+  const FRAME = 2 ** Math.round(Math.log2(sr * 4096 / 48000))
+  const windowCount = Math.min(8, Math.floor(N / FRAME))
+  const analysis = { startSeconds: 0, endSeconds: N / sr, windowCount,
+    windowDurationSeconds: FRAME / sr, sampledSeconds: windowCount * FRAME / sr }
+  if (N < FRAME) return { key: null, scale: null, confidence: 0, analysis }
 
   const hann = new Float32Array(FRAME)
   for (let k = 0; k < FRAME; k++) hann[k] = 0.5 * (1 - Math.cos(2 * Math.PI * k / (FRAME - 1)))
 
   // Pitch-class profile (PCP): 12 bins, summed across octaves 3–5
   const pcp = new Float32Array(12)
-  let framesDone = 0
-
-  for (let start = 0; start + FRAME <= N; start += FRAME * 4) {
+  // Bound CPU work while sampling the entire advertised 30-second range.
+  // Previously eight early windows silently covered only 1.2–2.7 seconds.
+  for (let frame = 0; frame < windowCount; frame++) {
+    const start = windowCount === 1 ? 0 : Math.round(frame * (N - FRAME) / (windowCount - 1))
     for (let note = 0; note < 12; note++) {
       for (let oct = 3; oct <= 5; oct++) {
         const hz    = 440 * Math.pow(2, (oct * 12 + note - 69) / 12)
@@ -145,12 +149,11 @@ export function detectKey(audioBuffer) {
         pcp[note] += re * re + im * im
       }
     }
-    if (++framesDone >= 8) break
   }
 
   // Normalize PCP to unit sum
   const pcpSum = pcp.reduce((s, v) => s + v, 0)
-  if (pcpSum < 1e-10) return { key: null, scale: null, confidence: 0 }
+  if (pcpSum < 1e-10) return { key: null, scale: null, confidence: 0, analysis }
   const pcpNorm = Array.from(pcp).map(v => v / pcpSum)
 
   // Correlate against all 24 keys (12 major + 12 minor) via rotation
@@ -165,11 +168,12 @@ export function detectKey(audioBuffer) {
 
   // Map Pearson [-1, 1] to confidence [0, 1]; typical good detection: 0.5–0.9
   const confidence = Math.max(0, Math.min(1, (bestCorr + 0.1) / 1.1))
-  if (confidence < 0.1) return { key: null, scale: null, confidence }
+  if (confidence < 0.1) return { key: null, scale: null, confidence, analysis }
 
   return {
     key:   NOTE_NAMES[bestKey],
     scale: bestScale === 'major' ? '大調' : '小調',
     confidence,
+    analysis,
   }
 }
