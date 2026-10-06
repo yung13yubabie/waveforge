@@ -18,6 +18,13 @@ async function field(page, name, value) {
 async function open(page, id) {
   if (!await page.locator(`#${id}`).evaluate(element => element.open)) await page.locator(`#${id} > summary`).click()
 }
+async function horizontalGeometry(page) {
+  return page.evaluate(() => ({ windowX: scrollX, nodes: ['html', 'body', '#app', '#mode-editor', '.daw-inspector', '#daw-region-details', '#daw-replacement-review', '.daw-delivery'].map(selector => {
+    const element = document.querySelector(selector), box = element.getBoundingClientRect(), css = getComputedStyle(element)
+    return { selector, left: box.left, right: box.right, width: box.width, clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft, overflowX: css.overflowX, overflowY: css.overflowY }
+  }) }))
+}
 async function download(page, command) {
   const pending = page.waitForEvent('download'); await action(page, command).click()
   const result = await pending; expect(await result.failure()).toBeNull()
@@ -233,6 +240,7 @@ for (const width of [1440, 390]) test(`vocal regions stay contextual with reacha
   await page.goto('/'); await load(page, (await fixture()).bytes)
   await expect(page.locator('#daw-region-details')).not.toHaveAttribute('open', '')
   await expect(action(page, 'region-designate')).toBeHidden()
+  const initialGeometry = await horizontalGeometry(page)
   await page.screenshot({ path: testInfo.outputPath(`vocal-region-default-${width}.png`) })
   await prepare(page)
   await page.locator('#daw-region-edges > summary').click()
@@ -249,6 +257,18 @@ for (const width of [1440, 390]) test(`vocal regions stay contextual with reacha
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath(`vocal-region-review-${width}.png`) })
+  const reviewGeometry = await horizontalGeometry(page)
+  const geometryPath = testInfo.outputPath(`vocal-region-horizontal-${width}.json`)
+  await writeFile(geometryPath, JSON.stringify({ initialGeometry, reviewGeometry }, null, 2))
+  await testInfo.attach('horizontal-geometry.json', { path: geometryPath, contentType: 'application/json' })
+  console.info('VOCAL_REGION_GEOMETRY', width, JSON.stringify({ initialGeometry, reviewGeometry }))
+  if (width === 390) {
+    expect(reviewGeometry.windowX).toBe(0)
+    expect(reviewGeometry.nodes.filter(node => ['body', '#app', '#mode-editor', '.daw-inspector'].includes(node.selector)).map(node => ({ selector: node.selector, scrollLeft: node.scrollLeft }))).toEqual([
+      { selector: 'body', scrollLeft: 0 }, { selector: '#app', scrollLeft: 0 }, { selector: '#mode-editor', scrollLeft: 0 }, { selector: '.daw-inspector', scrollLeft: 0 },
+    ])
+    expect(reviewGeometry.nodes.find(node => node.selector === '#daw-region-details').left).toBeGreaterThanOrEqual(11)
+  }
   await action(page, 'replacement-confirm').focus(); await page.keyboard.press('Enter')
   const accepted = archive(await download(page, 'save')).project
   await page.locator('#daw-region-select').selectOption(accepted.tracks[0].clips[0].gainRegions[0].id)
