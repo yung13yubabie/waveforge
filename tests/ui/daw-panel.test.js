@@ -9,7 +9,7 @@ import { renderProject } from '../../src/js/daw/render.js'
 import { exportProjectArchive, importProjectArchive } from '../../src/js/daw/archive.js'
 
 vi.mock('../../src/js/audio/sha256.js', () => ({ sha256Hex: vi.fn(async () => 'a'.repeat(64)) }))
-vi.mock('../../src/js/daw/render.js', () => ({ renderProject: vi.fn() }))
+vi.mock('../../src/js/daw/render.js', async importOriginal => ({ ...await importOriginal(), renderProject: vi.fn() }))
 vi.mock('../../src/js/daw/archive.js', () => ({
   exportProjectArchive: vi.fn(async () => new Blob(['zip'])),
   importProjectArchive: vi.fn(), archiveFileName: () => 'session.waveforge.zip',
@@ -473,6 +473,38 @@ describe('local DAW panel', () => {
     expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
     pending.resolve(getBuffer()); await tick()
     await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
+  })
+  it('counts a cancelled native render after Clear before admitting fresh import reads', async () => {
+    const actual = await vi.importActual('../../src/js/daw/render.js')
+    const native = deferred(), made = [], nodes = []
+    class DelayedContext {
+      constructor(channels, frames, sampleRate) { this.destination = {}; made.push({ channels, frames, sampleRate }) }
+      node(fields = {}) { const value = { connect() {}, disconnect: vi.fn(), ...fields }; nodes.push(value); return value }
+      parameter() { return { setValueAtTime() {}, linearRampToValueAtTime() {} } }
+      createGain() { return this.node({ gain: this.parameter() }) }
+      createStereoPanner() { return this.node({ pan: this.parameter() }) }
+      createBufferSource() { return this.node({ start() {} }) }
+      startRendering() { return native.promise }
+    }
+    await setup(); await change('clip-at', 596); await click('move')
+    const accepted = panel.getProject(), plan = actual.buildRenderPlan(accepted)
+    renderProject.mockImplementation((project, buffers, options) => actual.renderProject(project, buffers, { ...options, OfflineAudioContextClass: DelayedContext }))
+    await click('play'); expect(made).toHaveLength(1)
+    const source = nodes.find(node => node.buffer), original = source.buffer, samples = original.getChannelData(0).slice()
+    await click('cancel'); panel.clear()
+    const read = vi.fn(async () => new ArrayBuffer(8))
+    const nextFiles = Array.from({ length: 5 }, (_, index) => ({ ...makeFile(`next-${index}.wav`), size: 64 * 1024 * 1024, arrayBuffer: read }))
+    const inputReservation = 7 * 64 * 1024 * 1024
+    expect(plan.renderBytes + plan.decodedBytes + inputReservation).toBeGreaterThan(512 * 1024 * 1024)
+    try {
+      expect(panel.getProject().assets).toHaveLength(0)
+      await expect(panel.importFiles(nextFiles)).rejects.toThrow('記憶體預算')
+      expect(read).not.toHaveBeenCalled(); expect(source.buffer).toBe(original)
+      expect(original.getChannelData(0)).toEqual(samples)
+    } finally { native.resolve(null); await tick() }
+    await panel.importFiles(nextFiles)
+    expect(read).toHaveBeenCalledTimes(5); expect(panel.getProject().assets).toHaveLength(5)
+    expect(made).toHaveLength(1)
   })
   it('reserves cancelled ZIP reads, blocks new loads, and preserves accepted PCM', async () => {
     await setup(); await click('play'); await click('stop')

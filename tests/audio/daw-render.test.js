@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createProject, applyCommand } from '../../src/js/daw/project.js'
-import { buildRenderPlan, renderProject } from '../../src/js/daw/render.js'
+import { buildRenderPlan, renderProject, getPendingNativeRenderBytes } from '../../src/js/daw/render.js'
 
 function pcm(sampleRate = 44100, length = 4410, channels = 1) {
   const samples = Array.from({ length: channels }, () => new Float32Array(length))
@@ -133,10 +133,14 @@ describe('Web Audio mix wiring contract (mock, not browser DSP validation)', () 
     class Slow extends Context { startRendering() { return new Promise(resolve => { settle = () => resolve(pcm(this.rate, this.frames, this.channels)) }) } }
     const controller = new AbortController()
     const pending = renderProject(project, buffers, { OfflineAudioContextClass: Slow, signal: controller.signal })
+    const retained = buildRenderPlan(project).renderBytes + buildRenderPlan(project).decodedBytes
+    expect(getPendingNativeRenderBytes()).toBe(retained)
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(getPendingNativeRenderBytes()).toBe(retained)
     await expect(renderProject(project, buffers, { OfflineAudioContextClass: Context })).rejects.toThrow(/previous native render/)
     settle(); await Promise.resolve(); await Promise.resolve()
+    expect(getPendingNativeRenderBytes()).toBe(0)
     await expect(renderProject(project, buffers, { OfflineAudioContextClass: Context })).resolves.toHaveProperty('buffer')
   })
   it('times out without accepting a late result', async () => {
@@ -144,6 +148,7 @@ describe('Web Audio mix wiring contract (mock, not browser DSP validation)', () 
     let settle
     class Slow extends Context { startRendering() { return new Promise(resolve => { settle = () => resolve(pcm(this.rate, this.frames, this.channels)) }) } }
     await expect(renderProject(project, buffers, { OfflineAudioContextClass: Slow, timeoutMs: 5 })).rejects.toThrow(/timed out/)
+    expect(getPendingNativeRenderBytes()).toBeGreaterThan(0)
     settle(); await Promise.resolve(); await Promise.resolve()
   })
   it('rejects invalid PCM and recovers the render lock after failures', async () => {

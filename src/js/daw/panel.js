@@ -1,5 +1,5 @@
 import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt } from './project.js'
-import { renderProject } from './render.js'
+import { renderProject, getPendingNativeRenderBytes } from './render.js'
 import { ProjectHistory } from './history.js'
 import { exportProjectArchive, importProjectArchive, archiveFileName, ARCHIVE_LIMITS } from './archive.js'
 import { sha256Hex } from '../audio/sha256.js'
@@ -406,7 +406,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
-  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + pendingLoadBytes
+  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + pendingLoadBytes + getPendingNativeRenderBytes()
   async function openArchive(file) {
     if (!file) return
     if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')

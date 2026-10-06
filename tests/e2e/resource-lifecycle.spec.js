@@ -3,7 +3,8 @@
  * not a pass/fail claim about the native audio allocator or permanent leaks.
  */
 import { test, expect } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { encodeWAV } from '../../src/js/audio/wav.js'
 
 function fixture(name = 'resource-probe.wav') {
@@ -109,44 +110,70 @@ test('warmed repeated import, pitch cancel, render, download, restore and clear 
     await cdp.send('HeapProfiler.collectGarbage')
     return { round, ...await page.evaluate(() => window.__resourceProbe.snapshot()), heap: await cdp.send('Runtime.getHeapUsage') }
   }
-  let warmed
-  for (let round = 0; round < 10; round++) {
-    await page.setInputFiles('#file-input', fixture())
-    await expect(page.locator('#pitch-source')).toContainText('resource-probe.wav')
-    await page.locator('#tab-pitch').click()
-    // Same-turn cancellation is deterministic even when a fast CPU finishes a
-    // one-second analysis before a second Playwright click can arrive.
-    await page.evaluate(() => { document.getElementById('pitch-analyze').click(); document.getElementById('pitch-cancel').click() })
-    await expect(page.locator('#pitch-status')).toContainText('已取消分析')
-    await page.locator('#tab-editor').click(); await page.setInputFiles('#daw-audio-files', fixture())
-    await expect(page.locator('#daw-summary')).toContainText('1 軌 · 1 片段')
-    await action(page, 'play').click(); await expect(action(page, 'play')).toHaveText('暫停'); await action(page, 'stop').click()
-    const downloadReady = page.waitForEvent('download'); await action(page, 'save').click()
-    const zip = await readFile(await (await downloadReady).path())
-    // A failed ZIP open must preserve the accepted source and editing state.
-    const before = await page.locator('#daw-summary').textContent()
-    await page.setInputFiles('#daw-project-file', { name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('not a ZIP') })
-    await expect(page.locator('#daw-status')).toHaveAttribute('data-error', 'true')
-    expect(await page.locator('#daw-summary').textContent()).toBe(before)
-    await action(page, 'clear').click(); await expect(page.locator('#daw-summary')).toContainText('0 軌 · 0 片段')
-    await page.setInputFiles('#daw-project-file', { name: 'restore.waveforge.zip', mimeType: 'application/zip', buffer: zip })
-    await expect(page.locator('#daw-status')).toContainText('工程已還原')
-    await action(page, 'clear').click()
-    await page.locator('.mode-tab[data-mode="master"]').click()
-    await page.locator('#session-privacy').evaluate(element => { element.open = true })
-    await page.locator('#clear-session-btn').click()
-    await expect(page.locator('#pitch-source')).toHaveText('尚未載入音訊')
-    // The 1000/1500 ms download handoff timers are part of intentional ownership.
-    await expect.poll(async () => (await page.evaluate(() => window.__resourceProbe.snapshot())).objectURLs).toBe(0)
-    const observed = await sample(round); samples.push(observed)
-    expect(observed.connectedSources).toBe(0); expect(observed.workers).toBe(0)
-    if (round === 2) warmed = observed
-    if (round > 2) expect(observed.globalListeners).toBe(warmed.globalListeners)
+  let warmed, completed = false, failure = null
+  try {
+    for (let round = 0; round < 10; round++) {
+      await page.setInputFiles('#file-input', fixture())
+      await expect(page.locator('#pitch-source')).toContainText('resource-probe.wav')
+      await page.locator('#tab-pitch').click()
+      // Same-turn cancellation is deterministic even when a fast CPU finishes a
+      // one-second analysis before a second Playwright click can arrive.
+      await page.evaluate(() => { document.getElementById('pitch-analyze').click(); document.getElementById('pitch-cancel').click() })
+      await expect(page.locator('#pitch-status')).toContainText('已取消分析')
+      await page.locator('#tab-editor').click(); await page.setInputFiles('#daw-audio-files', fixture())
+      await expect(page.locator('#daw-summary')).toContainText('1 軌 · 1 片段')
+      await action(page, 'play').click(); await expect(action(page, 'play')).toHaveText('暫停'); await action(page, 'stop').click()
+      const downloadReady = page.waitForEvent('download'); await action(page, 'save').click()
+      const zip = await readFile(await (await downloadReady).path())
+      // A failed ZIP open must preserve the accepted source and editing state.
+      const before = await page.locator('#daw-summary').textContent()
+      await page.setInputFiles('#daw-project-file', { name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('not a ZIP') })
+      await expect(page.locator('#daw-status')).toHaveAttribute('data-error', 'true')
+      expect(await page.locator('#daw-summary').textContent()).toBe(before)
+      await action(page, 'clear').click(); await expect(page.locator('#daw-summary')).toContainText('0 軌 · 0 片段')
+      await page.setInputFiles('#daw-project-file', { name: 'restore.waveforge.zip', mimeType: 'application/zip', buffer: zip })
+      await expect(page.locator('#daw-status')).toContainText('工程已還原')
+      await action(page, 'clear').click()
+      await page.locator('.mode-tab[data-mode="master"]').click()
+      await page.locator('#session-privacy > summary').click()
+      await expect(page.locator('#session-privacy')).toHaveAttribute('open', '')
+      await page.locator('#clear-session-btn').click()
+      await expect(page.locator('#pitch-source')).toHaveText('尚未載入音訊')
+      // Finish the actual disclosure interaction before the next navigation. Its
+      // open popover intentionally overlays the mode tabs; do not force clicks
+      // through it or remove the ownership assertions to get through the loop.
+      await page.locator('#session-privacy > summary').click()
+      await expect(page.locator('#session-privacy')).not.toHaveAttribute('open', '')
+      // The 1000/1500 ms download handoff timers are part of intentional ownership.
+      await expect.poll(async () => (await page.evaluate(() => window.__resourceProbe.snapshot())).objectURLs).toBe(0)
+      const observed = await sample(round); samples.push(observed)
+      expect(observed.connectedSources).toBe(0); expect(observed.workers).toBe(0)
+      if (round === 2) warmed = observed
+      if (round > 2) expect(observed.globalListeners).toBe(warmed.globalListeners)
+    }
+    expect(unexpectedNetwork).toEqual([]); expect(errors).toEqual([])
+    completed = true
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    const measured = samples.slice(3)
+    const evidence = { completed, plannedWarmupRounds: 3, plannedMeasuredRounds: 7, measuredRounds: measured.length,
+      ownershipTolerance: { connectedSources: 0, objectURLs: 0, workers: 0, globalListenerGrowth: 0 },
+      heapAcceptanceThreshold: null,
+      warmedHeapDeltaBytes: measured.length > 1 ? measured.at(-1).heap.usedSize - measured[0].heap.usedSize : null,
+      samples, unexpectedNetwork, errors,
+      caveat: 'Heap/WeakRef observations do not measure all native allocations or prove absence of leaks. Review warmed trends and retaining paths; do not use a single RSS drop.' }
+    // Persist even partial measurements to the directory the CI artifact uploads.
+    // A body-only attachment is not durable with the default terminal reporter.
+    const output = testInfo.outputPath('resource-lifecycle.json')
+    try {
+      await mkdir(dirname(output), { recursive: true })
+      await writeFile(output, JSON.stringify(evidence, null, 2) + '\n')
+      await testInfo.attach('resource-lifecycle.json', { path: output, contentType: 'application/json' })
+    } catch (error) {
+      if (!failure) throw error
+      console.error('Resource evidence could not be persisted:', error.message)
+    }
   }
-  const measured = samples.slice(3), first = measured[0].heap.usedSize, last = measured.at(-1).heap.usedSize
-  await testInfo.attach('resource-lifecycle.json', { body: JSON.stringify({ warmupRounds: 3, measuredRounds: 7,
-    ownershipTolerance: { connectedSources: 0, objectURLs: 0, workers: 0, globalListenerGrowth: 0 },
-    heapAcceptanceThreshold: null, warmedHeapDeltaBytes: last - first, samples,
-    caveat: 'Heap/WeakRef observations do not measure all native allocations or prove absence of leaks. Review warmed trends and retaining paths; do not use a single RSS drop.' }, null, 2), contentType: 'application/json' })
-  expect(unexpectedNetwork).toEqual([]); expect(errors).toEqual([])
 })

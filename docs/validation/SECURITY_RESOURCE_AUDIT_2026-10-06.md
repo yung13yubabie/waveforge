@@ -54,3 +54,13 @@ npx playwright test tests/e2e/resource-lifecycle.spec.js
 - Final full suite: 1,131 passed / 1 skipped (63 files); production build passed (existing >500 kB chunk warning); syntax check passed for 175 JavaScript files; `git diff --check` passed
 - New browser tests pass syntax and Playwright collection (2 tests); execution is pending in permitted CI
 - The existing one skipped model/browser test remains skipped; it is not counted as a pass
+
+## Current-release native-render follow-up
+
+A focused follow-up reproduced a DAW-owned budget gap on `3ccf123`: after cancelling a delayed native render and clearing the project, its source AudioBuffer and pending output remained owned by the native render, but panel accounting no longer included them. The render single-flight guard still prevented a second render; this was one bounded overlap with new import work, not unbounded render accumulation or demonstrated permanent leakage.
+
+The retained regression uses the real `renderProject` wiring with a delayed native-context double. A 600-second stereo render at 48 kHz plus its 4-second mono source reserves 231,168,000 bytes (220.46 MiB). After Clear, a five-file import had a 448 MiB source/read-copy reservation and was incorrectly admitted, giving 668.46 MiB combined before its decoded PCM. File-size/context doubles test allocation admission without allocating that much memory or running a browser.
+
+The narrowly ported fix exports `getPendingNativeRenderBytes()`, retains its source/output estimate until actual native settlement (including cancellation and timeout), and adds it to the panel's common `retainedBytes()` budget. The same regression now refuses all fresh reads, preserves the old source PCM, and accepts the import only after the native promise settles. This is known DAW-owned data and is explicitly accounted, rather than classified as unspecified browser overhead. Transpose UI, generated takes and replacement workflow were not ported with this fix.
+
+Follow-up validation: 146 focused tests passed; full suite 1,150 passed / 1 skipped across 64 files; syntax checked 176 JavaScript files; production build and diff-whitespace checks passed. No browser execution or remote action was performed for this follow-up.

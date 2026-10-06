@@ -2,7 +2,10 @@ import { DAW_LIMITS, validateProject, getProjectDuration, getDecodedBytes, getCl
 import { measurePeaks } from '../audio/measure.js'
 
 const dbToGain = db => 10 ** (db / 20)
-let activeContext = false
+let activeContext = false, pendingNativeBytes = 0
+// Native offline work can outlive cancellation. Count its source/output buffers
+// in panel budgets until the actual native promise settles.
+export const getPendingNativeRenderBytes = () => pendingNativeBytes
 export function abortError(message = 'DAW rendering cancelled or superseded') {
   const error = new Error(message); error.name = 'AbortError'; return error
 }
@@ -110,9 +113,10 @@ export async function renderProject(project, buffers, {
         source.start(clip.atSeconds, clip.offsetSeconds, clip.durationSeconds)
       }
     }
+    pendingNativeBytes = plan.renderBytes + plan.decodedBytes
     nativePromise = Promise.resolve(context.startRendering()).finally(() => {
       nativeSettled = true
-      if (operationFinished) activeContext = false
+      if (operationFinished) { activeContext = false; pendingNativeBytes = 0 }
       cleanup()
     })
     const interrupted = new Promise((_, reject) => {
@@ -155,6 +159,6 @@ export async function renderProject(project, buffers, {
     clearTimeout(timer)
     if (abortHandler) signal?.removeEventListener('abort', abortHandler)
     operationFinished = true
-    if (!nativePromise || nativeSettled) { activeContext = false; cleanup() }
+    if (!nativePromise || nativeSettled) { pendingNativeBytes = 0; activeContext = false; cleanup() }
   }
 }
