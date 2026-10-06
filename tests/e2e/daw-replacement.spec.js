@@ -1,7 +1,7 @@
 /** Real browser/native OfflineAudioContext coverage. Prepared for CI; do not
  * replace this with jsdom mocks when reporting playback/sample verification. */
 import { test, expect } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { encodeWAV } from '../../src/js/audio/wav.js'
 
 const action = (page, name) => page.locator(`[data-daw="${name}"]`)
@@ -35,9 +35,13 @@ function wavSample(wav, frame) {
   return wav.readIntLE(44 + frame * wav.readUInt16LE(22) * 3, 3) / 8388608
 }
 function magnitude(wav, frequency) {
-  const rate = wav.readUInt32LE(24); let re = 0, im = 0
+  // Validate the format once. A Playwright assertion inside this sample loop
+  // creates tens of thousands of reported steps and blocks the test runner.
+  expect(wav.readUInt16LE(34)).toBe(24)
+  const rate = wav.readUInt32LE(24), channels = wav.readUInt16LE(22)
+  let re = 0, im = 0
   for (let i = .5 * rate; i < 1.5 * rate; i++) {
-    const value = wavSample(wav, i)
+    const value = wav.readIntLE(44 + i * channels * 3, 3) / 8388608
     re += value * Math.cos(2 * Math.PI * frequency * i / rate)
     im += value * Math.sin(2 * Math.PI * frequency * i / rate)
   }
@@ -121,7 +125,9 @@ test('local replacement previews retain accepted output, native source rates and
   expect(await download(page, 'export')).toEqual(replacementWav)
   expect(zipProject(await download(page, 'save'))).toEqual(after)
   expect(uploads).toEqual([]); expect(errors).toEqual([])
-  await testInfo.attach('replacement-native-sample-evidence.json', { body: JSON.stringify({ before, after, candidatePlayback, originalPlayback, acceptedPlayback, original660: magnitude(originalWav, 660), original220: magnitude(originalWav, 220), replaced660: magnitude(replacementWav, 660), replaced220: magnitude(replacementWav, 220) }, null, 2), contentType: 'application/json' })
+  const evidencePath = testInfo.outputPath('replacement-native-sample-evidence.json')
+  await writeFile(evidencePath, JSON.stringify({ before, after, candidatePlayback, originalPlayback, acceptedPlayback, original660: magnitude(originalWav, 660), original220: magnitude(originalWav, 220), replaced660: magnitude(replacementWav, 660), replaced220: magnitude(replacementWav, 220) }, null, 2))
+  await testInfo.attach('replacement-native-sample-evidence.json', { path: evidencePath, contentType: 'application/json' })
 })
 
 test('short takes, invalid offsets, cancellation, edits, selection and navigation cannot replace the wrong clip', async ({ page }) => {
