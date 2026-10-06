@@ -52,7 +52,7 @@ export function initPitchPanel({
   let active = null, analysisEpoch = 0, disposed = false, unsubscribe
   let previewEpoch = 0, previewKind = null, playbackController = null
   let toneContext = null, tone = null, toneController = null
-  let waveformPath = ''
+  let waveformPath = '', contourWidth = WIDTH, resizeObserver = null
   const listen = (target, type, handler) => { target.addEventListener(type, handler); listeners.push(() => target.removeEventListener(type, handler)) }
   const status = (text, error = false) => { el('status').textContent = text; el('status').dataset.error = String(error) }
   const targetMidi = () => Number(el('target').value)
@@ -126,13 +126,12 @@ export function initPitchPanel({
     if (oldKind) el('preview-status').textContent = '已停止試聽'
   }
   function selectedReadout(frame) {
-    if (!frame) return '分析後可用方向鍵逐點查看；這裡會用文字說明高低'
-    if (!isVoiced(frame)) return `${seconds(frame.time)}：${frame.state === 'uncertain' ? '不確定' : '無明確音高'}。${REASONS[frame.reason] ?? '沒有足夠可靠的音高資料'}。這不代表唱錯，也不代表這裡沒有聲音。`
+    if (!frame) return '分析後選一個時間點'
+    if (!isVoiced(frame)) return `${seconds(frame.time)}：${frame.state === 'uncertain' ? '不確定' : '無明確音高'}。${REASONS[frame.reason] ?? '沒有足夠可靠的音高資料'}。不代表唱錯。`
     const info = describePitch(frame.frequencyHz, targetMidi())
     const cents = Math.round(info.referenceCents)
     const comparison = Math.abs(cents) <= 5 ? `接近你選的 ${midiToNote(targetMidi())}（相差 ${Math.abs(cents)} 音分）` : `比你選的 ${midiToNote(targetMidi())} ${cents > 0 ? '高' : '低'} ${Math.abs(cents)} 音分`
-    const nearest = Math.round(info.cents)
-    return `${seconds(frame.time)}：估計 ${info.note}，${frame.frequencyHz.toFixed(1)} Hz。\n${comparison}。${Math.abs(cents) > 100 ? '可能本來就在唱別的音，請配合旋律聆聽。' : '這是與參考音的距離，不是演唱評分。'}\n與最近音名 ${info.note} 相差 ${Math.abs(nearest)} 音分${nearest === 0 ? '' : `（偏${nearest > 0 ? '高' : '低'}）`}。`
+    return `${seconds(frame.time)} · ${info.note} · ${frame.frequencyHz.toFixed(1)} Hz\n${comparison}。${Math.abs(cents) > 100 ? '可能本來就在唱別的音。' : ''}`
   }
   function renderPoint() {
     const frames = result?.frames ?? []
@@ -145,7 +144,7 @@ export function initPitchPanel({
     if (marker) {
       marker.replaceChildren()
       if (frame && chart) {
-        marker.append(svgNode('line', { x1: chart.x(frame.time), x2: chart.x(frame.time), y1: TOP, y2: HEIGHT - BOTTOM, class: 'pitch-selected-line' }))
+        marker.append(svgNode('line', { x1: chart.x(frame.time), x2: chart.x(frame.time), y1: TOP, y2: chart.height - BOTTOM, class: 'pitch-selected-line' }))
         if (isVoiced(frame)) marker.append(svgNode('circle', { cx: chart.x(frame.time), cy: chart.y(frame.midi), r: 4, class: 'pitch-selected-dot' }))
       }
     }
@@ -170,35 +169,41 @@ export function initPitchPanel({
     controls()
   }
   function drawContour() {
-    const svg = el('contour'), frames = result?.frames ?? [], known = frames.filter(isVoiced)
+    const svg = el('contour')
+    const width = Math.max(280, Math.round(svg.getBoundingClientRect().width || WIDTH))
+    const height = width < 500 ? 220 : HEIGHT
+    contourWidth = width
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    svg.style.height = `${height}px`
+    const frames = result?.frames ?? [], known = frames.filter(isVoiced)
     const desc = !result ? '尚未分析，沒有音高曲線。分析後可使用下方時間點控制及資料表查看相同資料。' : `${seconds(result.start)} 至 ${seconds(result.start + result.duration)}，${frames.length} 個時間點，其中 ${known.length} 點有可辨識音高。空段不連線，無法判斷旋律是否正確。下方時間點控制及資料表提供相同資料。`
     svgDescription(svg, '所選片段的音高估計', desc)
     chart = null
     if (!frames.length) {
-      svg.append(svgNode('text', { x: WIDTH / 2, y: HEIGHT / 2, 'text-anchor': 'middle' }, result ? '片段太短，沒有足夠的分析時間點' : '選取片段並分析後顯示實際音高'))
+      svg.append(svgNode('text', { x: width / 2, y: height / 2, 'text-anchor': 'middle' }, result ? '片段太短，沒有足夠的分析時間點' : '選取片段並分析後顯示實際音高'))
       return
     }
     const midis = known.map(frame => frame.midi)
     let low = known.length ? Math.floor(Math.min(...midis)) - 3 : 57
     let high = known.length ? Math.ceil(Math.max(...midis)) + 3 : 81
     if (high - low < 12) { const center = (high + low) / 2; low = Math.floor(center - 6); high = low + 12 }
-    const x = time => LEFT + clamp((time - result.start) / result.duration, 0, 1) * (WIDTH - LEFT - RIGHT)
-    const y = midi => TOP + (high - midi) / (high - low) * (HEIGHT - TOP - BOTTOM)
-    chart = { x, y }
+    const x = time => LEFT + clamp((time - result.start) / result.duration, 0, 1) * (width - LEFT - RIGHT)
+    const y = midi => TOP + (high - midi) / (high - low) * (height - TOP - BOTTOM)
+    chart = { x, y, height }
     const step = high - low > 30 ? 12 : high - low > 18 ? 6 : 3
     for (let midi = Math.ceil(low / step) * step; midi <= high; midi += step) {
-      svg.append(svgNode('line', { x1: LEFT, x2: WIDTH - RIGHT, y1: y(midi), y2: y(midi), class: 'pitch-grid' }))
+      svg.append(svgNode('line', { x1: LEFT, x2: width - RIGHT, y1: y(midi), y2: y(midi), class: 'pitch-grid' }))
       svg.append(svgNode('text', { x: LEFT - 10, y: y(midi) + 4, 'text-anchor': 'end' }, midiToNote(midi)))
     }
     for (let i = 0; i <= 4; i++) {
       const time = result.start + result.duration * i / 4, tx = x(time)
-      svg.append(svgNode('line', { x1: tx, x2: tx, y1: TOP, y2: HEIGHT - BOTTOM, class: 'pitch-grid' }))
-      svg.append(svgNode('text', { x: tx, y: HEIGHT - 12, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' }, `${time.toFixed(2)}s`))
+      svg.append(svgNode('line', { x1: tx, x2: tx, y1: TOP, y2: height - BOTTOM, class: 'pitch-grid' }))
+      svg.append(svgNode('text', { x: tx, y: height - 12, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' }, `${time.toFixed(2)}s`))
     }
     // Merge unknown time spans. Never connect known points across an unknown frame.
     let unknownStart = null
     const addUnknown = end => {
-      if (unknownStart !== null) svg.append(svgNode('rect', { x: x(unknownStart), y: TOP, width: Math.max(1, x(end) - x(unknownStart)), height: HEIGHT - TOP - BOTTOM, class: 'pitch-unknown' }))
+      if (unknownStart !== null) svg.append(svgNode('rect', { x: x(unknownStart), y: TOP, width: Math.max(1, x(end) - x(unknownStart)), height: height - TOP - BOTTOM, class: 'pitch-unknown' }))
       unknownStart = null
     }
     for (let i = 0; i < frames.length; i++) {
@@ -209,9 +214,9 @@ export function initPitchPanel({
     addUnknown(result.start + result.duration)
     const reference = targetMidi()
     if (reference >= low && reference <= high) {
-      svg.append(svgNode('line', { x1: LEFT, x2: WIDTH - RIGHT, y1: y(reference), y2: y(reference), class: 'pitch-target-line' }))
-      svg.append(svgNode('text', { x: WIDTH - RIGHT - 5, y: y(reference) - 6, 'text-anchor': 'end' }, `參考 ${midiToNote(reference)}`))
-    } else svg.append(svgNode('text', { x: WIDTH - RIGHT, y: 15, 'text-anchor': 'end' }, `參考 ${midiToNote(reference)} 在圖外${reference > high ? '上方' : '下方'}`))
+      svg.append(svgNode('line', { x1: LEFT, x2: width - RIGHT, y1: y(reference), y2: y(reference), class: 'pitch-target-line' }))
+      svg.append(svgNode('text', { x: width - RIGHT - 5, y: y(reference) - 6, 'text-anchor': 'end' }, `參考 ${midiToNote(reference)}`))
+    } else svg.append(svgNode('text', { x: width - RIGHT, y: 15, 'text-anchor': 'end' }, `參考 ${midiToNote(reference)} 在圖外${reference > high ? '上方' : '下方'}`))
     let path = '', previous = null
     for (const frame of frames) {
       if (!isVoiced(frame)) { previous = null; continue }
@@ -221,14 +226,14 @@ export function initPitchPanel({
       previous = frame
     }
     if (path) svg.append(svgNode('path', { d: path, class: 'pitch-estimate' }))
-    if (!known.length) svg.append(svgNode('text', { x: WIDTH / 2, y: HEIGHT / 2, 'text-anchor': 'middle' }, '這段未找到可靠音高，請換較清楚的單音片段'))
+    if (!known.length) svg.append(svgNode('text', { x: width / 2, y: height / 2, 'text-anchor': 'middle' }, '這段未找到可靠音高，請換較清楚的單音片段'))
     svg.append(svgNode('g', { class: 'pitch-marker', 'aria-hidden': 'true' }))
   }
   function renderResult() {
-    if (!result) el('summary').textContent = '分析後才會顯示曲線；空白處表示沒有可靠音高，並非唱錯。'
+    if (!result) el('summary').textContent = '選好片段，再按「分析片段」'
     else {
       const known = result.frames.filter(isVoiced).length
-      el('summary').textContent = `${seconds(result.start)}–${seconds(result.start + result.duration)} · 第 ${Number(result.channel ?? chosenChannel()) + 1} 聲道 · ${result.frames.length} 個時間點，${known} 點有可辨識音高、${result.frames.length - known} 點未確定。這是資料數量，不是正確率。`
+      el('summary').textContent = `${seconds(result.start)}–${seconds(result.start + result.duration)} · 第 ${Number(result.channel ?? chosenChannel()) + 1} 聲道 · ${known} / ${result.frames.length} 點可辨識。計數不是正確率。`
     }
     drawContour(); renderPoint(); renderTable(); controls()
   }
@@ -278,11 +283,11 @@ export function initPitchPanel({
       el('start').value = '0'; el('end').value = String(Math.floor(Math.min(source.buffer.duration, 60) * 1000) / 1000)
       el('start').max = el('end').max = String(source.buffer.duration)
       el('source').textContent = `${source.name} · ${source.buffer.duration.toFixed(3)} 秒 · ${count} 聲道`
-      status(source.buffer.duration > 60 ? '已選前 60 秒；可改起訖秒數查看其他片段。尚未分析' : '原音已就緒；選好片段後按「分析所選片段」')
+      status(source.buffer.duration > 60 ? '已選前 60 秒；可改起訖秒數查看其他片段。尚未分析' : '原音已就緒 · 選好片段後分析')
     } else {
       el('start').value = el('end').value = '0'
       el('source').textContent = '尚未載入音訊'
-      status('先在母帶模式載入原音檔，再回來選取片段')
+      status('先載入原音檔')
     }
     buildWaveform(); drawWaveform(); controls()
   }
@@ -295,7 +300,7 @@ export function initPitchPanel({
     const epoch = ++analysisEpoch, acceptedSource = source, controller = new AbortController()
     active = { epoch, controller }
     const current = () => !disposed && epoch === analysisEpoch && sameSource(acceptedSource, safeSource(getSource())) && !controller.signal.aborted
-    status('正在本機分析；可隨時取消。這不會修改原音')
+    status('正在本機分析…')
     el('progress').value = 0; controls()
     try {
       const value = await client.analyze(source.buffer, {
@@ -305,7 +310,7 @@ export function initPitchPanel({
       if (!current()) { if (!disposed && epoch === analysisEpoch) refreshSource(); return }
       result = value; selected = Math.max(0, result.frames.findIndex(isVoiced)); page = Math.floor(selected / PAGE_SIZE)
       renderResult()
-      status(result.frames.some(isVoiced) ? '分析完成。先查看一個時間點，再輪流聽 A 原音與 B 參考音' : '這段未找到可靠音高；請改選較清楚的獨唱或單音片段')
+      status(result.frames.some(isVoiced) ? '分析完成 · 選一個時間點比較' : '這段未找到可靠音高；請改選較清楚的獨唱或單音片段')
     } catch (error) {
       if (!current()) return
       status(error?.name === 'TimeoutError' ? '分析時間過長，已停止。請改選較短片段後再試' : error?.name === 'AbortError' ? '已取消分析' : `無法完成音高分析：${error?.message ?? '未知錯誤'}`, error?.name !== 'AbortError')
@@ -383,7 +388,7 @@ export function initPitchPanel({
     }
   }
   function updateReference() {
-    el('target-description').textContent = `${midiToNote(targetMidi())} = ${midiToFrequency(targetMidi()).toFixed(1)} Hz（十二平均律，A4 = 440 Hz）`
+    el('target-description').textContent = `${midiToNote(targetMidi())} · ${midiToFrequency(targetMidi()).toFixed(1)} Hz`
     drawContour(); renderPoint()
   }
   const referenceOptions = document.createDocumentFragment()
@@ -416,6 +421,15 @@ export function initPitchPanel({
   listen(el('tone-volume'), 'input', () => { if (previewKind?.startsWith('reference')) stopPreview() })
   listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'pitch') { stopPreview(); if (active) invalidate('已離開音高助手，分析已取消', false) } else refreshSource() })
   listen(document, 'visibilitychange', () => { if (document.hidden) stopPreview() })
+  const resizeContour = () => {
+    if (disposed) return
+    const width = Math.round(el('contour').getBoundingClientRect().width)
+    if (width > 0 && width !== contourWidth) { drawContour(); renderPoint() }
+  }
+  listen(window, 'resize', resizeContour)
+  if (typeof globalThis.ResizeObserver === 'function') {
+    resizeObserver = new ResizeObserver(resizeContour); resizeObserver.observe(el('contour'))
+  }
   updateReference(); renderResult(); drawWaveform(); refreshSource()
   if (typeof onSourceChanged === 'function') unsubscribe = onSourceChanged(refreshSource)
   return {
@@ -424,7 +438,7 @@ export function initPitchPanel({
       if (disposed) return
       stopPreview(); disposed = true
       ++analysisEpoch; active?.controller.abort(); active = null
-      client.dispose(); if (typeof unsubscribe === 'function') unsubscribe()
+      client.dispose(); resizeObserver?.disconnect(); resizeObserver = null; if (typeof unsubscribe === 'function') unsubscribe()
       for (const remove of listeners) remove()
       const context = toneContext; toneContext = null; closeContext(context)
       source = null; result = null; chart = null; waveformPath = ''; playbackController = null

@@ -112,6 +112,11 @@ const test = base.extend({
   },
 })
 
+async function openDisclosure(page, id) {
+  const disclosure = page.locator(id)
+  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator(':scope > summary').click()
+}
+
 async function setup(page) {
   await page.goto('/')
   await page.setInputFiles('#file-input', AUDIO_FILE)
@@ -126,6 +131,7 @@ async function setup(page) {
 
 async function approveMockAnalysis(page) {
   // This exercises the UI consent gate; the harness still forbids real models.
+  await openDisclosure(page, '#lyrics-model-settings')
   await page.locator('#lyrics-language').selectOption('en')
   await page.locator('#lyrics-model-consent').check()
   await expect(command(page, 'lyrics.align')).toBeEnabled()
@@ -167,6 +173,7 @@ test.describe('Automatic lyrics workflow with mock ASR only', () => {
     await page.locator('#lyrics-model-consent').check()
     await expect(command(page, 'lyrics.align')).toBeDisabled()
     await expect(page.locator('#lyrics-alignment-availability')).toContainText('請先選擇')
+    await openDisclosure(page, '#lyrics-model-settings')
     await page.locator('#lyrics-language').selectOption('en')
     await page.locator('#lyrics-model-consent').uncheck()
     await expect(command(page, 'lyrics.align')).toBeDisabled()
@@ -266,6 +273,19 @@ test.describe('Automatic lyrics workflow with mock ASR only', () => {
     await expect(page.locator('#lyrics-diagnostics')).toContainText('line-3：尚未確認')
     await command(page, 'lyrics.confirm').click()
     expect(await project(page)).toEqual(complete)
+  })
+
+  test('keyboard cancellation restores visible focus before another analysis', async ({ page, mockAsr }) => {
+    await setup(page)
+    await approveMockAnalysis(page)
+    await command(page, 'lyrics.align').click()
+    await mockAsr.waitForJobs(1)
+    await command(page, 'lyrics.align.cancel').focus()
+    await page.keyboard.press('Enter')
+    await expect(command(page, 'lyrics.align.cancel')).toBeHidden()
+    await expect(page.locator('#lyrics-model-settings > summary')).toBeFocused()
+    await expect(command(page, 'lyrics.align')).toBeEnabled()
+    expect(await mockAsr.workers()).toMatchObject([{ terminated: true }])
   })
 
   test('cancel permits a same-turn retry and ignores late progress/results from terminated mock ASR', async ({ page, mockAsr }) => {

@@ -60,6 +60,54 @@ async function inspectNativeAudio(page) {
   })
 }
 
+async function mobileViewportCapture(page, testInfo, name, anchor, visibleSelectors) {
+  await page.evaluate(selector => {
+    const panel = document.getElementById('mode-pitch')
+    // Only the panel should scroll. Playwright's generic scrollIntoView can also
+    // move the overflow-hidden body/app ancestors, invalidating a viewport shot.
+    const resetOuter = () => {
+      window.scrollTo(0, 0)
+      for (const element of [document.documentElement, document.body, document.getElementById('app')]) {
+        element.scrollTop = 0; element.scrollLeft = 0
+      }
+    }
+    resetOuter(); panel.scrollLeft = 0; panel.scrollTop = 0
+    if (selector) {
+      const target = document.querySelector(selector)
+      panel.scrollTop = target.getBoundingClientRect().top - panel.getBoundingClientRect().top - 12
+    }
+    resetOuter()
+  }, anchor)
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  const geometry = await page.evaluate(() => {
+    const app = document.getElementById('app').getBoundingClientRect()
+    const panel = document.getElementById('mode-pitch')
+    const box = panel.getBoundingClientRect()
+    return { width: innerWidth, height: innerHeight, x: scrollX, y: scrollY,
+      app: { x: app.x, y: app.y, width: app.width, height: app.height },
+      panel: { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: panel.clientWidth, scrollWidth: panel.scrollWidth },
+      documentWidth: document.documentElement.scrollWidth,
+    }
+  })
+  expect(geometry).toMatchObject({ width: 390, height: 844, x: 0, y: 0, app: { x: 0, y: 0, width: 390, height: 844 } })
+  expect(geometry.documentWidth).toBeLessThanOrEqual(390)
+  expect(geometry.panel.right).toBeLessThanOrEqual(390)
+  expect(geometry.panel.bottom).toBeLessThanOrEqual(844)
+  expect(geometry.panel.scrollWidth).toBeLessThanOrEqual(geometry.panel.width)
+  for (const selector of visibleSelectors) {
+    const box = await page.locator(selector).boundingBox()
+    expect(box, `${selector} is rendered`).not.toBeNull()
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(390)
+    expect(box.y).toBeGreaterThanOrEqual(geometry.panel.y)
+    expect(box.y + box.height).toBeLessThanOrEqual(844)
+  }
+  const png = await page.screenshot({ path: testInfo.outputPath(name), fullPage: false, scale: 'css' })
+  // IHDR dimensions verify the actual attached artifact, not just page settings.
+  expect(png.readUInt32BE(16)).toBe(390)
+  expect(png.readUInt32BE(20)).toBe(844)
+}
+
 test('real worker estimates synthetic notes, preserves unknown gaps, and explains reference distance without uploads', async ({ page }, testInfo) => {
   const errors = [], writes = [], remoteModels = []
   page.on('pageerror', error => errors.push(error.message))
@@ -171,5 +219,13 @@ test('mobile keyboard controls inspect the real channel without sideways page ov
   await page.locator('#pitch-point-readout').scrollIntoViewIfNeeded()
   await expect(page.locator('#pitch-point-readout')).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await page.screenshot({ path: testInfo.outputPath('pitch-mobile-keyboard.png'), fullPage: true })
+  await mobileViewportCapture(page, testInfo, 'pitch-mobile-top.png', null, ['#pitch-title', '#pitch-waveform'])
+  await mobileViewportCapture(page, testInfo, 'pitch-mobile-reference.png', '#pitch-reference-title', ['#pitch-reference-title', '#pitch-play-original', '#pitch-play-tone'])
+  await mobileViewportCapture(page, testInfo, 'pitch-mobile-chart.png', '#pitch-contour', ['#pitch-contour', '#pitch-point-readout'])
+  const axis = await page.locator('#pitch-contour text').first().evaluate(text => {
+    const matrix = text.getScreenCTM()
+    return { renderedFontSize: parseFloat(getComputedStyle(text).fontSize) * Math.hypot(matrix.a, matrix.b), text: text.textContent }
+  })
+  expect(axis.renderedFontSize).toBeGreaterThanOrEqual(11)
+  await expect(page.locator('#pitch-point-readout')).toContainText('A3')
 })

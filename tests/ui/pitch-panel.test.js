@@ -52,6 +52,17 @@ beforeEach(() => { panel = null })
 afterEach(() => { panel?.dispose(); document.body.innerHTML = ''; vi.restoreAllMocks() })
 
 describe('pitch assistant source and selection', () => {
+  it('keeps the chart primary, contextual reading beside reference controls, and deeper help closed', () => {
+    setup()
+    const workspace = document.querySelector('.pitch-workspace')
+    expect(workspace.firstElementChild.classList.contains('pitch-results')).toBe(true)
+    expect(el('point-readout').closest('.pitch-reference')).not.toBeNull()
+    expect(el('data').open).toBe(false)
+    expect(document.querySelector('.pitch-limits').open).toBe(false)
+    expect(document.querySelectorAll('details')).toHaveLength(2)
+    expect(el('range-help').textContent).toContain('不會修正音訊')
+    expect(document.querySelector('.pitch-scope').textContent).toContain('空白不等於唱錯')
+  })
   it('never analyzes, plays or creates an AudioContext automatically', async () => {
     setup(); await tick()
     expect(client.analyze).not.toHaveBeenCalled(); expect(playRange).not.toHaveBeenCalled(); expect(contexts.instances).toHaveLength(0)
@@ -130,6 +141,20 @@ describe('pitch assistant truthful analysis and lifecycle', () => {
     await change('target', 68); expect(el('point-readout').textContent).toContain('高 100 音分')
     await change('target', 36); expect(el('point-readout').textContent).toContain('可能本來就在唱別的音')
     expect(el('contour').textContent).toContain('在圖外下方')
+  })
+  it('uses measured chart pixels for mobile axes and preserves data coordinates on resize', async () => {
+    setup()
+    vi.spyOn(el('contour'), 'getBoundingClientRect').mockReturnValue({ width: 338 })
+    await click('analyze')
+    expect(el('contour').getAttribute('viewBox')).toBe('0 0 338 220')
+    expect(el('contour').style.height).toBe('220px')
+    expect(el('contour').querySelector('.pitch-selected-line').getAttribute('y2')).toBe('182')
+    const before = el('point-readout').textContent
+    el('contour').getBoundingClientRect.mockReturnValue({ width: 720 })
+    window.dispatchEvent(new Event('resize'))
+    expect(el('contour').getAttribute('viewBox')).toBe('0 0 720 300')
+    expect(el('point-readout').textContent).toBe(before)
+    expect(el('contour').querySelector('.pitch-selected-line').getAttribute('y2')).toBe('262')
   })
   it('exposes every frame via keyboard slider and paginated accessible table', async () => {
     setup(); client.analyze.mockResolvedValue(result(Array.from({ length: 30 }, (_, i) => frame(.032 + i * .02))))

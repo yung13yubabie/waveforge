@@ -53,7 +53,7 @@ test('numeric automation edits reach preview/WAV, survive split/trim and reopen 
   await action(page, 'undo').click()
   await expect(page.locator('#daw-automation-time')).toHaveValue('0.5')
   await expect(page.locator('#daw-automation-value')).toHaveValue('25')
-  await page.getByText('細調音量與接縫', { exact: true }).click()
+  await page.locator('#daw-fades-details > summary').click()
   await field(page, 'fade-in', .25); await action(page, 'fades').click()
   await page.locator('#daw-seek').evaluate(input => { input.value = '1'; input.dispatchEvent(new Event('input')) })
   await action(page, 'split').click()
@@ -85,7 +85,7 @@ test('numeric automation edits reach preview/WAV, survive split/trim and reopen 
   expect(errors).toEqual([]); expect(uploads).toEqual([])
 })
 
-test('actual amplified output triggers the WAV guard and remains editable', async ({ page }) => {
+test('actual amplified output triggers the WAV guard and remains editable', async ({ page }, testInfo) => {
   const downloads = []
   page.on('download', download => downloads.push(download.suggestedFilename()))
   await start(page, .75)
@@ -94,8 +94,14 @@ test('actual amplified output triggers the WAV guard and remains editable', asyn
   await field(page, 'automation-value', 200); await action(page, 'automation-apply').click()
   await action(page, 'export').click()
   await expect(page.locator('#daw-status')).toContainText('停止 WAV 輸出')
+  await expect(page.locator('#daw-status')).toHaveAttribute('data-error', 'true')
+  await expect(page.locator('#daw-output-settings')).not.toHaveAttribute('open', '')
+  await page.locator('#daw-status').scrollIntoViewIfNeeded()
+  await expect(page.locator('#daw-status')).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('automation-overload-feedback.png'), fullPage: false, scale: 'css' })
   expect(downloads).toEqual([])
   await expect(page.locator('#daw-automation-value')).toHaveValue('200')
+  await page.locator('#daw-output-settings > summary').click()
   await field(page, 'master-gain', -12)
   const safe = await download(page, 'export')
   expect(sample(safe, .5)).toBeCloseTo(1.5 * 10 ** (-12 / 20), 5)

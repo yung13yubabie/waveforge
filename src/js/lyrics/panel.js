@@ -27,6 +27,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   let acceptedSource = null, generation = 0, editEpoch = 0, pendingSource = false, waveform = null
   const service = alignmentService ?? createLocalAlignmentService()
   let activeTask = null, proposal = null, taskSequence = 0, clearingCache = false
+  let presentedRawText = null
   const commands = new Map()
   const notify = text => { el('status').textContent = text }
   const selectedLine = () => session.lines.find(l => l.id === selected)
@@ -187,8 +188,16 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     return pieces.join('；') || '未提供文字比對資料；請試聽確認'
   }
   function renderAlignment() {
+    const language = el('language').selectedOptions[0]
+    el('setup-summary').textContent = el('language').value
+      ? `${language.textContent} · ${el('model-consent').checked ? '已同意本機分析' : '尚未同意下載'}` : '尚未設定語言'
     el('alignment-availability').textContent = alignmentBlocker() || `可分析 ${editableTargets().length} 句；已確認與手動保留的時間不會覆蓋`
     el('alignment-progress').setAttribute('aria-busy', String(!!activeTask))
+    el('alignment-progress').hidden = !activeTask && el('alignment-message').textContent === '尚未開始分析'
+    const cancelButton = root.querySelector('[data-command="lyrics.align.cancel"]')
+    const cancelHadFocus = document.activeElement === cancelButton
+    cancelButton.hidden = !activeTask
+    if (!activeTask && cancelHadFocus) el('model-settings').querySelector('summary').focus({ preventScroll: true })
     el('proposal').hidden = !proposal
     if (proposal) {
       const candidates = proposal.result.candidates.filter(candidate => proposal.targetIds.includes(candidate.id))
@@ -343,6 +352,15 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   }
   function render() {
     const focusedLine = root.contains(document.activeElement) ? document.activeElement?.dataset.line : null
+    const hasLyrics = session.lines.some(line => line.text.trim())
+    const originalChanged = presentedRawText !== session.rawText
+    const originalHadFocus = el('original').contains(document.activeElement)
+    const editingHadFocus = ['editor', 'alignment', 'delivery'].some(id => el(id).contains(document.activeElement))
+    root.dataset.hasLyrics = String(hasLyrics)
+    for (const id of ['editor', 'alignment', 'delivery']) el(id).hidden = !hasLyrics
+    if (!hasLyrics || originalChanged) el('original').open = !hasLyrics
+    el('original-summary').textContent = hasLyrics ? `編輯原文 · ${session.lines.length} 行` : '貼上歌詞'
+    presentedRawText = session.rawText
     if (!selectedLine()) selected = session.lines[0].id
     const line = selectedLine()
     el('list').replaceChildren(...session.lines.map((l, index) => {
@@ -350,18 +368,27 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
       button.className = 'lyrics-line'; button.setAttribute('aria-pressed', String(l.id === selected))
       const badge = !l.sung ? '非演唱' : l.confirmed ? '已確認' : l.manualLocked ? '已手動調整・保留' : l.alignment?.status === 'unresolved' ? candidateLabel(l.alignment, l) : l.start === null || l.end === null ? '待打點' : '待確認'
       button.dataset.timingStatus = !l.sung ? 'silent' : l.confirmed ? 'confirmed' : l.manualLocked ? 'manual' : l.alignment?.status ?? 'pending'
-      button.textContent = `${String(index + 1).padStart(2, '0')} · ${l.text || '（空行）'} · ${badge}`
+      const range = `${l.start === null ? '—' : l.start.toFixed(2)} → ${l.end === null ? '—' : l.end.toFixed(2)}`
+      for (const [part, text] of [['number', String(index + 1).padStart(2, '0')], ['text', l.text || '（空行）'], ['time', range], ['status', badge]]) {
+        const span = document.createElement('span'); span.className = `lyrics-line-${part}`; span.textContent = text
+        button.appendChild(span)
+      }
+      button.setAttribute('aria-label', `第 ${index + 1} 行，${l.text || '空行'}，${timeRange(l)}，${badge}`)
       return button
     }))
     el('selected-text').textContent = line.text || '（空行）'
     el('selected-id').textContent = `第 ${session.lines.indexOf(line) + 1} 行 · 原文 r${session.revision}`
+    el('line-count').textContent = `${session.lines.filter(l => l.sung && l.confirmed).length}／${session.lines.filter(l => l.sung).length} 句已確認`
     el('start-value').value = line.start ?? ''; el('end-value').value = line.end ?? ''
     el('sung').checked = line.sung; el('offset').value = session.displayOffsetMs
     const errors = diagnostics(session, { allowOverlap: el('overlap').checked })
     el('diagnostics').textContent = errors.length ? errors.slice(0, 8).join('\n') + (errors.length > 8 ? `\n另有 ${errors.length - 8} 項` : '') : '逐句時間已確認；匯出仍會依格式精度再檢查'
+    el('export-summary').textContent = errors.length ? `${errors.length} 項待檢查` : '逐句已確認'
     el('source').textContent = pendingSource ? '正在核對是否為同一份原音檔…' : connected() ? `來源已連結 · ${acceptedSource.name} · ${acceptedSource.duration.toFixed(3)} 秒` : session.source ? `來源未連結 · 請選回 ${session.source.name}` : '先使用上方「選取音檔」載入歌曲'
     renderAlignment(); refreshControls(); drawWaveform()
-    if (focusedLine) el('list').querySelector(`[data-line="${focusedLine}"]`)?.focus({ preventScroll: true })
+    if (hasLyrics && originalChanged && originalHadFocus) el('waveform').focus({ preventScroll: true })
+    if (!hasLyrics && editingHadFocus) el('original-summary').focus({ preventScroll: true })
+    if (hasLyrics && focusedLine) el('list').querySelector(`[data-line="${focusedLine}"]`)?.focus({ preventScroll: true })
   }
   function drawWaveform() {
     const canvas = el('waveform'), ctx = canvas.getContext('2d')
@@ -464,7 +491,10 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   window.addEventListener('pageshow', onPageShow)
   const info = service.info ?? {}
   const size = bytes => Number.isFinite(bytes) && bytes > 0 ? `約 ${(bytes / 1048576).toFixed(1)} MiB` : '大小尚未提供'
-  el('model-info').textContent = `${info.name ?? '本機辨識模型'} · 首次使用需下載模型（${size(info.downloadBytes)}），另需同站執行檔（${size(info.runtimeAssetBytes)}）${info.license ? ` · ${info.license}` : ''}。模型快取可能由瀏覽器清除，下次需重新下載。`
+  el('model-info').textContent = `${info.name ?? '本機辨識模型'} · 首次下載模型（${size(info.downloadBytes)}）＋同站執行檔（${size(info.runtimeAssetBytes)}）${info.license ? ` · ${info.license}` : ''}`
+  let modelHost = '模型提供者'
+  try { modelHost = new URL(info.modelUrl).hostname } catch { /* Unknown providers remain explicit. */ }
+  el('model-privacy').textContent = `下載來源：${modelHost}（收到下載請求）；音訊與歌詞只在本機分析，不會上傳`
   for (const [id, url] of [['model-link', info.modelUrl], ['license-link', info.licenseUrl]]) {
     const link = el(id); link.hidden = typeof url !== 'string' || !/^https:\/\//.test(url)
     if (!link.hidden) link.href = url

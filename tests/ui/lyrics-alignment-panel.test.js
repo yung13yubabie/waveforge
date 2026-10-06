@@ -13,7 +13,11 @@ const key = 'waveforge.lyrics.recovery.v1'
 const rawText = '第一句 🎵\n\nSame chorus!\nSame chorus!'
 const el = id => document.getElementById(`lyrics-${id}`)
 const button = name => document.querySelector(`[data-command="lyrics.${name}"]`)
-const click = name => button(name).click()
+const click = name => {
+  const disclosure = button(name).closest('details')
+  if (disclosure && !disclosure.open) disclosure.querySelector('summary').click()
+  button(name).click()
+}
 const file = (name, byte) => ({ name, arrayBuffer: async () => new Uint8Array([byte]).buffer })
 const settle = () => vi.advanceTimersByTimeAsync(0)
 const saved = () => JSON.parse(localStorage.getItem(key))
@@ -22,7 +26,13 @@ const deferred = () => {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
+function openControl(id) {
+  const disclosure = el(id).closest('details')
+  if (disclosure && !disclosure.open) disclosure.querySelector('summary').click()
+}
+
 function change(id, value) {
+  openControl(id)
   el(id).value = String(value)
   el(id).dispatchEvent(new Event('change', { bubbles: true }))
 }
@@ -58,7 +68,7 @@ async function setup({ pending = false, raw = rawText } = {}) {
   const playRange = vi.fn(), stopPlayback = vi.fn()
   const panel = initLyricsPanel({ engine, getCurrentFile: () => currentFile, playRange, stopPlayback, alignmentService: service })
   await panel.sourceAccepted(currentFile, buffer)
-  el('raw').value = raw; click('apply')
+  openControl('raw'); el('raw').value = raw; click('apply')
   await vi.advanceTimersByTimeAsync(400)
   const configure = () => { change('language', 'zh'); check('model-consent') }
   const load = async (next = file('replacement.wav', 2)) => {
@@ -80,6 +90,44 @@ afterEach(() => {
 })
 
 describe('local lyric alignment controls and proposals', () => {
+  it('returns focused cancel to visible setup when the analysis ends', async () => {
+    const { configure, service } = await setup({ pending: true })
+    configure(); click('align')
+    button('align.cancel').focus()
+    click('align.cancel')
+    expect(service.run.mock.calls[0][0].signal.aborted).toBe(true)
+    expect(button('align.cancel').hidden).toBe(true)
+    expect(document.activeElement).toBe(el('model-settings').querySelector('summary'))
+    expect(button('align').disabled).toBe(false)
+  })
+
+  it('retains visible consent, source sizes and progress when the model setup is collapsed during analysis', async () => {
+    const { service, configure } = await setup({ pending: true })
+    expect(el('model-settings').open).toBe(false)
+    expect(el('alignment-progress').hidden).toBe(true)
+    configure()
+    expect(el('model-settings').open).toBe(true)
+    el('model-settings').querySelector('summary').click()
+    expect(el('model-settings').open).toBe(false)
+    expect(el('setup-summary').textContent).toBe('國語／普通話 · 已同意本機分析')
+    click('align')
+    service.run.mock.calls[0][0].onProgress({ phase: 'downloading', loaded: 1, total: 2 })
+    expect(el('alignment-progress').hidden).toBe(false)
+    expect(button('align.cancel').hidden).toBe(false)
+    for (const id of ['model-consent', 'model-info', 'model-privacy']) {
+      expect(el(id).closest('details')).toBeNull()
+      expect(el(id).hidden).toBe(false)
+    }
+    expect(el('model-consent').checked).toBe(true)
+    expect(el('model-info').textContent).toContain('63.3 MiB')
+    expect(el('model-info').textContent).toContain('20.6 MiB')
+    expect(el('model-privacy').textContent).toContain('example.com')
+    check('model-consent', false)
+    expect(service.run.mock.calls[0][0].signal.aborted).toBe(true)
+    expect(button('align.cancel').hidden).toBe(true)
+    expect(button('align').disabled).toBe(true)
+  })
+
   it('requires explicit language and model download consent without auto-detection or startup recognition', async () => {
     const { service } = await setup()
     expect(service.run).not.toHaveBeenCalled()
@@ -293,7 +341,7 @@ describe('interrupted local alignment', () => {
     const { configure, service, work } = await setup({ pending: true })
     configure(); click('align')
     const request = service.run.mock.calls[0][0]
-    el('raw').value += '!'; el('raw').dispatchEvent(new Event('input'))
+    openControl('raw'); el('raw').value += '!'; el('raw').dispatchEvent(new Event('input'))
     expect(request.signal.aborted).toBe(true)
     expect(el('alignment-availability').textContent).toContain('請先按「套用歌詞」')
     el('raw').value = rawText; el('raw').dispatchEvent(new Event('input'))

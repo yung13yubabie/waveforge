@@ -158,13 +158,17 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('clip-fields').disabled = Boolean(locked || !selected())
     for (const key of ['name', 'tempo', 'sample-rate', 'master-gain']) el(key).disabled = Boolean(locked)
     root.querySelectorAll('[data-track-control]').forEach(control => { control.disabled = Boolean(locked) })
-    el('save-state').textContent = job?.kind === 'save' ? '正在製作工程下載…' : dirty() ? '有未下載的修改' : hasDownloaded ? '目前版本已交付下載；請確認檔案已存好' : project.tracks.length ? '已開啟工程；修改後請重新下載' : '尚無修改'
+    el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
     const item = selected()
-    el('selection-title').textContent = item ? `${item.track.name} › ${item.clip.name}` : '尚未選取片段'
-    el('selection-range').textContent = item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)} · 原檔保留不變${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : '點選波形，這裡只修改該片段'
+    // Keep keyboard focus in the workspace when its contextual form disappears.
+    const inspectorHadFocus = el('clip-fields').contains(document.activeElement)
+    el('clip-fields').hidden = !item
+    if (!item && inspectorHadFocus) el('timeline').focus({ preventScroll: true })
+    el('selection-title').textContent = item ? item.clip.name : '選取片段以編輯'
+    el('selection-range').textContent = item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)}${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : '點選時間軸上的波形'
     if (item) {
       const { clip, track } = item
       for (const [key, value] of Object.entries({ 'clip-name': clip.name, 'clip-at': clip.atSeconds, 'trim-start': clip.atSeconds, 'trim-end': clip.atSeconds + clip.durationSeconds, 'clip-gain': clip.gainDb, 'fade-in': clip.fadeInSeconds, 'fade-out': clip.fadeOutSeconds })) el(key).value = typeof value === 'number' ? String(value) : value
@@ -261,7 +265,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     const focusTrack = focused?.dataset.trackControl ? { id: focused.dataset.trackId, control: focused.dataset.trackControl } : null
     const rate = Number(el('zoom').value), seconds = Math.min(600, Math.max(20, Math.ceil((duration() + 5) / 5) * 5))
     const timeline = el('timeline'); timeline.style.setProperty('--daw-lane-width', `${seconds * rate}px`); timeline.style.setProperty('--daw-beat-width', `${gridStep() * rate}px`)
-    const rulerLabel = node('span', 'daw-ruler-label', '音軌混音 · 點刻度定位')
+    const rulerLabel = node('span', 'daw-ruler-label', '音軌 / 秒')
     const rulerLane = node('div', 'daw-ruler-lane'); rulerLane.dataset.seekLane = 'true'
     const tickSize = seconds > 120 ? 10 : 5
     for (let sec = 0; sec <= seconds; sec += tickSize) { const tick = node('span', 'daw-tick', formatDawTime(sec).slice(0, 5)); tick.style.left = `${sec * rate}px`; rulerLane.append(tick) }
@@ -302,7 +306,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('name').value = project.name; el('tempo').value = String(project.tempo); el('sample-rate').value = String(project.sampleRate); el('master-gain').value = String(project.masterGainDb)
     el('summary').textContent = `${project.tracks.length} 軌 · ${project.tracks.reduce((sum, track) => sum + track.clips.length, 0)} 片段 · ${formatDawTime(duration())}`
     el('seek').max = String(duration()); el('seek').disabled = !duration()
-    if (!mix) el('render-info').textContent = '尚未產生目前版本的混音；採樣峰值或估計 True Peak 超過 0 dBFS 會停止 WAV 輸出，請先降低總混音音量'
+    if (!mix) el('render-info').textContent = '尚未產生目前版本的混音；峰值過載時會停止 WAV 輸出'
     renderTracks(); renderInspector(); paintPlayhead()
   }
   async function withJob(kind, work) {
