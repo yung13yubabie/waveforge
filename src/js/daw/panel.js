@@ -15,6 +15,8 @@ import { createTimelineSelectionControls } from './selection-controls.js'
 import { createPitchAnalysisClient } from '../pitch/analysis-client.js'
 import { midiToNote, midiToFrequency } from '../pitch/analysis.js'
 import { planNoteCentering, combineNoteCenteringPlans, NOTE_CENTERING_LIMITS } from './note-centering.js'
+import { getDawGridOrigin, snapDawGridTime, nextDawGridTime } from './grid.js'
+import { createTempoControls } from './tempo-controls.js'
 
 const FILE_LIMIT = 64 * 1024 * 1024
 const abortError = () => new DOMException('已取消', 'AbortError')
@@ -23,9 +25,8 @@ export function formatDawTime(seconds) {
   const ms = Math.max(0, Math.round((Number(seconds) || 0) * 1000))
   return `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`
 }
-export function snapDawTime(seconds, tempo, beats = 1, enabled = true) {
-  const step = enabled ? 60 / tempo * beats : .001
-  return Math.max(0, Math.round(seconds / step) * step)
+export function snapDawTime(seconds, tempo, beats = 1, enabled = true, originSeconds = 0, maxSeconds = 600) {
+  return snapDawGridTime(seconds, tempo, beats, enabled, originSeconds, maxSeconds)
 }
 function node(tag, className, text) {
   const el = document.createElement(tag)
@@ -61,8 +62,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   let project = createProject({ name: '未命名專案' })
   let history = new ProjectHistory(project)
   let buffers = new Map(), files = new Map()
-  let saved = JSON.stringify(project), hasDownloaded = false
-  let selection = null, cursor = 0, mix = null, selectionMix = null, selectionControls = null, job = null, generation = 0
+  let saved = JSON.stringify(project), hasDownloaded = false, hasProjectDocument = false
+  let selection = null, cursor = 0, mix = null, selectionMix = null, selectionControls = null, tempoControls = null, job = null, generation = 0
   let replacement = null, replacementOwner = null, selectionVersion = 0, replacementReadBusy = false, pendingReplacementBytes = 0
   let pitchClient = null, transposeBusy = false, transposeVersion = 0, transposeControlOwner = null, pendingAudition = null
   let noteAnalyses = null, noteOwner = null, noteProposal = null, noteControlOwner = null, noteAnalysisClient = null, noteAnalysisBytes = 0, noteReference = null
@@ -80,7 +81,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   }
   const duration = () => getProjectDuration(project)
   const gridStep = () => 60 / project.tempo * Number(el('grid').value)
-  const snap = seconds => snapDawTime(seconds, project.tempo, Number(el('grid').value), el('snap').checked)
+  const snap = seconds => snapDawTime(seconds, project.tempo, Number(el('grid').value), el('snap').checked, getDawGridOrigin(project))
   const status = (message, error = false) => { el('status').textContent = message; el('status').dataset.error = String(error) }
   const report = error => {
     if (error?.name === 'AbortError') return
@@ -176,7 +177,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     const hasClips = duration() > 0
     button('undo').disabled = Boolean(locked || !history.canUndo)
     button('redo').disabled = Boolean(locked || !history.canRedo)
-    for (const key of ['import', 'open', 'save', 'export', 'master']) button(key).disabled = Boolean(job || (['save', 'export', 'master'].includes(key) && !project.tracks.length) || (['export', 'master'].includes(key) && !hasClips) || (key === 'master' && !onSendToMaster))
+    for (const key of ['import', 'open', 'save', 'export', 'master']) button(key).disabled = Boolean(job || (key === 'save' && !project.tracks.length && !dirty() && !hasProjectDocument) || (['export', 'master'].includes(key) && !hasClips) || (key === 'master' && !onSendToMaster))
     button('play').disabled = Boolean(job || !hasClips)
     button('stop').disabled = !source && !noteReference && !job && cursor === 0
     button('cancel').hidden = !job
@@ -196,9 +197,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     el('replacement-offset').disabled = Boolean(job)
     for (const key of ['replacement-original', 'replacement-preview', 'replacement-confirm']) button(key).disabled = Boolean(job || !replacement?.project)
     button('replacement-cancel').disabled = false
-    el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
+    el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length || hasProjectDocument ? '已開啟工程' : '尚無修改'
     refreshRegionControls()
     selectionControls?.render()
+    tempoControls?.render()
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
@@ -468,10 +470,18 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     const focusTrack = focused?.dataset.trackControl ? { id: focused.dataset.trackId, control: focused.dataset.trackControl } : null
     const rate = Number(el('zoom').value), seconds = Math.min(600, Math.max(20, Math.ceil((duration() + 5) / 5) * 5))
     const timeline = el('timeline'); timeline.style.setProperty('--daw-lane-width', `${seconds * rate}px`); timeline.style.setProperty('--daw-beat-width', `${gridStep() * rate}px`)
+    const gridOrigin = getDawGridOrigin(project)
+    timeline.style.setProperty('--daw-grid-origin', `${(gridOrigin % gridStep()) * rate}px`)
     const rulerLabel = node('span', 'daw-ruler-label', '音軌 / 秒')
     const rulerLane = node('div', 'daw-ruler-lane'); rulerLane.dataset.seekLane = 'true'
     const tickSize = seconds > 120 ? 10 : 5
     for (let sec = 0; sec <= seconds; sec += tickSize) { const tick = node('span', 'daw-tick', formatDawTime(sec).slice(0, 5)); tick.style.left = `${sec * rate}px`; rulerLane.append(tick) }
+    if (gridOrigin > 0 && gridOrigin <= seconds) {
+      const marker = node('span', 'daw-grid-origin-marker', '拍點')
+      marker.style.left = `${gridOrigin * rate}px`; marker.dataset.gridOrigin = String(gridOrigin)
+      marker.setAttribute('aria-label', `拍格參考點 ${gridOrigin} 秒`)
+      rulerLane.append(marker)
+    }
     rulerLane.append(node('i', 'daw-playhead')); el('ruler').replaceChildren(rulerLabel, rulerLane)
     const rows = project.tracks.map(track => {
       const row = node('div', 'daw-track'); row.dataset.trackId = track.id
@@ -1010,7 +1020,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
         })
         check(); const nextHistory = new ProjectHistory(restored.project)
         invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
-        saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0; resetRegionMapping()
+        saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = true; selection = null; cursor = 0; resetRegionMapping()
         render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
       } finally { reservation.finish() }
     })
@@ -1118,14 +1128,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       if (retainedBytes() + archiveEstimate + 2 * Math.max(0, ...sourceSizes) > DAW_LIMITS.maxCombinedBytes) throw new Error('工程打包加上原檔、復原紀錄與快取混音會超出保守記憶體預算；請先停止試聽並降低素材用量')
       status('正在打包工程；包括每份原始音檔與編輯設定…')
       const blob = await exportProjectArchive(snapshot, files, { signal: request.signal }); request.check()
-      downloadFile(blob, archiveFileName(snapshot)); saved = snapshotJson; hasDownloaded = true
+      downloadFile(blob, archiveFileName(snapshot)); saved = snapshotJson; hasDownloaded = true; hasProjectDocument = true
       status(project === snapshot ? '工程已交付下載，請確認檔案已存好。分享 ZIP 也會分享其中完整原始音檔' : '已下載開始打包時的版本；後續修改尚未保存，請再下載一次')
     })
   }
   function clear() {
     discardReplacement(); cancelJob(); stop({ rewind: true }); generation++
     project = createProject({ name: '未命名專案' }); history = new ProjectHistory(project)
-    buffers.clear(); files.clear(); mix = null; selectionMix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; resetRegionMapping()
+    buffers.clear(); files.clear(); mix = null; selectionMix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = false; resetRegionMapping()
     el('audio-files').value = ''; el('project-file').value = ''; el('replacement-file').value = ''; el('replacement-offset').value = '0'; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
@@ -1136,8 +1146,12 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   }
   function nudge(direction) {
     const item = selected(); if (!item) return
-    const step = el('snap').checked ? gridStep() : .01
-    clipCommand('clip.move', { atSeconds: Math.max(0, item.clip.atSeconds + direction * step) }, direction < 0 ? '已把片段提早' : '已把片段延後')
+    const maximum = DAW_LIMITS.maxDurationSeconds - item.clip.durationSeconds
+    const atSeconds = el('snap').checked
+      ? nextDawGridTime(item.clip.atSeconds, direction, project.tempo, Number(el('grid').value), getDawGridOrigin(project), maximum)
+      : clamp(item.clip.atSeconds + direction * .01, 0, maximum)
+    if (atSeconds === item.clip.atSeconds) { status(direction < 0 ? '已到時間軸起點' : '已到工程長度上限'); return }
+    clipCommand('clip.move', { atSeconds }, direction < 0 ? '已把片段提早' : '已把片段延後')
   }
   const actions = {
     'note-center-analyze': analyzeNoteCenter, 'note-center-render': prepareCenteredNote, 'note-center-reference': playNoteReference,
@@ -1224,7 +1238,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     const mod = event.ctrlKey || event.metaKey
     if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(event.shiftKey ? 'redo' : 'undo') }
     else if (mod && event.key.toLowerCase() === 'y') { event.preventDefault(); changeHistory('redo') }
-    else if (event.code === 'Space' && !event.target.closest('button')) { event.preventDefault(); run(play) }
+    else if (event.code === 'Space' && !event.target.closest('button,summary')) { event.preventDefault(); run(play) }
     else if (event.target.closest('.daw-clip') && ['ArrowLeft', 'ArrowRight', 'Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); run(() => event.key.startsWith('Arrow') ? nudge(event.key === 'ArrowLeft' ? -1 : 1) : actions.delete()) }
   })
   listen(root, 'focusin', event => {
@@ -1290,14 +1304,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return
-    destroyed = true; discardReplacement(); cancelJob(); resetNoteCentering(); pitchClient?.dispose(); selectionControls?.destroy(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null; selectionMix = null
+    destroyed = true; discardReplacement(); cancelJob(); resetNoteCentering(); pitchClient?.dispose(); selectionControls?.destroy(); tempoControls?.destroy(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null; selectionMix = null
     if (context) { context.close().catch(() => {}); context = null }
   }
-  listen(window, 'pagehide', event => { if (event.persisted) { selectionControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
+  listen(window, 'pagehide', event => { if (event.persisted) { selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
   observedLyricKey = lyricSelectionKey(readLyricSelection())
   if (subscribeLyricSelection) {
     const unsubscribe = subscribeLyricSelection(onLyricSelectionChange)
@@ -1309,6 +1323,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     clearSelection: () => command({ type: 'timelineSelection.clear' }, '已清除時間軸選區；片段與聲音保持不變'),
     playSelection: ({ loop = false } = {}) => run(() => play({ rangeOnly: true, loopRange: loop })),
     exportSelection: () => run(() => exportMix(false, true)), onStatus: status })
+  tempoControls = createTempoControls({ root: el('tempo-tools'), getProject: () => project,
+    isBusy: () => Boolean(job), getCurrentTime: currentTime,
+    applyGridPatch: patch => command({ type: 'project.update', patch }, '已更新拍格；錄音速度與音高不變'), onStatus: status })
   for (let midi = 24; midi <= 95; midi++) {
     const option = node('option', '', midiToNote(midi)); option.value = String(midi); el('note-center-target').append(option)
   }

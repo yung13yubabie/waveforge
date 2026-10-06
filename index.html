@@ -1168,10 +1168,11 @@
       <div class="daw-arrangement">
         <div class="daw-section-title"><h2>音軌</h2><span id="daw-summary">0 軌 · 0 片段</span><button type="button" data-daw="add-track">新增音軌</button>
           <details class="daw-grid-settings"><summary>格線與縮放</summary><div class="daw-grid-fields">
-            <label class="daw-inline">BPM<input id="daw-tempo" type="number" min="20" max="300" step="1" value="120"></label>
+            <label class="daw-inline">BPM<input id="daw-tempo" type="number" min="20" max="300" step="any" value="120"></label>
             <label class="daw-check"><input id="daw-snap" type="checkbox" checked> 吸附拍格</label>
             <label class="daw-inline">格線<select id="daw-grid"><option value="1">一拍</option><option value="0.5">半拍</option><option value="0.25">四分之一拍</option></select></label>
             <label class="daw-inline">縮放<select id="daw-zoom"><option value="24">縮小</option><option value="48" selected>標準</option><option value="96">放大</option></select></label>
+            <div id="daw-tempo-tools"></div>
             <p class="daw-note">BPM 只改格線，不改音訊速度</p>
           </div></details>
         </div>

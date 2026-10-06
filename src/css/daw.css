@@ -58,7 +58,23 @@
 .daw-track-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 4px; }
 .daw-track-mix label { font-size: 12px; }
 .daw-track-mix input { width: 100%; min-width: 0; padding: 5px !important; }
-.daw-lane { position: relative; width: var(--daw-lane-width); flex-shrink: 0; background-image: linear-gradient(to right, var(--c-border) 1px, transparent 1px); background-size: var(--daw-beat-width, 24px) 100%; cursor: crosshair; }
+.daw-lane { position: relative; width: var(--daw-lane-width); flex-shrink: 0; background-image: linear-gradient(to right, var(--c-border) 1px, transparent 1px); background-size: var(--daw-beat-width, 24px) 100%; background-position-x: var(--daw-grid-origin, 0px); cursor: crosshair; }
+.daw-grid-origin-marker { position: absolute; top: 0; height: 100%; padding: 1px 3px; border-left: 1px dashed var(--c-primary); color: var(--c-primary); font-size: 10px; pointer-events: none; }
+#daw-tempo-tools { flex-basis: 100%; min-width: 0; }
+.daw-grid-fields { max-height: max(132px, calc(100dvh - 300px)); overflow-y: auto; overscroll-behavior: contain; }
+.daw-tempo-controls { border-top: 1px solid var(--c-border); }
+.daw-tempo-body { display: grid; gap: 8px; min-width: 0; }
+.daw-tempo-help { margin: 0; font-size: 12px; line-height: 1.6; color: var(--c-text-2); }
+.daw-tempo-tap-row, .daw-tempo-candidate-row, .daw-tempo-origin-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.daw-tempo-status { flex: 1 1 90px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.daw-tempo-status[data-error=true] { color: var(--c-danger); }
+.daw-tempo-candidate { flex: 1; font: 14px var(--font-mono); white-space: nowrap; }
+.daw-tempo-origin-row { align-items: end; }
+.daw-tempo-origin-row label { flex: 1 1 120px; }
+.daw-tempo-origin-row input { width: 100%; min-width: 0; }
+.daw-tempo-origin-details > summary { padding-block: 10px; }
+.daw-tempo-controls button { min-width: 44px; }
+@media (max-width: 600px) { .daw-grid-fields { max-height: max(132px, calc(100dvh - 420px)); } }
 .daw-panel .daw-clip { position: absolute; height: 92px; min-width: 12px; top: 20px; padding: 5px; overflow: hidden; text-align: left; border-color: #718594; background: #263641; touch-action: pan-y; cursor: grab; }
 .daw-panel .daw-clip:nth-child(2n) { background: #253d39; }
 .daw-panel .daw-clip[aria-pressed=true] { border: 2px solid var(--c-primary); background: #28423c; box-shadow: 0 0 0 1px var(--c-primary); z-index: 2; }
