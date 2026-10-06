@@ -273,6 +273,8 @@ async function boot() {
   const dawController = initDawPanel({
     beforePlayback: stopNonEditorPlayback,
     decodeAsset: decodeDawAsset,
+    getLyricSelection: () => lyricsController.getSelectionSnapshot(),
+    subscribeLyricSelection: listener => lyricsController.subscribeSelection(listener),
     onSendToMaster: async (buffer, { name = '多軌混音', signal, isCurrent } = {}) => {
       const check = () => { if (signal?.aborted || (isCurrent && !isCurrent())) throw new DOMException('已取消混音送出，原母帶仍保留', 'AbortError') }
       check()

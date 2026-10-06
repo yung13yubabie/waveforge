@@ -1,8 +1,8 @@
 # WaveForge
 
-歌曲剪輯、多軌混音、原音 ZIP 工程與本機歌詞候選對時。這一版再加入「音高助手」與可保存的片段音量曲線，先看 [操作方式](START_HERE.md) 和 [音高／音量曲線驗證](docs/validation/PITCH_AND_AUTOMATION_STATUS.md)。線上版本以 [部署紀錄](https://github.com/yung13yubabie/waveforge/actions/workflows/deploy.yml) 為準。
+歌曲剪輯、多軌混音、原音 ZIP 工程與本機歌詞候選對時。包含音高助手、片段音量曲線、替換錄音與片段移調試用；本次候選再加入指定人聲軌的局部消音。先看 [操作方式](START_HERE.md) 和 [人聲區間驗證狀態](docs/validation/VOCAL_GAIN_REGIONS_2026-10-06.md)。線上版本以 [部署紀錄](https://github.com/yung13yubabie/waveforge/actions/workflows/deploy.yml) 為準。
 
-音高助手幫你比較聲音高低，不會直接判定旋律唱對，也不會改變原音。歌詞定位需逐句試聽確認，歌唱邊界與多語準確率仍未校準。保長度移調仍是未對使用者開放的研究原型；AI 換聲／改詞重唱、錄音和 MIDI 尚未完成。
+音高助手幫你比較聲音高低，不會直接判定旋律唱對，也不會改變原音。歌詞定位需逐句試聽確認，歌唱邊界與多語準確率仍未校準。片段移調試用限 0.12–30 秒與正負 2 個半音，需先 A/B 試聽再接受；音準吸附、AI 換聲／改詞重唱、麥克風錄音和 MIDI 尚未完成。局部消音需要已分離的人聲，混合音軌的伴奏也會一起降低。
 
 歌詞功能的真實模型與瀏覽器證據見 [實作範圍](docs/validation/LOCAL_LYRICS_ALIGNMENT_STATUS.md) 和 [模型實測](docs/validation/real-model/README.md)。
 

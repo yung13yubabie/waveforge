@@ -111,6 +111,29 @@ describe('Web Audio mix wiring contract (mock, not browser DSP validation)', () 
     expect(result.peaks.samplePeakDb).toBeCloseTo(20 * Math.log10(1.5))
     expect(result.peaks.truePeakDb).toBeGreaterThanOrEqual(result.peaks.samplePeakDb)
   })
+  it('schedules one minimum-region envelope node after independent fade and automation nodes', async () => {
+    let { project, buffers } = fixture()
+    project = applyCommand(project, { type: 'clip.gainRegion.addMany', trackId: 'track', clipId: 'clip', regions: [
+      { id: 'a', startSeconds: .01, endSeconds: .05, gain: .25, fadeInSeconds: 0, fadeOutSeconds: 0 },
+      { id: 'duplicate', startSeconds: .01, endSeconds: .05, gain: .25, fadeInSeconds: 0, fadeOutSeconds: 0 },
+      { id: 'adjacent', startSeconds: .05, endSeconds: .07, gain: 0, fadeInSeconds: 0, fadeOutSeconds: 0 },
+    ] })
+    const { Context, made } = contextMock(), sourceBefore = buffers.get('asset')
+    const result = await renderProject(project, buffers, { OfflineAudioContextClass: Context })
+    const context = made[0], source = context.nodes.find(node => node.type === 'source')
+    const fade = source.connections[0], automation = fade.connections[0], regions = automation.connections[0], track = regions.connections[0]
+    expect(context.nodes.filter(node => node.type === 'gain')).toHaveLength(5)
+    expect(source.buffer).toBe(sourceBefore)
+    expect(fade.gain.events).toHaveLength(4)
+    expect(automation.gain.events).toEqual([['set', 1, .02], ['ramp', 1, .1]])
+    expect(regions.gain.events).toEqual(result.plan.tracks[0].clips[0].gainRegions.flatMap(segment => [
+      ['set', segment.startGain, .02 + segment.startSeconds], ['ramp', segment.endGain, .02 + segment.endSeconds],
+    ]))
+    expect(regions.gain.events.some(event => event[1] === .25)).toBe(true)
+    expect(regions.gain.events.some(event => event[1] === .0625)).toBe(false)
+    expect(track.gain.events).toEqual([['set', 10 ** (-3 / 20), 0]])
+    expect(context.nodes.every(node => node.disconnected)).toBe(true)
+  })
   it('rejects missing and mismatched sources even if their track is muted', async () => {
     const { project, buffers } = fixture(), { Context, made } = contextMock()
     const muted = applyCommand(project, { type: 'track.update', trackId: 'track', patch: { mute: true } })
@@ -128,7 +151,9 @@ describe('Web Audio mix wiring contract (mock, not browser DSP validation)', () 
     await expect(renderProject(project, buffers, { OfflineAudioContextClass: Stale, isCurrent: () => current })).rejects.toMatchObject({ name: 'AbortError' })
   })
   it('cancels immediately and retains the native-job lock until completion', async () => {
-    const { project, buffers } = fixture(), { Context } = contextMock()
+    let { project, buffers } = fixture()
+    project = applyCommand(project, { type: 'clip.gainRegion.add', trackId: 'track', clipId: 'clip', region: { id: 'mute', startSeconds: .01, endSeconds: .07, gain: 0 } })
+    const { Context, made } = contextMock()
     let settle
     class Slow extends Context { startRendering() { return new Promise(resolve => { settle = () => resolve(pcm(this.rate, this.frames, this.channels)) }) } }
     const controller = new AbortController()
@@ -137,6 +162,7 @@ describe('Web Audio mix wiring contract (mock, not browser DSP validation)', () 
     expect(getPendingNativeRenderBytes()).toBe(retained)
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(made[0].nodes.every(node => node.disconnected)).toBe(true)
     expect(getPendingNativeRenderBytes()).toBe(retained)
     await expect(renderProject(project, buffers, { OfflineAudioContextClass: Context })).rejects.toThrow(/previous native render/)
     settle(); await Promise.resolve(); await Promise.resolve()
