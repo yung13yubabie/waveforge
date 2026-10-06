@@ -1057,6 +1057,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
         invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
         clipSelection.reset(); selectionHistory.clear(); syncSelection()
         saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = true; cursor = 0; resetRegionMapping()
+        // A restored document has no selected clips. Do not carry an old
+        // focused clip/control ID into renderTracks, which would focus and
+        // select a same-ID replacement from the new document.
+        if (!root.hidden && el('timeline').contains(document.activeElement)) el('timeline').focus({ preventScroll: true })
         render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
       } finally { reservation.finish() }
     })

@@ -567,6 +567,50 @@ describe('group gesture and queued-action ownership', () => {
 })
 
 
+describe('archive restore selection and focus ownership', () => {
+  it('retires a focused old clip before rendering an archive with identical IDs and revision', async () => {
+    await setup(); await selectGroup(); await setSnap(false)
+    const before = panel.getProject(), oldClip = beginDrag('b')
+    expect(document.activeElement).toBe(oldClip)
+    expect(parseFloat(oldClip.style.left)).toBeCloseTo((clipOf(before, 'b').atSeconds + 1) * 48)
+    await restore(before)
+    // Archive replacement must clear selection itself. Capturing whatever refs
+    // exist after restore would accept an old focused ID being selected again
+    // by renderTracks() focusing its replacement and triggering focusin.
+    expect(selectedRefs()).toEqual([])
+    expect(el('clip-fields').hidden).toBe(true)
+    expect(el('group-tools').hidden).toBe(true)
+    expect(document.activeElement).toBe(el('timeline'))
+    expect(clipNode('b')).not.toBe(oldClip)
+    assertUnchanged(before, [], [true, true])
+    pointer(window, 'pointermove', { clientX: 196 })
+    pointer(window, 'pointerup', { clientX: 196 }); await tick()
+    assertUnchanged(before, [], [true, true])
+    expect(document.activeElement).toBe(el('timeline'))
+    for (const clip of allClips(before)) expect(parseFloat(clipNode(clip.id).style.left)).toBeCloseTo(clip.atSeconds * 48)
+  })
+
+  it.each([true, false])('preserves unrelated focus outside the timeline during archive restore (editor visible=%s)', async visible => {
+    await setup(); await selectGroup(); await setSnap(false)
+    const before = panel.getProject()
+    beginDrag('b')
+    if (!visible) nav.switchMode('master')
+    const unrelated = document.querySelector('.mode-tab[data-mode="master"]')
+    unrelated.focus()
+    expect(document.activeElement).toBe(unrelated)
+    expect(root().hidden).toBe(!visible)
+    await restore(before)
+    expect(document.activeElement).toBe(unrelated)
+    expect(root().hidden).toBe(!visible)
+    expect(el('clip-fields').hidden).toBe(true)
+    expect(el('group-tools').hidden).toBe(true)
+    assertUnchanged(before, [], [true, true])
+    pointer(window, 'pointerup', { clientX: 196 }); await tick()
+    assertUnchanged(before, [], [true, true])
+    expect(document.activeElement).toBe(unrelated)
+  })
+})
+
 describe('secondary pointer ownership regressions', () => {
   it('ignores a click from another primary pointer while the owning drag is active', async () => {
     await setup(); await selectGroup(); await setSnap(false)

@@ -431,8 +431,13 @@ test('real mouse group drag commits one delta; Escape and same-ID source replace
   })
   await page.locator('#daw-project-file').setInputFiles({ name: 'same-owner-ids.waveforge.zip', mimeType: 'application/zip', buffer: moved.bytes })
   await expect(page.locator('#daw-status')).toContainText('工程已還原')
+  // Restoring must release the old focus owner before any later pointer-up.
+  // Otherwise matching clip IDs can silently reselect the replacement source.
+  await selection(page, [])
+  await expect(page.locator('#daw-timeline')).toBeFocused()
   await page.mouse.up()
   await selection(page, [])
+  await expect(page.locator('#daw-timeline')).toBeFocused()
   expect((await saved(page)).project).toEqual(moved.project)
   await expect(daw(page, 'undo')).toBeDisabled()
   const wav = await download(page, daw(page, 'export')), proof = await soundProof(page, moved.project, wav)
@@ -530,22 +535,43 @@ for (const width of [1440, 390]) test(`default, selected and copied group contro
   await expect(page.locator('#daw-group-tools')).toBeHidden()
   await expect(page.locator('#daw-clip-fields')).toBeHidden()
   await expect(page.locator('#daw-timeline')).toBeInViewport()
-  const defaultRuler = await page.locator('#daw-ruler').boundingBox()
-  expect(defaultRuler.y, 'multi-select shares the existing toolbar row').toBe(width === 390 ? 319 : 231)
+  const defaultHierarchy = await page.evaluate(() => {
+    const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON()
+    return { ruler: box('#daw-ruler'), toolbar: box('.daw-section-title'), controls: [
+      ['multi-select', '[data-daw="multi-select"]'], ['add-track', '[data-daw="add-track"]'], ['grid', '.daw-grid-settings > summary'],
+    ].map(([name, selector]) => ({ name, box: box(selector) })) }
+  })
+  await evidence(testInfo, `multiclip-default-geometry-${width}.json`, defaultHierarchy)
+  // Protect the timeline-first hierarchy and its single toolbar row. Fractional
+  // font/layout coordinates are valid; a screenshot-derived integer is not a
+  // layout contract. The controls must share a centerline and remain disjoint.
+  expect(defaultHierarchy.ruler.y).toBeLessThanOrEqual(width === 390 ? 330 : 250)
+  expect(defaultHierarchy.toolbar.height).toBeLessThanOrEqual(width === 390 ? 48 : 50)
+  const centerline = defaultHierarchy.toolbar.y + defaultHierarchy.toolbar.height / 2
+  for (const [index, control] of defaultHierarchy.controls.entries()) {
+    expect(control.box.y + control.box.height / 2, `${control.name} shares the toolbar centerline`).toBeCloseTo(centerline, 1)
+    expect(control.box.height, `${control.name} touch height`).toBeGreaterThanOrEqual(44)
+    expect(control.box.x).toBeGreaterThanOrEqual(defaultHierarchy.toolbar.x)
+    expect(control.box.right).toBeLessThanOrEqual(defaultHierarchy.toolbar.right)
+    if (index) expect(defaultHierarchy.controls[index - 1].box.right, `${control.name} does not overlap the preceding control`).toBeLessThanOrEqual(control.box.x)
+  }
   await screenshot(page, testInfo, `multiclip-default-${width}.png`)
   await selectGroup(page, SELECTED, width === 390)
   const geometry = []
   const inspect = async state => {
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
     await page.locator('#daw-group-tools').evaluate(node => node.scrollIntoView({ block: 'center' }))
     const measured = await page.locator('#daw-group-tools').evaluate(host => {
       const transport = document.querySelector('.daw-transport').getBoundingClientRect()
-      return { transport: transport.toJSON(), controls: [...host.querySelectorAll('button,[data-group-target],.daw-group-overlap')].map(node => {
+      return { scrollWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth,
+        transport: transport.toJSON(), controls: [...host.querySelectorAll('button,[data-group-target],.daw-group-overlap')].map(node => {
         const box = node.getBoundingClientRect()
         return { action: node.dataset.groupAction || (node.matches('input') ? 'target' : 'overlap'), box: box.toJSON(),
           reachable: node.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)) }
       }) }
     })
+    geometry.push({ state, ...measured })
+    await evidence(testInfo, `multiclip-${state}-geometry-${width}.json`, measured)
+    expect(measured.scrollWidth).toBeLessThanOrEqual(measured.viewportWidth + 1)
     for (const control of measured.controls) {
       expect(control.box.height, `${state} ${control.action} touch height`).toBeGreaterThanOrEqual(44)
       expect(control.box.x).toBeGreaterThanOrEqual(0)
@@ -554,7 +580,6 @@ for (const width of [1440, 390]) test(`default, selected and copied group contro
       expect(control.box.bottom, `${state} ${control.action} clears fixed transport`).toBeLessThanOrEqual(measured.transport.y)
       expect(control.reachable, `${state} ${control.action} center hit-test`).toBe(true)
     }
-    geometry.push({ state, ...measured })
     await screenshot(page, testInfo, `multiclip-${state}-${width}.png`)
   }
   await inspect('selected')
@@ -578,5 +603,5 @@ for (const width of [1440, 390]) test(`default, selected and copied group contro
   if (width === 390) expect(native.events.filter(item => item.pointerType === 'touch' && item.type === 'pointerdown').length).toBeGreaterThanOrEqual(4)
   expect(native.events.every(item => item.trusted)).toBe(true)
   expect(observed).toEqual({ errors: [], uploads: [], models: [] })
-  await evidence(testInfo, `multiclip-layout-${width}.json`, { defaultRuler, geometry, native, observed })
+  await evidence(testInfo, `multiclip-layout-${width}.json`, { defaultHierarchy, geometry, native, observed })
 })
