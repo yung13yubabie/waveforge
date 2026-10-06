@@ -1,0 +1,10 @@
+{
+  "upstreamBytes": 113867,
+  "upstreamGitBlob": "7d5cae72e77a84143ed91ba12fc91b806dc4d9d1",
+  "upstreamSha256": "97530b11d5bc01015af4cde40d6aa55ff10c40aa1294ca4c8c5762027d517a46",
+  "derivativeBytes": 114008,
+  "derivativeSha256": "4f6c89d205cc505087948fdfa10f3d9629e780349440cee9f9092c8e24d6e269",
+  "embeddedWasmBytes": 64494,
+  "embeddedWasmSha256": "83869197b3c5ebf9fc8c517a1586aef1ecf77404842218d62b9c0e82882d8ca3",
+  "patch": "Named export only; upstream wrapper is never called"
+}

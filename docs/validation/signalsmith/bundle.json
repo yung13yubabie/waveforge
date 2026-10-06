@@ -1,0 +1,19 @@
+{
+  "status": "bundle-only-pass",
+  "browserExecution": "not performed",
+  "publicNotice": "/licenses/signalsmith-stretch.txt",
+  "artifacts": [
+    {
+      "name": "assets/signalsmith-client-BavA6j7c.js",
+      "bytes": 5301
+    },
+    {
+      "name": "assets/SignalsmithStretch-CQjRO1nO.js",
+      "bytes": 99218
+    },
+    {
+      "name": "assets/signalsmith-worker-BYopukcw.js",
+      "bytes": 5352
+    }
+  ]
+}

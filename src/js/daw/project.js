@@ -1,5 +1,8 @@
+import { sourceFrameBounds, SOURCE_TIME_ROUNDOFF_SECONDS } from './sample-bounds.js'
+
 /** Bounded, non-destructive audio editing. Times are seconds; tempo is grid-only. */
 export const PROJECT_SCHEMA = 'waveforge.project.v1'
+export const CLIP_TRANSPOSE_ENGINE = 'signalsmith-stretch-1.3.2'
 export const DAW_LIMITS = Object.freeze({
   maxDurationSeconds: 600, maxTracks: 16, maxClips: 256, maxAssets: 64,
   maxDecodedBytes: 256 * 1024 * 1024, maxRenderBytes: 256 * 1024 * 1024,
@@ -97,15 +100,16 @@ export function validateProject(project) {
     clipCount += track.clips.length
     if (clipCount > DAW_LIMITS.maxClips) fail('project exceeds 256 clips')
     for (const clip of track.clips) {
-      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope', 'volumeAutomation'], 'clip')
+      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope', 'volumeAutomation', 'transpose'], 'clip')
       unique(clip.id, clipIds, 'clip ID'); text(clip.name, 'clip name')
       const asset = assets.get(clip.assetId)
       if (!asset) fail(`clip ${clip.id} has missing asset ${clip.assetId}`)
       number(clip.atSeconds, 'clip position', 0, DAW_LIMITS.maxDurationSeconds)
       number(clip.offsetSeconds, 'source offset', 0, asset.duration)
-      number(clip.durationSeconds, 'clip duration', 1 / asset.sampleRate, asset.duration)
+      number(clip.durationSeconds, 'clip duration', 1 / asset.sampleRate, asset.duration + SOURCE_TIME_ROUNDOFF_SECONDS)
       if (clip.atSeconds + clip.durationSeconds > DAW_LIMITS.maxDurationSeconds + EPSILON) fail('timeline exceeds 600 seconds')
       if (clip.offsetSeconds + clip.durationSeconds > asset.duration + EPSILON) fail('clip extends beyond its source')
+      if (clip.transpose !== undefined) validateClipTranspose(clip, asset, assets)
       number(clip.gainDb, 'clip gain dB', -60, 12)
       number(clip.fadeInSeconds, 'fade in', 0, clip.durationSeconds)
       number(clip.fadeOutSeconds, 'fade out', 0, clip.durationSeconds)
@@ -139,6 +143,42 @@ export function validateProject(project) {
     }
   }
   return project
+}
+/** Bounded optional lineage, versioned separately so old projects still open.
+ * The fixed recipe is descriptive metadata, never executable/plugin data. */
+function validateClipTranspose(clip, generated, assets) {
+  const t = clip.transpose
+  onlyKeys(t, ['version', 'engine', 'sourceAssetId', 'sourceOffsetSeconds', 'sourceDurationSeconds', 'cropFirstFrame', 'cropLastFrame', 'semitones', 'cents', 'formantSemitones', 'formantCompensation'], 'clip transpose')
+  if (t.version !== 1 || t.engine !== CLIP_TRANSPOSE_ENGINE) fail('unsupported clip transpose version or engine')
+  id(t.sourceAssetId, 'transpose original asset ID')
+  const source = assets.get(t.sourceAssetId)
+  if (!source || source.id === generated.id || source.decodeBackend === 'generated-float32-wav') fail('transpose original must reference a retained, non-generated source asset')
+  if (!OUTPUT_RATES.includes(source.sampleRate) || generated.sampleRate !== source.sampleRate || generated.channels !== source.channels || generated.decodeBackend !== 'generated-float32-wav') fail('transpose generated/source formats do not match')
+  number(t.sourceOffsetSeconds, 'transpose original offset', 0, source.duration)
+  number(t.sourceDurationSeconds, 'transpose original duration', 1 / source.sampleRate, 30 + SOURCE_TIME_ROUNDOFF_SECONDS)
+  if (t.sourceOffsetSeconds + t.sourceDurationSeconds > source.duration + EPSILON) fail('transpose original interval exceeds source')
+  const sourceFrames = source.length ?? sourceFrameBounds(0, source.duration, source.sampleRate).last
+  integer(t.cropFirstFrame, 'transpose first frame', 0, sourceFrames)
+  integer(t.cropLastFrame, 'transpose last frame', t.cropFirstFrame + 1, sourceFrames)
+  const bounds = sourceFrameBounds(t.sourceOffsetSeconds, t.sourceDurationSeconds, source.sampleRate)
+  const frames = t.cropLastFrame - t.cropFirstFrame
+  if (t.cropFirstFrame !== bounds.first || t.cropLastFrame !== bounds.last || frames > 30 * source.sampleRate || generated.length !== frames) fail('transpose crop does not match the original interval and generated frames')
+  number(t.semitones, 'transpose semitones', -2, 2); number(t.cents, 'transpose cents', -100, 100)
+  number(t.semitones + t.cents / 100, 'transpose combined pitch', -2, 2)
+  number(t.formantSemitones, 'transpose formants', -2, 2)
+  if (typeof t.formantCompensation !== 'boolean') fail('transpose compensation must be boolean')
+  if ((t.semitones + t.cents / 100 !== 0 || t.formantSemitones !== 0) && frames < Math.ceil(source.sampleRate * .12)) fail('transpose nonzero recipe needs at least 120 ms')
+  const generatedOffset = bounds.offsetSeconds
+  if (Math.abs(generated.duration - frames / source.sampleRate) > EPSILON || clip.offsetSeconds < generatedOffset - EPSILON || clip.offsetSeconds + clip.durationSeconds > generatedOffset + t.sourceDurationSeconds + EPSILON) fail('transpose clip extends beyond its captured original interval')
+  const original = getClipOriginalSource(clip, source.sampleRate)
+  if (original.offsetSeconds < 0 || original.offsetSeconds + clip.durationSeconds > source.duration + EPSILON) fail('transpose current clip exceeds retained original')
+}
+/** Map a trimmed/split generated clip back into its retained original. The
+ * unchanged clip round-trips its exact captured offset rather than rounding. */
+export function getClipOriginalSource(clip, sampleRate) {
+  if (!clip.transpose) return { assetId: clip.assetId, offsetSeconds: clip.offsetSeconds }
+  const t = clip.transpose, generatedOffset = sourceFrameBounds(t.sourceOffsetSeconds, t.sourceDurationSeconds, sampleRate).offsetSeconds
+  return { assetId: t.sourceAssetId, offsetSeconds: t.sourceOffsetSeconds + (clip.offsetSeconds - generatedOffset) }
 }
 /** Envelope uses linear amplitude ramps, never dB interpolation. */
 export function getClipEnvelope(clip) {
@@ -284,6 +324,23 @@ export function applyCommand(project, command) {
     }
     case 'clip.automation.reset': {
       delete clipById(trackById(next, command.trackId), command.clipId).volumeAutomation
+      break
+    }
+    case 'clip.replaceSource': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const asset = next.assets.find(candidate => candidate.id === command.assetId)
+      if (!asset) fail('replacement source asset is missing')
+      number(command.offsetSeconds, 'replacement source offset', 0, asset.duration)
+      if (command.offsetSeconds + clip.durationSeconds > asset.duration + EPSILON) {
+        fail('替換錄音長度不足；請減少新錄音起點、選較長的錄音，或先裁短原片段。原片段保持不變')
+      }
+      // Only source identity and source position change. No stretching, timing
+      // guesses, renamed clip, gain reset, or destructive source-buffer edits.
+      clip.assetId = asset.id; clip.offsetSeconds = command.offsetSeconds
+      // A different recording drops the former recipe. A generated replacement
+      // supplies a complete validated recipe in this same atomic command.
+      if (command.transpose !== undefined) clip.transpose = clone(command.transpose)
+      else delete clip.transpose
       break
     }
     case 'clip.update': {
