@@ -110,11 +110,19 @@ async function observeNative(page) {
     for (const type of ['click', 'keydown']) document.addEventListener(type, event => {
       const action = event.target.closest?.('[data-tempo-action]')?.dataset.tempoAction
       if (action === 'tap' && (type === 'click' || [' ', 'Enter'].includes(event.key))) {
-        const item = { type, key: event.key || null, trusted: event.isTrusted, repeat: Boolean(event.repeat), detail: event.detail, timestamps: [] }
+        const item = { type, key: event.key || null, trusted: event.isTrusted, repeat: Boolean(event.repeat), detail: event.detail,
+          eventTimestamp: event.timeStamp, capturedAt: nativeNow(), completedAt: null, timestamps: [], statusAfter: null }
         state.taps.push(item); state.activeTap = item
-        // Keep observation through the complete native dispatch. A browser may
-        // checkpoint microtasks between capture and target listeners.
-        setTimeout(() => { if (state.activeTap === item) state.activeTap = null }, 0)
+        // This listener is appended after the production listener, before this
+        // event reaches that ancestor. stopPropagation still permits listeners
+        // on the same element. End at dispatch completion, not a later timer
+        // task that can accidentally include Playwright's performance.now calls.
+        const owner = event.target.closest('.daw-tempo-controls')
+        owner.addEventListener(type, () => {
+          item.completedAt = nativeNow()
+          item.statusAfter = owner.querySelector('.daw-tempo-status').textContent
+          if (state.activeTap === item) state.activeTap = null
+        }, { once: true })
       }
       if (type === 'click' && action === 'use-position' && state.realtimeContext) {
         const item = { before: state.realtimeContext.currentTime, after: null, trusted: event.isTrusted }
@@ -330,33 +338,94 @@ test('shifted fractional grid drives genuine clip gestures while numeric trim an
     wavBeforeSha256: sha256(originalWav.bytes), wavMovedSha256: sha256(movedWav.bytes) })
 })
 
-/** Independent arithmetic over OBSERVED native timestamps, not the app helper. */
-function tapOracle(events) {
-  expect(events).toHaveLength(5)
-  expect(events.every(event => event.trusted && !event.repeat && event.timestamps.length === 1)).toBe(true)
-  const times = events.map(event => event.timestamps[0]), intervals = times.slice(1).map((time, index) => time - times[index])
-  const ordered = [...intervals].sort((a, b) => a - b), center = (ordered[1] + ordered[2]) / 2
-  expect(Math.max(...intervals.map(value => Math.abs(value - center)))).toBeLessThanOrEqual(center * .15)
-  const bpm = roundBpm(60000 / (intervals.reduce((a, b) => a + b, 0) / intervals.length))
-  return { events, intervals, bpm }
+/** Independent bounds over EVERY observed native call, not an arbitrarily
+ * chosen call or the app estimator. Five taps have four intervals, so their
+ * mean is exactly (last-first)/4 even if a dispatch makes multiple clock reads. */
+function tapOracle(observation) {
+  const { events, candidateText } = observation
+  const diagnostic = `Trusted tap observations: ${JSON.stringify(observation)}`
+  expect(events, diagnostic).toHaveLength(5)
+  const bounds = events.map((event, index) => {
+    expect(event.trusted && !event.repeat, diagnostic).toBe(true)
+    expect(event.type, diagnostic).toBe(index % 2 ? 'keydown' : 'click')
+    if (index % 2) expect(event.key, diagnostic).toBe(index === 1 ? ' ' : 'Enter')
+    expect(event.timestamps.length, diagnostic).toBeGreaterThan(0)
+    expect(event.timestamps.every(Number.isFinite), diagnostic).toBe(true)
+    expect(Number.isFinite(event.eventTimestamp) && Number.isFinite(event.capturedAt) && Number.isFinite(event.completedAt), diagnostic).toBe(true)
+    expect(event.eventTimestamp, diagnostic).toBeLessThanOrEqual(event.capturedAt)
+    expect(event.capturedAt, diagnostic).toBeLessThanOrEqual(event.completedAt)
+    for (let n = 1; n < event.timestamps.length; n++) expect(event.timestamps[n], diagnostic).toBeGreaterThanOrEqual(event.timestamps[n - 1])
+    const lower = Math.min(...event.timestamps), upper = Math.max(...event.timestamps)
+    expect(lower, diagnostic).toBeGreaterThanOrEqual(event.capturedAt)
+    expect(upper, diagnostic).toBeLessThanOrEqual(event.completedAt)
+    expect(event.statusAfter, diagnostic).toContain(index < 4 ? `${index + 1} / 5 下` : '5 下')
+    if (index) expect(event.eventTimestamp, diagnostic).toBeGreaterThan(events[index - 1].eventTimestamp)
+    return { lower, upper, widthMs: upper - lower }
+  })
+  const intervals = bounds.slice(1).map((next, index) => ({ lower: next.lower - bounds[index].upper, upper: next.upper - bounds[index].lower }))
+  const resolutionBpm = .1 // The actual candidate is displayed to one decimal.
+  for (const interval of intervals) {
+    expect(interval.lower, diagnostic).toBeGreaterThan(0)
+    // Even an individual interval's uncertainty must be narrower than one
+    // displayed BPM increment. This derives the allowed clock width from the
+    // measured cadence; it is not an arbitrary millisecond tolerance.
+    expect(60000 / interval.lower - 60000 / interval.upper, diagnostic).toBeLessThan(resolutionBpm)
+  }
+  const median = values => {
+    const sorted = [...values].sort((a, b) => a - b)
+    return (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+  }
+  const center = { lower: median(intervals.map(item => item.lower)), upper: median(intervals.map(item => item.upper)) }
+  const worstDeviations = intervals.map(interval => Math.max(Math.abs(interval.lower - center.upper), Math.abs(interval.upper - center.lower)))
+  expect(Math.max(...worstDeviations), diagnostic).toBeLessThanOrEqual(center.lower * .15)
+  expect(median(worstDeviations), diagnostic).toBeLessThanOrEqual(center.lower * .05)
+  const firstHalf = { lower: (intervals[0].lower + intervals[1].lower) / 2, upper: (intervals[0].upper + intervals[1].upper) / 2 }
+  const lastHalf = { lower: (intervals[2].lower + intervals[3].lower) / 2, upper: (intervals[2].upper + intervals[3].upper) / 2 }
+  const worstDrift = Math.max(Math.abs(firstHalf.lower - lastHalf.upper), Math.abs(firstHalf.upper - lastHalf.lower))
+  expect(worstDrift, diagnostic).toBeLessThanOrEqual(center.lower * .08)
+  const span = { lower: bounds[4].lower - bounds[0].upper, upper: bounds[4].upper - bounds[0].lower }
+  const rawBpm = { lower: 240000 / span.upper, upper: 240000 / span.lower }
+  const roundedBpm = { lower: roundBpm(rawBpm.lower), upper: roundBpm(rawBpm.upper) }
+  expect(rawBpm.upper - rawBpm.lower, diagnostic).toBeLessThan(resolutionBpm)
+  expect(candidateText, diagnostic).toMatch(/^\d+(?:\.\d)? BPM$/)
+  const bpm = Number(candidateText.replace(' BPM', ''))
+  expect(bpm, diagnostic).toBeGreaterThanOrEqual(roundedBpm.lower)
+  expect(bpm, diagnostic).toBeLessThanOrEqual(roundedBpm.upper)
+  expect(bpm, diagnostic).toBeGreaterThanOrEqual(20); expect(bpm, diagnostic).toBeLessThanOrEqual(300)
+  // The displayed value is used for half/double/apply only AFTER this bounded
+  // independent check proves it could come from the native observed clocks.
+  return { events, bounds, intervals, center, worstDrift, span, rawBpm, roundedBpm, resolutionBpm, bpm }
 }
 async function collectTaps(page) {
   await openTempo(page)
   if (await tempo(page, 'reset').isEnabled()) await tempo(page, 'reset').click()
   await tempo(page, 'tap').scrollIntoViewIfNeeded(); await tempo(page, 'tap').focus()
   const first = await page.evaluate(() => window.__tempoNative.taps.length)
-  for (let index = 0; index < 5; index++) {
-    if (index) await page.waitForFunction(() => {
-      const last = window.__tempoNative.taps.at(-1)?.timestamps.at(-1)
-      return last !== undefined && performance.now() - last >= 700
-    })
-    if (index % 2) await page.keyboard.press(index === 1 ? 'Space' : 'Enter')
-    else await tempo(page, 'tap').click()
-    await expect(page.locator('.daw-tempo-status')).toContainText(index < 4 ? `${index + 1} / 5 下` : '5 下')
+  let observation, gestureError
+  try {
+    for (let index = 0; index < 5; index++) {
+      if (index) await page.waitForFunction(() => {
+        const last = window.__tempoNative.taps.at(-1)?.completedAt
+        return Number.isFinite(last) && performance.now() - last >= 700
+      })
+      if (index % 2) await page.keyboard.press(index === 1 ? 'Space' : 'Enter')
+      else await tempo(page, 'tap').click()
+      await expect(page.locator('.daw-tempo-status')).toContainText(index < 4 ? `${index + 1} / 5 下` : '5 下')
+    }
+  } catch (error) {
+    gestureError = error
+  } finally {
+    observation = await page.evaluate(start => ({ firstEventIndex: start, events: window.__tempoNative.taps.slice(start),
+      candidateText: document.querySelector('.daw-tempo-candidate').textContent,
+      status: document.querySelector('.daw-tempo-status').textContent }), first)
+    // Persist raw diagnostics before the oracle (and even if a cadence/count
+    // assertion failed), so CI cannot hide the actual event clock arrays again.
+    await evidence(test.info(), `tempo-tap-observation-${first}.json`, observation)
   }
-  const events = await page.evaluate(start => window.__tempoNative.taps.slice(start), first), oracle = tapOracle(events)
-  await expect(page.locator('.daw-tempo-candidate')).toHaveText(`${oracle.bpm} BPM`)
-  await expect(tempo(page, 'apply')).toBeEnabled()
+  if (gestureError) throw new Error(`Tap gesture/count failure: ${gestureError.message}\nTrusted tap observations: ${JSON.stringify(observation)}`, { cause: gestureError })
+  const oracle = tapOracle(observation)
+  await expect(page.locator('.daw-tempo-candidate'), `Trusted tap observations: ${JSON.stringify(observation)}`).toHaveText(`${oracle.bpm} BPM`)
+  await expect(tempo(page, 'apply'), `Trusted tap observations: ${JSON.stringify(observation)}`).toBeEnabled()
   return oracle
 }
 

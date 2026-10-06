@@ -74,6 +74,9 @@
 .daw-tempo-origin-row input { width: 100%; min-width: 0; }
 .daw-tempo-origin-details > summary { padding-block: 10px; }
 .daw-tempo-controls button { min-width: 44px; }
+/* The open tool already shows this same audio-invariance notice near its Tap
+   control; keep one visible copy, and restore the compact footer when closed. */
+.daw-grid-fields:has(.daw-tempo-controls[open]) > .daw-note { display: none; }
 @media (max-width: 600px) { .daw-grid-fields { max-height: max(132px, calc(100dvh - 420px)); } }
 .daw-panel .daw-clip { position: absolute; height: 92px; min-width: 12px; top: 20px; padding: 5px; overflow: hidden; text-align: left; border-color: #718594; background: #263641; touch-action: pan-y; cursor: grab; }
 .daw-panel .daw-clip:nth-child(2n) { background: #253d39; }
