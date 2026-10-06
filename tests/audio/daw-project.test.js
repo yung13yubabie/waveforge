@@ -102,6 +102,27 @@ describe('bounded immutable DAW project commands', () => {
     expect(() => applyCommand(project, command)).toThrow()
     expect(JSON.stringify(project)).toBe(serialized)
   })
+  it('replaces only source identity and source offset with another native-rate recording', () => {
+    let project = applyCommand(fixture(), { type: 'clip.automation.add', trackId: 'track', clipId: 'clip', point: { timeSeconds: 2.125, value: .35 } })
+    project = applyCommand(project, { type: 'clip.trim', trackId: 'track', clipId: 'clip', startSeconds: 20.375, endSeconds: 26.75 })
+    project = applyCommand(project, { type: 'asset.add', asset: { ...asset, id: 'new-take', name: 'another.wav', sampleRate: 44100, length: 441000 } })
+    const before = JSON.stringify(project), clip = clipOf(project)
+    const result = applyCommand(project, { type: 'clip.replaceSource', trackId: 'track', clipId: 'clip', assetId: 'new-take', offsetSeconds: 3.625 })
+    expect(clipOf(result)).toEqual({ ...clip, assetId: 'new-take', offsetSeconds: 3.625 })
+    expect(result.assets).toEqual(project.assets)
+    expect(JSON.stringify(project)).toBe(before)
+    expect(result.revision).toBe(project.revision + 1)
+  })
+  it.each([['missing', 0], ['audio', 2.01], ['audio', -1], ['audio', NaN], ['audio', Infinity], ['audio', '1'], ['audio', undefined]])('atomically rejects a missing/short/invalid replacement (%s, %s)', (assetId, offsetSeconds) => {
+    const project = fixture(), before = JSON.stringify(project)
+    expect(() => applyCommand(project, { type: 'clip.replaceSource', trackId: 'track', clipId: 'clip', assetId, offsetSeconds })).toThrow()
+    expect(JSON.stringify(project)).toBe(before)
+  })
+  it('accepts exactly enough source without stretching or moving timeline boundaries', () => {
+    const project = fixture()
+    const replaced = applyCommand(project, { type: 'clip.replaceSource', trackId: 'track', clipId: 'clip', assetId: 'audio', offsetSeconds: 2 })
+    expect(clipOf(replaced)).toEqual({ ...clipOf(project), offsetSeconds: 2 })
+  })
   it('enforces track, clip, decoded-memory and identity bounds', () => {
     let project = fixture()
     while (project.tracks.length < DAW_LIMITS.maxTracks) project = applyCommand(project, { type: 'track.add' })

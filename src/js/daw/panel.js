@@ -1,10 +1,13 @@
-import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt } from './project.js'
+import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt, getClipOriginalSource, CLIP_TRANSPOSE_ENGINE } from './project.js'
 import { renderProject, getPendingNativeRenderBytes } from './render.js'
+import { createSignalsmithPitchClient } from '../pitch/signalsmith-client.js'
+import { planClipTranspose, renderClipTranspose } from './transpose.js'
 import { ProjectHistory } from './history.js'
 import { exportProjectArchive, importProjectArchive, archiveFileName, ARCHIVE_LIMITS } from './archive.js'
 import { sha256Hex } from '../audio/sha256.js'
 import { encodeWAV } from '../audio/wav.js'
 import { decodeDawAsset } from './decode.js'
+import { wavSampleRate } from '../audio/asset-decode.js'
 
 const FILE_LIMIT = 64 * 1024 * 1024
 const abortError = () => new DOMException('已取消', 'AbortError')
@@ -37,7 +40,7 @@ function decodedBytes(buffers) {
 /** Local runtime owns audio; project/history contain only portable metadata. */
 export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   confirmAction = message => window.confirm(message), downloadFile = download,
-  AudioContextClass = globalThis.AudioContext } = {}) {
+  AudioContextClass = globalThis.AudioContext, pitchClientFactory = createSignalsmithPitchClient } = {}) {
   const root = document.getElementById('mode-editor')
   if (!root) return null
   const el = id => document.getElementById(`daw-${id}`)
@@ -52,6 +55,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   let buffers = new Map(), files = new Map()
   let saved = JSON.stringify(project), hasDownloaded = false
   let selection = null, cursor = 0, mix = null, job = null, generation = 0
+  let replacement = null, replacementOwner = null, selectionVersion = 0, replacementReadBusy = false, pendingReplacementBytes = 0
+  let pitchClient = null, transposeBusy = false, transposeVersion = 0, transposeControlOwner = null, pendingAudition = null
   let loadWorkPending = false, pendingLoadBytes = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
   let drag = null, suppressClick = false, automationDrag = null, automationIndex = 0, automationClipId = null
@@ -107,10 +112,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }
   function cancelJob(message = '已取消；原專案保持不變') {
     if (!job) return
+    const kind = job.kind
     job.controller.abort(); generation++; job = null
+    if (['replacement', 'transpose', 'audition'].includes(kind)) { replacement = null; replacementOwner = null; stop(); renderReplacement() }
     status(message); refreshControls()
   }
   function invalidate() {
+    discardReplacement()
     automationDrag = null
     stop()
     mix = null
@@ -147,6 +155,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     cursor = clamp(cursor, 0, duration()); render(); status(direction === 'undo' ? '已復原上一步' : '已重做')
   }
   function refreshControls() {
+    if (destroyed) return
     const locked = job && ['import', 'open'].includes(job.kind)
     const hasClips = duration() > 0
     button('undo').disabled = Boolean(locked || !history.canUndo)
@@ -159,6 +168,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('clip-fields').disabled = Boolean(locked || !selected())
     for (const key of ['name', 'tempo', 'sample-rate', 'master-gain']) el(key).disabled = Boolean(locked)
     root.querySelectorAll('[data-track-control]').forEach(control => { control.disabled = Boolean(locked) })
+    button('replace').disabled = Boolean(job || !selected())
+    button('transpose-render').disabled = Boolean(job || transposeBusy || !selected())
+    button('transpose-original').hidden = !selected()?.clip.transpose
+    button('transpose-original').disabled = Boolean(locked || !selected()?.clip.transpose)
+    el('replacement-offset').disabled = Boolean(job)
+    for (const key of ['replacement-original', 'replacement-preview', 'replacement-confirm']) button(key).disabled = Boolean(job || !replacement?.project)
+    button('replacement-cancel').disabled = false
     el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
@@ -176,7 +192,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       el('clip-track').replaceChildren(...project.tracks.map(t => { const option = node('option', '', t.name); option.value = t.id; return option }))
       el('clip-track').value = track.id
     }
+    renderTransposeSettings(item)
     renderAutomation()
+    renderReplacement()
     root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.clipId === selection?.clipId)))
     refreshControls()
   }
@@ -234,10 +252,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     if (!el('automation-time').value || !el('automation-value').value) throw new Error('請填入音量點的時間與音量；原設定仍保留')
     clipCommand('clip.automation.update', { index: automationIndex, patch: { timeSeconds: Number(el('automation-time').value), value: Number(el('automation-value').value) / 100 } }, '已套用句內音量；試聽與匯出都會使用這條曲線')
   }
-  function waveform(clip) {
+  function waveform(clip, sourceBuffers = buffers) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('viewBox', '0 0 160 50'); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'daw-wave'); svg.setAttribute('aria-hidden', 'true')
-    const buffer = buffers.get(clip.assetId)
+    const buffer = sourceBuffers.get(clip.assetId)
     if (!buffer) return svg
     const channel = buffer.getChannelData(0), points = 160
     const begin = Math.floor(clip.offsetSeconds * buffer.sampleRate), count = Math.max(1, Math.floor(clip.durationSeconds * buffer.sampleRate))
@@ -370,6 +388,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     const list = [...inputFiles]
     if (!list.length) return
     if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
+    discardReplacement()
     return withJob('import', async ({ signal, check }) => {
       if (project.tracks.length + list.length > DAW_LIMITS.maxTracks) throw new Error('最多 16 軌；請先刪除不需要的音軌')
       for (const file of list) if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > FILE_LIMIT) throw new Error(`${file.name}：原檔須介於 1 byte 與 64 MiB 之間`)
@@ -406,11 +425,258 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
-  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + pendingLoadBytes + getPendingNativeRenderBytes()
+  const replacementBytes = () => replacement ? replacement.buffer.length * replacement.buffer.numberOfChannels * 4 + replacement.file.size +
+    (replacement.mix ? replacement.mix.buffer.length * replacement.mix.buffer.numberOfChannels * 4 : 0) + JSON.stringify(replacement.registeredProject).length * 4 : 0
+  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + replacementBytes() + pendingReplacementBytes + pendingLoadBytes + getPendingNativeRenderBytes() +
+    (pendingAudition && replacement !== pendingAudition.staged ? pendingAudition.bytes : 0)
+  function captureReplacementOwner() {
+    const item = selected()
+    if (!item) throw new Error('請先選取要替換的一個片段')
+    return { snapshot: project, trackId: item.track.id, clipId: item.clip.id, sourceId: item.clip.assetId, selectionVersion }
+  }
+  function checkReplacementOwner(owner) {
+    if (destroyed || owner.snapshot !== project || owner.selectionVersion !== selectionVersion ||
+      owner.trackId !== selection?.trackId || owner.clipId !== selection?.clipId || owner.sourceId !== selected()?.clip.assetId ||
+      owner.transposeVersion !== undefined && (owner.transposeVersion !== transposeVersion || owner.settingsKey !== transposeSettingsKey())) throw abortError()
+  }
+  function discardReplacement(message) {
+    const present = replacement || replacementOwner || job && ['replacement', 'transpose', 'audition'].includes(job.kind)
+    replacement = null; replacementOwner = null
+    if (job && ['replacement', 'transpose', 'audition'].includes(job.kind)) cancelJob(message)
+    if (present) { stop(); renderReplacement(); refreshControls(); if (message) status(message) }
+  }
+  function replacementOffset() {
+    const value = el('replacement-offset').value
+    if (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0) throw new Error('請填入有效的新錄音起點（0 秒以上）；原片段保持不變')
+    return Number(value)
+  }
+  function replacementProject(staged, offsetSeconds) {
+    checkReplacementOwner(staged.owner)
+    return applyCommand(staged.registeredProject, { type: 'clip.replaceSource', trackId: staged.owner.trackId,
+      clipId: staged.owner.clipId, assetId: staged.asset.id, offsetSeconds, ...(staged.transpose ? { transpose: staged.transpose } : {}) })
+  }
+  function renderReplacement() {
+    const item = selected(), asset = item && project.assets.find(asset => asset.id === item.clip.assetId)
+    el('current-source').textContent = item ? `目前錄音：${asset.name} · ${asset.sampleRate / 1000} kHz · 原檔 ${formatDawTime(item.clip.offsetSeconds)} 起，共 ${formatDawTime(item.clip.durationSeconds)}` : ''
+    const review = el('replacement-review'), wasTranspose = review.dataset.kind === 'transpose'
+    const reviewHadFocus = review.contains(document.activeElement)
+    review.hidden = !replacement
+    if (!replacement && reviewHadFocus) {
+      const command = wasTranspose ? 'transpose-render' : 'replace'
+      const target = button(command).disabled ? el(wasTranspose ? 'transpose-details' : 'replacement-details').querySelector('summary') : button(command)
+      target.focus({ preventScroll: true })
+    }
+    el('replacement-wave').replaceChildren()
+    if (!replacement) { el('replacement-summary').textContent = ''; return }
+    const transposed = replacement.kind === 'transpose'
+    review.dataset.kind = replacement.kind || 'replacement'
+    el(transposed ? 'transpose-details' : 'replacement-details').append(review)
+    review.setAttribute('aria-label', transposed ? '待接受的片段移調' : '待確認的替換錄音')
+    button('replacement-preview').textContent = transposed ? 'B 處理後混音' : 'B 替換後混音'
+    button('replacement-confirm').textContent = transposed ? '接受移調' : '確認替換錄音'
+    button('replacement-cancel').textContent = transposed ? '取消' : '取消替換'
+    const clip = replacement.project?.tracks.find(track => track.id === replacement.owner.trackId)?.clips.find(clip => clip.id === replacement.owner.clipId)
+    const target = selected().clip
+    el('replacement-summary').textContent = `待替換「${target.name}」：${asset.name} → ${replacement.file.name}（${replacement.buffer.sampleRate / 1000} kHz，${formatDawTime(replacement.buffer.duration)}）。時間軸 ${formatDawTime(target.atSeconds)}–${formatDawTime(target.atSeconds + target.durationSeconds)}。${clip ? `新錄音使用 ${formatDawTime(clip.offsetSeconds)}–${formatDawTime(clip.offsetSeconds + clip.durationSeconds)}，尚未套用。` : '起點或長度無效，請修正起點後再試。'}`
+    if (transposed) {
+      const m = replacement.metadata, signed = n => `${n > 0 ? '+' : ''}${n}`
+      el('replacement-summary').textContent = `${signed(m.semitones)} 半音 · 共振峰 ${signed(m.formantSemitones)} · ${m.formantCompensation ? '近似補償' : '無補償'} · ${replacement.buffer.sampleRate / 1000} kHz。尚未套用。${m.outputPeak > 1 ? '來源峰值超過 0 dBFS，未截幅；若混音也過載，請取消並保留原音，降低片段或總音量後重新產生試聽。' : ''}`
+    }
+    if (clip) el('replacement-wave').append(waveform(clip, replacement.buffers))
+  }
+  function renderTransposeSettings(item) {
+    // Prefill only when the source/selection actually changes; ordinary UI
+    // rerenders must not overwrite a pending edit to the visible settings.
+    const key = item ? `${item.track.id}:${item.clip.id}:${item.clip.assetId}` : null
+    if (key === transposeControlOwner) return
+    transposeControlOwner = key; transposeVersion++
+    const t = item?.clip.transpose
+    for (const [id, value] of Object.entries({ semitones: t?.semitones ?? 0, cents: t?.cents ?? 0, formants: t?.formantSemitones ?? 0 })) el(`transpose-${id}`).value = String(value)
+    el('transpose-compensation').checked = t?.formantCompensation ?? false
+    el('transpose-source').textContent = `先 A/B 試聽，再接受；可回到原音${t ? '。再產生會從原音開始' : ''}`
+  }
+  function restoreTransposeOriginal() {
+    const item = selected()
+    if (!item?.clip.transpose) throw new Error('此片段沒有可回復的移調原音')
+    const source = project.assets.find(asset => asset.id === item.clip.transpose.sourceAssetId)
+    const original = getClipOriginalSource(item.clip, source.sampleRate)
+    const hadFocus = document.activeElement === button('transpose-original')
+    clipCommand('clip.replaceSource', original, '已回到保留原音；位置、長度、音量曲線仍保留，可復原／重做')
+    if (hadFocus) (button('transpose-render').disabled ? el('transpose-details').querySelector('summary') : button('transpose-render')).focus({ preventScroll: true })
+  }
+  function transposeSettings() {
+    const number = id => {
+      const raw = el(`transpose-${id}`).value
+      if (!raw.trim() || !Number.isFinite(Number(raw))) throw new Error('請填入有效的移調與共振峰數值')
+      return Number(raw)
+    }
+    const semitones = number('semitones'), cents = number('cents'), formantSemitones = number('formants')
+    if (Math.abs(semitones) > 2 || Math.abs(cents) > 100 || Math.abs(semitones + cents / 100) > 2) throw new Error('半音與音分合計須在 ±2 半音內')
+    if (Math.abs(formantSemitones) > 2) throw new Error('共振峰須在 ±2 半音內')
+    return { semitones, cents, formantSemitones, formantCompensation: el('transpose-compensation').checked }
+  }
+  // Include uncommitted input text. Accept cannot adopt a result that disagrees
+  // with controls, even if a browser has not emitted change/blur yet.
+  function transposeSettingsKey() {
+    return JSON.stringify(['semitones', 'cents', 'formants', 'compensation'].map(id => {
+      const input = el(`transpose-${id}`); return input.type === 'checkbox' ? input.checked : input.value
+    }))
+  }
+  async function prepareTranspose() {
+    if (job && !['replacement', 'transpose', 'audition'].includes(job.kind)) throw new Error('請先等待或取消目前工作')
+    discardReplacement()
+    if (transposeBusy || replacementReadBusy) throw new Error('上一份音訊仍在整理，請稍候再試')
+    const owner = { ...captureReplacementOwner(), transposeVersion, settingsKey: transposeSettingsKey() }
+    const settings = transposeSettings(), clip = selected().clip
+    const sourceAsset = project.assets.find(asset => asset.id === (clip.transpose?.sourceAssetId || clip.assetId))
+    if (sourceAsset.decodeBackend === 'generated-float32-wav') throw new Error('此舊處理素材沒有原音連結；請先選擇原錄音，避免疊加移調')
+    const originalSource = getClipOriginalSource(clip, sourceAsset.sampleRate)
+    const input = buffers.get(originalSource.assetId), originalClip = { ...clip, ...originalSource }
+    const plan = planClipTranspose(input, originalClip, settings)
+    const transpose = { version: 1, engine: CLIP_TRANSPOSE_ENGINE, sourceAssetId: originalSource.assetId,
+      sourceOffsetSeconds: originalClip.offsetSeconds, sourceDurationSeconds: clip.durationSeconds,
+      cropFirstFrame: plan.first, cropLastFrame: plan.last, ...settings }
+    if (buffers.size >= DAW_LIMITS.maxAssets || decodedBytes(buffers) + plan.pcmBytes > DAW_LIMITS.maxDecodedBytes) throw new Error('原音與復原素材已達上限；請先下載工程並另開精簡專案')
+    if (retainedBytes() + plan.reservedBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('移調會超出記憶體預算；請先下載工程，或使用較短片段')
+    const sourceToken = JSON.stringify([project.id, project.revision, owner.trackId, owner.clipId, owner.sourceId, owner.selectionVersion, owner.transposeVersion, owner.settingsKey])
+    stop()
+    transposeBusy = true; pendingReplacementBytes += plan.reservedBytes
+    try {
+      return await withJob('transpose', async ({ signal, check }) => {
+        const checkOwner = () => { check(); checkReplacementOwner(owner) }
+        pitchClient ||= pitchClientFactory()
+        status('正在本機產生移調試聽…')
+        const generated = await renderClipTranspose(plan, { client: pitchClient, settings, signal, sourceToken, check: checkOwner,
+          createBuffer: (channels, length, rate) => getContext().createBuffer(channels, length, rate),
+          onProgress: value => { if (!signal.aborted) status(`正在本機移調：${Math.round(value * 100)}%`) } })
+        checkOwner()
+        const original = sourceAsset
+        const name = `${original.name.replace(/\.[^.]+$/, '').slice(0, 80)}-transpose.wav`
+        const file = new File([generated.bytes], name, { type: 'audio/wav' })
+        const nextBuffers = new Map(buffers), nextFiles = new Map(files)
+        const registered = registerAudioBuffer(project, nextBuffers, generated.buffer, { name, hash: generated.hash,
+          sourceSampleRate: generated.buffer.sampleRate, decodeBackend: 'generated-float32-wav' })
+        nextFiles.set(registered.asset.id, file)
+        const staged = { kind: 'transpose', owner, file, buffer: generated.buffer, asset: registered.asset,
+          registeredProject: registered.project, buffers: nextBuffers, files: nextFiles, mix: null,
+          offsetSeconds: generated.offsetSeconds, metadata: generated.metadata, transpose }
+        staged.project = replacementProject(staged, staged.offsetSeconds)
+        checkOwner(); replacement = staged
+        el('transpose-details').open = true; renderReplacement(); refreshControls()
+        status('移調已產生，請 A/B 試聽後接受；原片段與下載仍保持不變')
+      })
+    } finally { pendingReplacementBytes -= plan.reservedBytes; transposeBusy = false; refreshControls() }
+  }
+  async function prepareReplacement(file, owner = captureReplacementOwner()) {
+    if (!file) return
+    if (job && !['replacement', 'transpose', 'audition'].includes(job.kind)) throw new Error('請先等待或取消目前工作')
+    discardReplacement(); checkReplacementOwner(owner)
+    if (replacementReadBusy) throw new Error('上一份替換錄音仍在讀取或驗證，請稍候再試；原片段保持不變')
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
+    const offsetSeconds = replacementOffset()
+    stop()
+    return withJob('replacement', async ({ signal, check }) => {
+      const checkOwner = () => { check(); checkReplacementOwner(owner) }
+      if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > FILE_LIMIT) throw new Error('替換錄音須介於 1 byte 與 64 MiB；原片段保持不變')
+      if (buffers.size >= DAW_LIMITS.maxAssets) throw new Error('原音與復原素材已達 64 份；請先下載工程並另開精簡專案')
+      if (retainedBytes() + file.size * 3 > DAW_LIMITS.maxCombinedBytes) throw new Error('替換錄音會超出記憶體預算；請先下載工程，並使用較短的錄音')
+      status(`正在本機讀取替換錄音：${file.name}`)
+      // File reads and hashes cannot be aborted. Retain their reservation even
+      // after Cancel, and reject another replacement read until they settle.
+      // Other operations include this reservation in their memory checks.
+      const reservation = reserveLoad(file.size * 3)
+      try {
+        let bytes, hash
+        replacementReadBusy = true
+        try {
+          bytes = await file.arrayBuffer(); checkOwner()
+          if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) throw new Error('替換錄音讀取不完整；原片段保持不變')
+          hash = await sha256Hex(bytes); checkOwner()
+        } finally { replacementReadBusy = false }
+        const sourceSampleRate = wavSampleRate(bytes)
+        const buffer = await decode(bytes, { name: file.name }, signal, reservation.trackNative); checkOwner()
+        if (retainedBytes() + buffer.length * buffer.numberOfChannels * 4 > DAW_LIMITS.maxCombinedBytes) throw new Error('替換錄音解碼後超出記憶體預算；原片段保持不變')
+        const nextBuffers = new Map(buffers), nextFiles = new Map(files)
+        const registered = registerAudioBuffer(project, nextBuffers, buffer, { name: file.name, hash, sourceSampleRate,
+          decodeBackend: sourceSampleRate ? 'native-rate-wav' : 'browser-rate-fallback' })
+        if (sourceSampleRate !== null && buffer.sampleRate !== sourceSampleRate) throw new Error('替換 WAV 未保留原始取樣率；原片段保持不變')
+        nextFiles.set(registered.asset.id, file)
+        const staged = { owner, file, buffer, asset: registered.asset, registeredProject: registered.project, buffers: nextBuffers, files: nextFiles, mix: null }
+        staged.project = replacementProject(staged, offsetSeconds)
+        checkOwner(); replacement = staged
+        el('replacement-details').open = true
+        renderReplacement(); refreshControls()
+        status('替換錄音已備妥，請試聽並確認；目前專案與下載仍使用原錄音')
+      } finally { reservation.finish() }
+    })
+  }
+  function updateReplacementOffset() {
+    if (!replacement || replacement.kind === 'transpose') return
+    if (job?.kind === 'audition') cancelJob('起點已修改，請重新選擇替換錄音')
+    if (!replacement) return
+    stop(); replacement.mix = null; replacement.project = null
+    try { replacement.project = replacementProject(replacement, replacementOffset()) }
+    finally { renderReplacement(); refreshControls() }
+  }
+  function confirmReplacement() {
+    if (job) throw new Error('請等待試聽準備完成，或先取消目前工作')
+    if (!replacement) throw new Error('請先選擇替換錄音')
+    checkReplacementOwner(replacement.owner)
+    // Re-read the visible field so uncommitted keyboard edits cannot confirm a
+    // different offset than the one the user sees. Validation is still atomic.
+    const next = replacementProject(replacement, replacement.kind === 'transpose' ? replacement.offsetSeconds : replacementOffset())
+    if (retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('接受音訊會超出記憶體預算；原片段保持不變')
+    const staged = replacement
+    history.push(next)
+    invalidate(); project = next; buffers = staged.buffers; files = staged.files
+    retainHistoryAssets(); render(); status(staged.kind === 'transpose' ? '已接受移調，位置、長度與音量曲線保持不變；可復原／重做，原錄音仍保留' : '已替換錄音，位置、長度與音量曲線保持不變；可復原／重做。ZIP 可能包含完整新舊錄音')
+  }
+  async function previewReplacement(useReplacement) {
+    if (pendingAudition) throw new Error('上一份試聽仍在結束，請稍候再試')
+    if (!replacement?.project) throw new Error('請先選擇有效的替換錄音與起點')
+    const staged = replacement
+    checkReplacementOwner(staged.owner)
+    // Input events can precede change/blur; always preview the displayed range.
+    const offset = staged.kind === 'transpose' ? staged.offsetSeconds : replacementOffset()
+    if (staged.project.tracks.find(track => track.id === staged.owner.trackId).clips.find(clip => clip.id === staged.owner.clipId).offsetSeconds !== offset) updateReplacementOffset()
+    stop()
+    // beforePlayback/resume can outlive Cancel; keep the staged map's retained
+    // data counted until this asynchronous chain actually settles. Native work
+    // retains its own ledger separately if its cancellation wins a race.
+    const reserved = decodedBytes(staged.buffers) + [...staged.files.values()].reduce((sum, file) => sum + file.size, 0) + replacementBytes()
+    const audition = { staged, bytes: reserved }; pendingAudition = audition
+    try { await withJob('audition', async request => {
+      const check = () => { request.check(); checkReplacementOwner(staged.owner); if (replacement !== staged) throw abortError() }
+      await beforePlayback?.(); check()
+      const ctx = getContext(); await ctx.resume(); check()
+      let result
+      if (useReplacement) {
+        if (!staged.mix) {
+          const renderBytes = Math.ceil(duration() * project.sampleRate) * 2 * 4
+          if (retainedBytes() + renderBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('替換試聽會超出記憶體預算；請縮短錄音或時間軸')
+          status('正在準備替換後的混音試聽；尚未套用…')
+          const rendered = await renderProject(staged.project, staged.buffers, { signal: request.signal, isCurrent: () => replacement === staged && project === staged.owner.snapshot && selectionVersion === staged.owner.selectionVersion })
+          check(); staged.mix = rendered
+        }
+        result = staged.mix
+      } else result = await getMix({ ...request, check })
+      check()
+      assertSafePlayback(result)
+      const clip = selected().clip, start = clip.atSeconds, end = start + clip.durationSeconds
+      source = ctx.createBufferSource(); source.buffer = result.buffer; source.connect(ctx.destination)
+      playback = { start, end, loop: false, started: ctx.currentTime }; cursor = start
+      const activeSource = source
+      source.onended = () => { if (source === activeSource) { cursor = end; source.disconnect(); source = null; playback = null; button('play').textContent = '播放混音'; refreshControls(); paintPlayhead() } }
+      source.start(0, start, end - start); button('play').textContent = '暫停'
+      status(useReplacement ? `B：正在試聽${staged.kind === 'transpose' ? '處理' : '替換'}後的完整混音；尚未確認套用` : 'A：正在試聽目前原錄音的完整混音')
+      paintPlayhead()
+    }) } finally { if (pendingAudition === audition) pendingAudition = null; refreshControls() }
+  }
   async function openArchive(file) {
     if (!file) return
     if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
     if ((dirty() || project.assets.length) && !await confirmAction('開啟工程會取代此多軌專案與復原紀錄。尚未下載的修改將遺失；要繼續嗎？')) return
+    discardReplacement()
     return withJob('open', async ({ signal, check }) => {
       const beforeLoadBytes = retainedBytes()
       // Before the manifest is trusted, only bounded headers and its two JSON
@@ -445,6 +711,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('render-info').textContent = `第 ${result.revision} 版 · ${project.sampleRate / 1000} kHz · 採樣峰值 ${db(result.peaks?.samplePeakDb ?? 20 * Math.log10(result.peak))} · 估計 True Peak（4×）${db(result.peaks?.truePeakDb)}。${result.peak > 1 || result.peaks?.truePeakDb > 0 ? '有過載，請降低總混音音量後重試' : 'WAV 輸出不會自動增減音量'}`
     return result
   }
+  function assertSafePlayback(result) {
+    if (result.peak > 1 || result.peaks?.samplePeakDb > 0 || result.peaks?.truePeakDb > 0) {
+      const guidance = replacement?.kind === 'transpose'
+        ? '請取消並保留原音，降低片段或總音量後重新產生試聽'
+        : '請降低片段或總混音音量後重新試聽'
+      throw new Error(`混音峰值超過 0 dBFS，已停止試聽；未自動截幅或降低音量。${guidance}`)
+    }
+  }
   async function play() {
     if (source) { stop(); return }
     if (!duration() || root.hidden) return
@@ -452,6 +726,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       await beforePlayback?.(); request.check()
       const ctx = getContext(); await ctx.resume(); request.check()
       const result = await getMix(request); request.check()
+      assertSafePlayback(result)
       const item = selected(), looping = el('loop').checked
       if (looping && !item) throw new Error('循環試聽前請先選取片段')
       const start = looping ? item.clip.atSeconds : cursor >= duration() ? 0 : cursor
@@ -503,12 +778,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     })
   }
   function clear() {
-    cancelJob(); stop({ rewind: true }); generation++
+    discardReplacement(); cancelJob(); stop({ rewind: true }); generation++
     project = createProject({ name: '未命名專案' }); history = new ProjectHistory(project)
     buffers.clear(); files.clear(); mix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false
-    el('audio-files').value = ''; el('project-file').value = ''; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
+    el('audio-files').value = ''; el('project-file').value = ''; el('replacement-file').value = ''; el('replacement-offset').value = '0'; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
+    if (selection?.trackId !== trackId || selection?.clipId !== clipId) { selectionVersion++; discardReplacement('已變更所選片段，請重新選擇替換錄音') }
     automationDrag = null
     selection = { trackId, clipId }; const item = selected(); if (!item) { selection = null; return }
     stop(); cursor = item.clip.atSeconds; renderInspector(); paintPlayhead()
@@ -519,6 +795,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     clipCommand('clip.move', { atSeconds: Math.max(0, item.clip.atSeconds + direction * step) }, direction < 0 ? '已把片段提早' : '已把片段延後')
   }
   const actions = {
+    'transpose-render': prepareTranspose, 'transpose-original': restoreTransposeOriginal,
+    replace: () => { discardReplacement(); replacementOwner = captureReplacementOwner(); el('replacement-file').click() },
+    'replacement-confirm': confirmReplacement, 'replacement-cancel': () => discardReplacement('已取消；原片段保持不變'),
+    'replacement-original': () => previewReplacement(false), 'replacement-preview': () => previewReplacement(true),
     import: () => el('audio-files').click(), open: () => el('project-file').click(), save: saveArchive,
     clear: async () => { if (await confirmAction('清除此多軌專案、音訊與全部復原紀錄？尚未下載的修改會遺失。裝置原檔、下載檔、母帶與歌詞不會刪除。')) clear() },
     cancel: () => cancelJob(), undo: () => changeHistory('undo'), redo: () => changeHistory('redo'),
@@ -554,6 +834,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   listen(root, 'change', event => run(async () => {
     const target = event.target, id = target.id
     if (id === 'daw-audio-files') { try { await importFiles(target.files) } finally { target.value = '' } }
+    else if (id === 'daw-replacement-file') {
+      const owner = replacementOwner; replacementOwner = null
+      try { if (owner && target.files?.[0]) await prepareReplacement(target.files[0], owner) } finally { target.value = '' }
+    }
+    else if (id === 'daw-replacement-offset') updateReplacementOffset()
     else if (id === 'daw-project-file') { try { await openArchive(target.files?.[0]) } finally { target.value = '' } }
     else if (id === 'daw-name') command({ type: 'project.update', patch: { name: target.value.trim() } }, '已更新專案名稱')
     else if (id === 'daw-tempo') command({ type: 'project.update', patch: { tempo: Number(target.value) } }, '已更新拍格；錄音速度與音高不變')
@@ -566,6 +851,12 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     else if (id === 'daw-loop') { stop(); refreshControls() }
     else if (target.matches('input[data-track-control]')) command({ type: 'track.update', trackId: target.dataset.trackId, patch: { [target.dataset.trackControl]: Number(target.value) } }, '已更新音軌混音設定')
   }))
+  for (const eventName of ['input', 'change']) listen(root, eventName, event => {
+    if (event.target.id?.startsWith('daw-transpose-')) {
+      transposeVersion++
+      if (replacement?.kind === 'transpose' || job?.kind === 'transpose') discardReplacement('移調設定已修改，請重新產生試聽')
+    }
+  })
   listen(el('seek'), 'input', () => { const next = Number(el('seek').value); stop(); cursor = next; paintPlayhead(); refreshControls() })
   listen(root, 'keydown', event => {
     if (event.key === 'Escape' && automationDrag) { automationDrag = null; renderAutomation(); return }
@@ -639,14 +930,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionVersion++; discardReplacement('已切換工作區，待確認的替換已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return
-    destroyed = true; cancelJob(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null
+    destroyed = true; discardReplacement(); cancelJob(); pitchClient?.dispose(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null
     if (context) { context.close().catch(() => {}); context = null }
   }
-  listen(window, 'pagehide', event => { if (event.persisted) { cancelJob(); stop() } else destroy() })
+  listen(window, 'pagehide', event => { if (event.persisted) { selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
   render()
-  return { clear, stop, destroy, importFiles, openArchive, getProject: () => JSON.parse(JSON.stringify(project)) }
+  return { clear, stop, destroy, importFiles, openArchive, prepareReplacement, prepareTranspose, confirmReplacement, getProject: () => JSON.parse(JSON.stringify(project)) }
 }

@@ -1,0 +1,52 @@
+{
+  "environment": "Installed ffmpeg/ffprobe; local files only",
+  "version": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "browserVerification": "pending",
+  "results": [
+    {
+      "sampleRate": 44100,
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "pcm_f32le",
+          "sample_fmt": "flt",
+          "sample_rate": "44100",
+          "channels": 2,
+          "duration_ts": 6
+        }
+      ],
+      "floatPayloadBitExact": true
+    },
+    {
+      "sampleRate": 48000,
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "pcm_f32le",
+          "sample_fmt": "flt",
+          "sample_rate": "48000",
+          "channels": 2,
+          "duration_ts": 6
+        }
+      ],
+      "floatPayloadBitExact": true
+    },
+    {
+      "sampleRate": 96000,
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "pcm_f32le",
+          "sample_fmt": "flt",
+          "sample_rate": "96000",
+          "channels": 2,
+          "duration_ts": 6
+        }
+      ],
+      "floatPayloadBitExact": true
+    }
+  ]
+}

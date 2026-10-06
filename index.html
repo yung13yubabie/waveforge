@@ -1161,7 +1161,7 @@
     </div>
     <div class="daw-save-notice">
       <p><span id="daw-save-state" role="status">尚無修改</span><span id="daw-save-warning">關頁前請下載工程；音訊不會自動保存</span></p>
-      <p id="daw-zip-warning">ZIP 含完整原音，包括裁掉的聲音；分享前請確認</p>
+      <p id="daw-zip-warning">ZIP 含完整新舊原音，包括裁掉的聲音；分享前請確認</p>
     </div>
     <div class="daw-editor-grid">
       <div class="daw-arrangement">
@@ -1195,6 +1195,36 @@
             <div class="daw-two"><label>起點<input id="daw-trim-start" type="number" min="0" step="0.001"></label><label>終點<input id="daw-trim-end" type="number" min="0" step="0.001"></label></div>
             <button type="button" data-daw="trim" class="daw-full-width" title="裁掉時間軸上所填範圍以外的聲音；可復原">裁切</button>
           </div>
+          <details id="daw-replacement-details"><summary>替換錄音</summary>
+            <p id="daw-current-source" class="daw-note"></p>
+            <button type="button" data-daw="replace" class="daw-full-width" aria-describedby="daw-replacement-help daw-replacement-privacy">選擇替換錄音</button>
+            <input id="daw-replacement-file" type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac" hidden>
+            <label>新錄音起點（秒）<input id="daw-replacement-offset" type="number" min="0" step="any" value="0" required aria-describedby="daw-replacement-help"></label>
+            <p id="daw-replacement-help" class="daw-note">只換此片段的聲音，保留位置、長度、音量曲線與淡入淡出；不會自動對齊或拉長。新錄音須能涵蓋完整片段。</p>
+            <section id="daw-replacement-review" class="daw-replacement-review" aria-label="待確認的替換錄音" hidden>
+              <p id="daw-replacement-summary" class="daw-note" role="status"></p>
+              <div id="daw-replacement-wave" aria-hidden="true"></div>
+              <div class="daw-actions"><button type="button" data-daw="replacement-original">A 原錄音混音</button><button type="button" data-daw="replacement-preview">B 替換後混音</button></div>
+              <p class="daw-note">試聽此片段範圍的完整混音，包含其他音軌。確認前，一般播放與下載仍使用原錄音。</p>
+              <div class="daw-actions"><button type="button" data-daw="replacement-confirm" class="daw-primary" aria-describedby="daw-replacement-privacy">確認替換錄音</button><button type="button" data-daw="replacement-cancel">取消替換</button></div>
+            </section>
+            <p id="daw-replacement-privacy" class="daw-note">請使用有權使用的錄音。音訊在裝置內處理，不上傳、不下載 AI 模型。ZIP 可能包含完整新舊錄音與未使用素材；分享前請確認。</p>
+          </details>
+          <details id="daw-transpose-details"><summary>片段移調（試用）</summary>
+            <p id="daw-transpose-source" class="daw-note">先 A/B 試聽，再接受；可回到原音</p>
+            <button type="button" data-daw="transpose-original" class="daw-full-width" hidden>回到原音</button>
+            <div class="daw-two"><label>音高（半音）<input id="daw-transpose-semitones" type="number" min="-2" max="2" step="1" value="0" required></label><label>微調（音分）<input id="daw-transpose-cents" type="number" min="-100" max="100" step="1" value="0" required></label></div>
+            <details id="daw-transpose-timbre"><summary>音色調整（選用）</summary>
+              <label>共振峰（半音）<input id="daw-transpose-formants" type="number" min="-2" max="2" step="0.1" value="0" required></label>
+              <label class="daw-check"><input id="daw-transpose-compensation" type="checkbox">近似音色補償</label>
+            </details>
+            <button type="button" data-daw="transpose-render" class="daw-full-width" aria-describedby="daw-transpose-limits">產生試聽</button>
+            <details id="daw-transpose-help"><summary>範圍與音質限制</summary>
+              <p id="daw-transpose-limits" class="daw-note">每次最多 30 秒；有調整時至少需 0.12 秒。總移調範圍 ±2 半音（100 音分 = 1 半音），長度不變。共振峰可獨立調整 ±2 半音，補償是近似處理，音色仍可能改變。這不是自動音準校正。</p>
+              <p class="daw-note">子音、氣音、起音、片段邊界及立體聲可能改變；音質仍待更多人聲聆聽驗證。建議短句、獨立人聲，務必試聽。ZIP 會保存處理音訊、原音連結與這次參數；重開後可回到原音或重新產生。復原／重做歷史不會存入 ZIP。</p>
+              <p class="daw-note">Signalsmith Stretch 1.3.2 · 裝置內處理，不上傳、不下載模型。不自動正規化或截幅；過載時請降低總音量。ZIP 包含保留的完整原錄音。</p>
+            </details>
+          </details>
           <details id="daw-automation-details"><summary>音量曲線</summary>
             <p class="daw-note" id="daw-automation-help">拖動音量點，或輸入數值後套用。時間從片段開頭算起。</p>
             <svg id="daw-automation-graph" class="daw-automation-graph" viewBox="0 0 320 140" role="img" aria-label="所選片段的音量曲線" aria-describedby="daw-automation-help"></svg>
@@ -1227,13 +1257,15 @@
       <h3>音量與混音</h3>
       <p>音量曲線的 100% 不變、0% 靜音，最高 200%（約 +6 dB）；最多 32 點。起點與終點可調音量，時間固定。新增點位於最寬空隙中間，點與點之間平滑改變音量。曲線與片段音量、淡入淡出相乘。淡入與淡出合計不能超過片段長度。</p>
       <p>輸出從 0 秒到最後一個片段結尾，含空白、同軌重疊聲音與各軌混音；靜音／獨聽、剪輯、音量曲線、左右聲道及淡入淡出都會套用。不含母帶效果與浮水印。試聽與 WAV 使用同一份渲染結果。採樣峰值或估計 True Peak 超過 0 dBFS 會停止 WAV 輸出，請先降低總音量。</p>
+      <h3>替換錄音</h3>
+      <p>選取片段並展開「替換錄音」，選擇另一份錄音、設定新錄音起點，再用 A／B 比較並確認。錄音太短時，請減少起點、換較長錄音，或先裁短原片段。取消、換選片段、編輯或切換工作區都會捨棄尚未確認的替換。已確認後可復原／重做；替換不會複製音色或改詞重唱。</p>
       <h3>工程與原始音檔</h3>
       <p>本頁音訊不會自動保存；關頁前請下載工程，重開網站再載入即可繼續。工程只接受此編輯器直接下載的 ZIP，請勿先解壓、重新壓縮或使用其他工具改寫。</p>
-      <p>工程 ZIP 保存完整原始音檔與多軌剪輯／音量設定，包括裁掉但仍留在原檔中的聲音；不含母帶頁參數或歌詞草稿。分享前請確認你願意把這些原音交給收件人。已下載檔案留在裝置，直到你自行刪除；本頁不會自動備份。</p>
+      <p>工程 ZIP 保存完整原始音檔與多軌剪輯／音量設定，包括替換前後的錄音、未使用素材及裁掉但仍留在原檔中的聲音；不保存復原步驟、母帶頁參數或歌詞草稿。分享前請確認你願意把這些原音交給收件人。已下載檔案留在裝置，直到你自行刪除；本頁不會自動備份。</p>
       <p>開啟／下載工程可在切換工作區後繼續；返回此頁可取消。切換工作區會停止多軌試聽，並取消尚在送往母帶頁的工作。清除專案會釋放此多軌專案與復原紀錄的音訊參照，不是安全抹除記憶體，也不會刪除裝置原檔、下載檔、母帶工作階段或歌詞。</p>
       <h3>格式與容量</h3>
       <p>最多 16 軌、256 片段、10 分鐘，每個原檔最多 64 MiB；工程 ZIP 上限 256 MiB，多軌編輯器持有資料的保守工作預算為 512 MiB。解碼格式依瀏覽器支援；超出估算或時長上限會保留原專案並拒絕作業。取消後若原檔仍在讀取或背景解碼，需等它結束才能再載入。這不是整個分頁的記憶體上限；母帶、模型與瀏覽器原生解碼仍可能另外占用記憶體。</p>
-      <p>尚無 MIDI、錄音、音高修正、時間伸縮、效果器插槽、母線或 AI 重唱。波形表示音量起伏，並非音高曲線；片段音量曲線可以編輯與保存。</p>
+      <p>尚無 MIDI、即時錄音、自動音準校正、時間伸縮、效果器插槽、母線或 AI 重唱。波形表示音量起伏，並非音高曲線；片段音量曲線可以編輯與保存。</p>
     </details>
     <div class="daw-transport" role="toolbar" aria-label="多軌專案播放控制">
       <div class="daw-play-actions"><button type="button" data-daw="begin" aria-label="回到專案開頭">回開頭</button><button type="button" data-daw="play" class="daw-primary" disabled>播放混音</button><button type="button" data-daw="stop" disabled>停止</button></div>

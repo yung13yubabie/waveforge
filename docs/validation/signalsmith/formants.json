@@ -1,0 +1,154 @@
+{
+  "source": "Generated 100 Hz harmonic source with Gaussian amplitude-envelope centers at700/1400/2800Hz",
+  "measurement": "Hann FFT and60Hz Gaussian smoothing; nearest maxima in bounded broad bands. Not real-vocal formant gold or perceptual acceptance.",
+  "inputFormants": [
+    700,
+    1398,
+    2800
+  ],
+  "results": [
+    {
+      "options": {
+        "semitones": 0,
+        "formantSemitones": 0
+      },
+      "samples": 96000,
+      "measuredHz": 100,
+      "pitchErrorCents": 0,
+      "envelopePeaksHz": [
+        700,
+        1398,
+        2800
+      ],
+      "formantShiftCents": [
+        0,
+        0,
+        0
+      ],
+      "outputPeak": 0.5
+    },
+    {
+      "options": {
+        "semitones": 0,
+        "formantSemitones": -2
+      },
+      "samples": 96000,
+      "measuredHz": 99.9999999977049,
+      "pitchErrorCents": -3.9733508434934066e-8,
+      "envelopePeaksHz": [
+        648,
+        1280,
+        2522
+      ],
+      "formantShiftCents": [
+        -133.6333307372449,
+        -152.6646605856889,
+        -181.0302618049308
+      ],
+      "outputPeak": 0.4600656032562256
+    },
+    {
+      "options": {
+        "semitones": 0,
+        "formantSemitones": 2
+      },
+      "samples": 96000,
+      "measuredHz": 100.00000000130078,
+      "pitchErrorCents": 2.2519575773431795e-8,
+      "envelopePeaksHz": [
+        756,
+        1542,
+        3080
+      ],
+      "formantShiftCents": [
+        133.23757486649274,
+        169.72608544751756,
+        165.00422849992202
+      ],
+      "outputPeak": 0.5471460819244385
+    },
+    {
+      "options": {
+        "semitones": 2,
+        "formantSemitones": 0
+      },
+      "samples": 96000,
+      "measuredHz": 112.2848310266976,
+      "pitchErrorCents": 0.5956502689295743,
+      "envelopePeaksHz": [
+        784,
+        1570,
+        3142
+      ],
+      "formantShiftCents": [
+        196.19847873945548,
+        200.88023808426337,
+        199.50762415424097
+      ],
+      "outputPeak": 0.6690619587898254
+    },
+    {
+      "options": {
+        "semitones": 2,
+        "formantSemitones": 0,
+        "formantCompensation": true
+      },
+      "samples": 96000,
+      "measuredHz": 112.28380852977662,
+      "pitchErrorCents": 0.5798850980830653,
+      "envelopePeaksHz": [
+        722,
+        1450,
+        2814
+      ],
+      "formantShiftCents": [
+        53.572698065810506,
+        63.22624743223238,
+        8.634601685044519
+      ],
+      "outputPeak": 0.570996880531311
+    },
+    {
+      "options": {
+        "semitones": -2,
+        "formantSemitones": 0,
+        "formantCompensation": true
+      },
+      "samples": 96000,
+      "measuredHz": 89.11008826937906,
+      "pitchErrorCents": 0.3928105929844142,
+      "envelopePeaksHz": [
+        672,
+        1358,
+        2762
+      ],
+      "formantShiftCents": [
+        -70.67242686428227,
+        -50.25705735684553,
+        -23.656209089133494
+      ],
+      "outputPeak": 0.6254270076751709
+    },
+    {
+      "options": {
+        "semitones": 2,
+        "formantSemitones": -2,
+        "formantCompensation": true
+      },
+      "samples": 96000,
+      "measuredHz": 112.27610148734556,
+      "pitchErrorCents": 0.46105093682552206,
+      "envelopePeaksHz": [
+        672,
+        1336,
+        2578
+      ],
+      "formantShiftCents": [
+        -70.67242686428227,
+        -78.53322348166111,
+        -143.00947616481344
+      ],
+      "outputPeak": 0.43502798676490784
+    }
+  ]
+}

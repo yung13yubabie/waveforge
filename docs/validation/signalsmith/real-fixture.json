@@ -1,0 +1,302 @@
+{
+  "generatedAt": "2026-10-06T00:06:42.147Z",
+  "fixture": "CC0 Twinkle first20s, original derivative16k mono",
+  "fixtureSha256": "9e4e7ffa00d125fc11d475b287dc4cc61998e0d8c2dffb33d25e33ff8c8fc54d",
+  "caveats": [
+    "No perceptual listening",
+    "Upsampling does not restore above-8k source bandwidth",
+    "F0 estimates are not human-annotated gold",
+    "Stereo here is duplicated/scaled mono, not real stereo recording"
+  ],
+  "sampleFilter": "All 0.12s-spaced centers; paired NSDF confidence≥0.92 and RMS≥0.01, with no rejection based on measured error. Stable subset additionally needs source F0 within25cents at±0.04s.",
+  "results": [
+    {
+      "sr": 44100,
+      "semitones": -2,
+      "durationSeconds": 20,
+      "sampleCount": 882000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.0000845193862915039,
+      "stereoDifferentSamples": 853158,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.8177012801170349,
+      "outputGain": 1,
+      "rmsDb": -0.08586725948424413,
+      "pairedVoiced": {
+        "count": 103,
+        "medianCents": 0.33140612071263537,
+        "p95AbsCents": 4.265724047509998,
+        "maxAbsCents": 18.75556956816048,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 61,
+        "medianCents": 0.6237852570658967,
+        "p95AbsCents": 3.905672200688675,
+        "maxAbsCents": 4.9652449901828675,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9958305151337685,
+        "sameTimeNormalizedRmsError": 0.09125585721092347,
+        "medianStrongRiseRatio": 0.5056440320265025,
+        "strongRiseP10Ratio": -1.0078822475269362
+      },
+      "wallMillisecondsIncludingMeasurements": 530.83379
+    },
+    {
+      "sr": 44100,
+      "semitones": -1,
+      "durationSeconds": 20,
+      "sampleCount": 882000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00007088389247655869,
+      "stereoDifferentSamples": 853107,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.9477282166481018,
+      "outputGain": 1,
+      "rmsDb": -0.0911900213667266,
+      "pairedVoiced": {
+        "count": 103,
+        "medianCents": 0.5705638956192945,
+        "p95AbsCents": 5.237234364017857,
+        "maxAbsCents": 14.175573425699817,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 0.6298348694879585,
+        "p95AbsCents": 3.556271298074829,
+        "maxAbsCents": 5.680609868414206,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9967592970025493,
+        "sameTimeNormalizedRmsError": 0.0806294495275541,
+        "medianStrongRiseRatio": 0.6965199850336188,
+        "strongRiseP10Ratio": -0.352815632803856
+      },
+      "wallMillisecondsIncludingMeasurements": 494.52231499999994
+    },
+    {
+      "sr": 44100,
+      "semitones": 1,
+      "durationSeconds": 20,
+      "sampleCount": 882000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00008338689804077148,
+      "stereoDifferentSamples": 853163,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.8441377878189087,
+      "outputGain": 1,
+      "rmsDb": -0.10300539319180596,
+      "pairedVoiced": {
+        "count": 100,
+        "medianCents": 0.5900927764340747,
+        "p95AbsCents": 6.024928197274834,
+        "maxAbsCents": 11.085881898954431,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 0.7652992210847549,
+        "p95AbsCents": 4.270363804861863,
+        "maxAbsCents": 6.024928197274834,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9977212554839724,
+        "sameTimeNormalizedRmsError": 0.06805615143548925,
+        "medianStrongRiseRatio": 0.41332831672855275,
+        "strongRiseP10Ratio": -0.44048948742503324
+      },
+      "wallMillisecondsIncludingMeasurements": 519.702444
+    },
+    {
+      "sr": 44100,
+      "semitones": 2,
+      "durationSeconds": 20,
+      "sampleCount": 882000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.0001264922320842743,
+      "stereoDifferentSamples": 853192,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.8490675091743469,
+      "outputGain": 1,
+      "rmsDb": -0.1100129315659428,
+      "pairedVoiced": {
+        "count": 101,
+        "medianCents": 0.5426674047124522,
+        "p95AbsCents": 5.088186674522323,
+        "maxAbsCents": 14.214127013909815,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 0.6356724854278089,
+        "p95AbsCents": 4.35923258739034,
+        "maxAbsCents": 5.1244713788015,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9975910117668921,
+        "sameTimeNormalizedRmsError": 0.07008919194042577,
+        "medianStrongRiseRatio": 0.35804138351258163,
+        "strongRiseP10Ratio": -0.3967277780709665
+      },
+      "wallMillisecondsIncludingMeasurements": 512.5408240000002
+    },
+    {
+      "sr": 48000,
+      "semitones": -2,
+      "durationSeconds": 20,
+      "sampleCount": 960000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00003552780435711611,
+      "stereoDifferentSamples": 928228,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.7445455193519592,
+      "outputGain": 1,
+      "rmsDb": -0.09561561999648038,
+      "pairedVoiced": {
+        "count": 102,
+        "medianCents": 0.2963858151168009,
+        "p95AbsCents": 4.880053523863351,
+        "maxAbsCents": 15.028559552197294,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 61,
+        "medianCents": 0.5618806806163213,
+        "p95AbsCents": 3.729504950093344,
+        "maxAbsCents": 5.355141797028399,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9963541661475368,
+        "sameTimeNormalizedRmsError": 0.0854752193284255,
+        "medianStrongRiseRatio": 0.6328642170713156,
+        "strongRiseP10Ratio": -0.39425010955621814
+      },
+      "wallMillisecondsIncludingMeasurements": 507.4432630000001
+    },
+    {
+      "sr": 48000,
+      "semitones": -1,
+      "durationSeconds": 20,
+      "sampleCount": 960000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00004272534170013387,
+      "stereoDifferentSamples": 928225,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.8954226970672607,
+      "outputGain": 1,
+      "rmsDb": -0.12686728459465976,
+      "pairedVoiced": {
+        "count": 104,
+        "medianCents": 0.8586307833847862,
+        "p95AbsCents": 6.598029544919068,
+        "maxAbsCents": 12.417023236002738,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 0.9277004183276308,
+        "p95AbsCents": 4.334461828722593,
+        "maxAbsCents": 6.598029544919068,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9964536193828712,
+        "sameTimeNormalizedRmsError": 0.08493653298026627,
+        "medianStrongRiseRatio": 0.47982218768149215,
+        "strongRiseP10Ratio": -1.2950340455169276
+      },
+      "wallMillisecondsIncludingMeasurements": 511.225414
+    },
+    {
+      "sr": 48000,
+      "semitones": 1,
+      "durationSeconds": 20,
+      "sampleCount": 960000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00004448893014341593,
+      "stereoDifferentSamples": 928241,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.7465788722038269,
+      "outputGain": 1,
+      "rmsDb": -0.14025570375391938,
+      "pairedVoiced": {
+        "count": 100,
+        "medianCents": 0.854281489979293,
+        "p95AbsCents": 6.363532713569965,
+        "maxAbsCents": 11.50911752209596,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 1.085459878926363,
+        "p95AbsCents": 4.628094781697489,
+        "maxAbsCents": 6.363532713569965,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9975587084350883,
+        "sameTimeNormalizedRmsError": 0.07151112163059314,
+        "medianStrongRiseRatio": 0.5260971472414046,
+        "strongRiseP10Ratio": -0.46541180210052074
+      },
+      "wallMillisecondsIncludingMeasurements": 475.59974799999964
+    },
+    {
+      "sr": 48000,
+      "semitones": 2,
+      "durationSeconds": 20,
+      "sampleCount": 960000,
+      "finite": true,
+      "stereoExact": false,
+      "stereoMaxAbsError": 0.00004324509063735604,
+      "stereoDifferentSamples": 928236,
+      "stereoLinkedWithin1eMinus7": false,
+      "outputPeak": 0.9614377617835999,
+      "outputGain": 1,
+      "rmsDb": -0.11113256860108939,
+      "pairedVoiced": {
+        "count": 101,
+        "medianCents": 0.9929103181663055,
+        "p95AbsCents": 4.45743520867588,
+        "maxAbsCents": 14.284903399498585,
+        "fractionOver50Cents": 0
+      },
+      "stableVoiced": {
+        "count": 62,
+        "medianCents": 1.0376440265098452,
+        "p95AbsCents": 3.747482742812354,
+        "maxAbsCents": 4.067987846783754,
+        "fractionOver50Cents": 0
+      },
+      "envelope": {
+        "bestLagMs": 0,
+        "bestCosineSimilarity": 0.9974856325421441,
+        "sameTimeNormalizedRmsError": 0.07182021925736203,
+        "medianStrongRiseRatio": 0.45284775014894424,
+        "strongRiseP10Ratio": -0.3823229504716768
+      },
+      "wallMillisecondsIncludingMeasurements": 471.2773790000001
+    }
+  ]
+}
