@@ -105,6 +105,21 @@ function beginDrag(id = 'b', options = {}) {
   pointer(window, 'pointermove', { clientX: 148, ...options })
   return node
 }
+function modelDisabledButtonBlur(control) {
+  const blurredByDisabled = vi.fn()
+  const nativeDisabled = Object.getOwnPropertyDescriptor(HTMLButtonElement.prototype, 'disabled').set
+  // Explicit platform-behavior double: Chromium blurs a focused button when
+  // it becomes disabled; jsdom does not. Preserve the real disabled setter,
+  // but deliver that synchronous focus loss at the assignment boundary.
+  vi.spyOn(control, 'disabled', 'set').mockImplementation(value => {
+    if (value === true && document.activeElement === control) {
+      control.blur()
+      blurredByDisabled()
+    }
+    nativeDisabled.call(control, value)
+  })
+  return blurredByDisabled
+}
 
 function fixture() {
   let project = registerAudioBuffer(createProject({ name: 'Multi-clip source recipe fixture', tempo: 120, gridOriginSeconds: .125 }),
@@ -254,6 +269,30 @@ describe('multi-clip selection through the actual DAW panel', () => {
     else {
       expect(panel.getProject()).toEqual(before)
       expect(action('undo').disabled).toBe(true)
+    }
+  })
+
+  it.each(['move', 'duplicate', 'remove'])('preserves keyboard focus through group %s when disabling focused buttons causes browser blur', async groupOperation => {
+    await setup(); await selectGroup(); await setSnap(false)
+    const before = panel.getProject(), control = groupAction(groupOperation)
+    if (groupOperation === 'move') editTarget(1.75)
+    control.focus()
+    expect(document.activeElement).toBe(control)
+    const blurredByDisabled = modelDisabledButtonBlur(control)
+    key(control, 'Enter')
+    // jsdom does not generate the browser's keyboard-activation click.
+    await clickGroup(groupOperation)
+    const focusDiagnostic = `disabled-triggered blurs during commit: ${blurredByDisabled.mock.calls.length}`
+    expect(panel.getProject().revision).toBe(before.revision + 1)
+    if (groupOperation === 'remove') {
+      expect(el('group-tools').hidden).toBe(true)
+      expect(selectedRefs()).toEqual([])
+      expect(document.activeElement.id, focusDiagnostic).toBe('daw-timeline')
+    } else {
+      expect(el('group-tools').hidden).toBe(false)
+      expect(selectedRefs()).toHaveLength(groupIds.length)
+      expect(control.disabled).toBe(false)
+      expect(document.activeElement === control, focusDiagnostic).toBe(true)
     }
   })
 
@@ -434,6 +473,24 @@ describe('atomic edits and history through the actual group controls', () => {
     assertMoved(before, panel.getProject(), 4.5)
     expect(overlapField().checked).toBe(false)
     await click('undo'); assertUnchanged(before, refs, [true, false])
+  })
+
+  it.each(['invalid target', 'forbidden overlap'])('retains focused group Move, selection and redo after %s with browser disable-blur behavior', async reason => {
+    await setup(); await selectGroup(); await setSnap(false)
+    editTarget(1.75); await clickGroup('move')
+    const moved = panel.getProject()
+    await click('undo')
+    const before = panel.getProject(), refs = selectedRefs(), control = groupAction('move')
+    editTarget(reason === 'invalid target' ? '' : 4.75)
+    control.focus()
+    const blurredByDisabled = modelDisabledButtonBlur(control)
+    key(control, 'Enter'); await clickGroup('move')
+    assertUnchanged(before, refs, [true, false])
+    expect(el('status').dataset.error).toBe('true')
+    expect(el('group-tools').hidden).toBe(false)
+    expect(control.disabled).toBe(false)
+    expect(document.activeElement === control, `disabled-triggered blurs during rejection: ${blurredByDisabled.mock.calls.length}`).toBe(true)
+    await click('redo'); assertUnchanged(moved, refs, [false, true])
   })
 })
 

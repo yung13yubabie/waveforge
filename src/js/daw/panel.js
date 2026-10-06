@@ -155,10 +155,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     status(message); refreshControls()
   }
   function invalidate() {
+    // Retire the group's pending UI action before other helpers refresh it.
+    // Temporarily disabling a focused button makes native browsers blur it,
+    // losing the focus needed when the contextual inspector disappears.
+    drag = null; groupControls?.cancel()
     discardReplacement()
     resetNoteCentering()
     automationDrag = null
-    drag = null; groupControls?.cancel()
     stop()
     mix = null; selectionMix = null; selectionControls?.cancel()
     if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('設定已修改，請重新產生混音或分析')
