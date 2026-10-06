@@ -1,0 +1,40 @@
+/* Range tools stay beside the arrangement; precision fields open on demand. */
+.daw-selection-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; padding-block: 6px 0; }
+/* Reserve one command row without moving the ruler or shrinking touch targets. */
+@media (min-width: 761px) {
+  .daw-timeline { height: clamp(300px, calc(100dvh - 374px), 630px); }
+}
+.daw-selection-controls > button, .daw-selection-details > summary { flex: 0 0 auto; }
+.daw-selection-summary { min-width: 0; font: 12px var(--font-mono); color: var(--c-text-2); overflow-wrap: anywhere; }
+.daw-selection-summary:empty { display: none; }
+.daw-selection-details { position: relative; min-width: 0; }
+.daw-selection-details > summary { padding-inline: 8px; }
+.daw-selection-details[open] { flex-basis: 100%; order: 3; }
+.daw-selection-details[open] > summary { width: fit-content; }
+.daw-selection-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding-bottom: 6px; }
+.daw-selection-fields label { flex: 1 1 110px; max-width: 180px; min-width: 0; }
+.daw-selection-fields input { width: 100%; min-width: 0; }
+.daw-selection-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.daw-selection-controls :is(button, input, summary) { min-height: 44px; }
+.daw-timeline-selection { position: absolute; inset-block: 0; pointer-events: none; z-index: 2; background: #d1bb6626; border-inline: 1px solid #d1bb66; box-sizing: border-box; }
+.daw-timeline-selection[data-preview=true] { background: #d1bb6640; border-inline-style: dashed; }
+.daw-has-selection .daw-ruler { min-height: 44px; }
+/* Each endpoint owns a 44px target outside the selected span, so even a tiny
+   selection has two distinct targets. The start-zero target stays on-canvas. */
+.daw-panel .daw-selection-handle { position: absolute; top: 0; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 0; background: transparent; z-index: 3; touch-action: none; cursor: ew-resize; }
+.daw-selection-handle::after { content: ''; position: absolute; top: 7px; bottom: 7px; left: var(--daw-handle-mark); width: 5px; background: #d1bb66; border-radius: 2px; }
+.daw-selection-tight .daw-ruler { min-height: 88px; }
+.daw-panel .daw-selection-tight [data-range-handle=endSeconds] { top: 44px; }
+.daw-selection-drawing :is(.daw-ruler-lane, .daw-lane, .daw-clip) { touch-action: none; cursor: crosshair; user-select: none; }
+@media (max-width: 600px) {
+  /* Active ranges need two command rows. Preserve their targets above the
+     fixed transport, keeping the unselected arrangement at its original size. */
+  .daw-timeline.daw-has-selection { height: 308px; }
+  .daw-selection-controls { gap: 2px 4px; }
+  .daw-selection-summary { flex: 1 1 90px; font-size: 11px; }
+  .daw-selection-actions { margin-left: 0; }
+}
+@media (forced-colors: active) {
+  .daw-timeline-selection { border-color: Highlight; outline: 1px solid Highlight; outline-offset: -1px; background: transparent; }
+  .daw-selection-handle::after { background: Highlight; forced-color-adjust: none; }
+}

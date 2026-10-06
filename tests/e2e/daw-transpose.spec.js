@@ -609,6 +609,7 @@ for (const width of [1440, 390]) {
     await expect(page.locator('#daw-transpose-help')).not.toHaveAttribute('open', '')
     await page.screenshot({ path: testInfo.outputPath(`transpose-editor-collapsed-${width}.png`) })
     await page.locator('#daw-transpose-details > summary').focus(); await page.keyboard.press('Enter')
+    await page.keyboard.press('Tab'); await expect(page.locator('#daw-note-center-details > summary')).toBeFocused()
     await page.keyboard.press('Tab'); await expect(page.locator('#daw-transpose-semitones')).toBeFocused()
     await page.keyboard.press('Tab'); await expect(page.locator('#daw-transpose-cents')).toBeFocused()
     await page.keyboard.press('Tab'); await expect(page.locator('#daw-transpose-timbre > summary')).toBeFocused()

@@ -20,7 +20,12 @@ const html = readFileSync('index.html', 'utf8')
 const el = id => document.getElementById(`daw-${id}`)
 const action = id => document.querySelector(`[data-daw="${id}"]`)
 const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
-const click = async id => { action(id).click(); await tick() }
+const click = async id => {
+  action(id).click(); await tick()
+  // Export yields once after encoding so queued cancellation can win before
+  // handing a file to the browser. Observe that actual asynchronous boundary.
+  if (id === 'export') { await new Promise(resolve => setTimeout(resolve, 0)); await tick() }
+}
 const change = async (id, value) => { el(id).value = String(value); el(id).dispatchEvent(new Event('change', { bubbles: true })); await tick() }
 const makeFile = (name = 'voice.wav') => ({ name, size: 8, arrayBuffer: async () => new ArrayBuffer(8) })
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
@@ -42,6 +47,7 @@ function trackChange(field, value) {
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  renderProject.mockReset()
   renderProject.mockImplementation(async project => ({ buffer: getBuffer(), revision: project.revision, peak: .1, clippedSamples: 0, peaks: { samplePeakDb: -20, truePeakDb: -19.9 } }))
 })
 afterEach(() => { panel?.destroy(); document.body.replaceChildren(); vi.restoreAllMocks() })
@@ -459,7 +465,9 @@ describe('local DAW panel', () => {
     const pending = deferred()
     const loading = panel.importFiles([{ ...makeFile(), size: 64 * 1024 * 1024, arrayBuffer: () => pending.promise }]).catch(error => error)
     await tick(); await click('cancel')
-    await change('clip-at', 496); await click('move'); await click('export')
+    // With the native acquired-copy allowance, 400 s (rather than 500 s) fits only
+    // after the cancelled 192 MiB source-read reservation really settles.
+    await change('clip-at', 396); await click('move'); await click('export')
     expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
     pending.resolve(new ArrayBuffer(8)); expect(await loading).toMatchObject({ name: 'AbortError' })
     await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
@@ -470,7 +478,7 @@ describe('local DAW panel', () => {
     const pending = deferred(); decode.mockReturnValueOnce(pending.promise)
     const loading = panel.importFiles([makeFile('compressed.bin')]).catch(error => error)
     await tick(); await click('cancel'); expect(await loading).toMatchObject({ name: 'AbortError' })
-    await change('clip-at', 496); await click('move'); await click('play')
+    await change('clip-at', 396); await click('move'); await click('play')
     expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
     pending.resolve(getBuffer()); await tick()
     await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
@@ -827,9 +835,11 @@ describe('alternate recording replacement: staging, ownership and accepted media
   it('counts the staged render cache before starting a separate original preview render', async () => {
     await setup({ importAudio: false })
     await panel.importFiles(Array.from({ length: 4 }, (_, i) => ({ ...makeFile(`large-${i}.wav`), size: 64 * 1024 * 1024 })))
-    await change('clip-at', 596); await click('move')
+    // First 300 s mix plus its native copy fits; retaining it must block a
+    // second 300 s render. Neither the guard nor its assertion is bypassed.
+    await change('clip-at', 296); await click('move')
     await panel.prepareReplacement(makeFile('candidate.wav'))
-    renderProject.mockResolvedValueOnce({ buffer: { length: 25 * 1024 * 1024, numberOfChannels: 2, sampleRate: 48000 }, revision: 14, peak: .1 })
+    renderProject.mockResolvedValueOnce({ buffer: { length: 300 * 48000, numberOfChannels: 2, sampleRate: 48000 }, revision: 14, peak: .1 })
     await click('replacement-preview'); await click('stop')
     expect(renderProject).toHaveBeenCalledOnce()
     await click('replacement-original')

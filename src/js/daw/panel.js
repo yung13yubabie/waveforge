@@ -10,6 +10,11 @@ import { decodeDawAsset } from './decode.js'
 import { wavSampleRate } from '../audio/asset-decode.js'
 import { planLyricRegion } from './lyric-region-planner.js'
 import { planTimelineGainRegion, stageGainRegionDraft } from './gain-region-draft.js'
+import { selectedRenderView } from './selection.js'
+import { createTimelineSelectionControls } from './selection-controls.js'
+import { createPitchAnalysisClient } from '../pitch/analysis-client.js'
+import { midiToNote, midiToFrequency } from '../pitch/analysis.js'
+import { planNoteCentering, combineNoteCenteringPlans, NOTE_CENTERING_LIMITS } from './note-centering.js'
 
 const FILE_LIMIT = 64 * 1024 * 1024
 const abortError = () => new DOMException('已取消', 'AbortError')
@@ -42,7 +47,8 @@ function decodedBytes(buffers) {
 /** Local runtime owns audio; project/history contain only portable metadata. */
 export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getLyricSelection, subscribeLyricSelection,
   confirmAction = message => window.confirm(message), downloadFile = download,
-  AudioContextClass = globalThis.AudioContext, pitchClientFactory = createSignalsmithPitchClient } = {}) {
+  AudioContextClass = globalThis.AudioContext, pitchClientFactory = createSignalsmithPitchClient,
+  noteAnalysisClientFactory = createPitchAnalysisClient } = {}) {
   const root = document.getElementById('mode-editor')
   if (!root) return null
   const el = id => document.getElementById(`daw-${id}`)
@@ -56,9 +62,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   let history = new ProjectHistory(project)
   let buffers = new Map(), files = new Map()
   let saved = JSON.stringify(project), hasDownloaded = false
-  let selection = null, cursor = 0, mix = null, job = null, generation = 0
+  let selection = null, cursor = 0, mix = null, selectionMix = null, selectionControls = null, job = null, generation = 0
   let replacement = null, replacementOwner = null, selectionVersion = 0, replacementReadBusy = false, pendingReplacementBytes = 0
   let pitchClient = null, transposeBusy = false, transposeVersion = 0, transposeControlOwner = null, pendingAudition = null
+  let noteAnalyses = null, noteOwner = null, noteProposal = null, noteControlOwner = null, noteAnalysisClient = null, noteAnalysisBytes = 0, noteReference = null
+  const operationLeases = new Set()
   let vocalTrackId = null, regionId = '', regionControlOwner = null, regionVersion = 0, lyricDraft = null, observedLyricKey = null
   let loadWorkPending = false, pendingLoadBytes = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
@@ -104,6 +112,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     if (source) frame = requestAnimationFrame(paintPlayhead)
   }
   function stop({ rewind = false } = {}) {
+    stopNoteReference()
     cursor = rewind ? 0 : currentTime()
     if (frame !== null) cancelAnimationFrame(frame)
     frame = null
@@ -114,18 +123,21 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     paintPlayhead()
   }
   function cancelJob(message = '已取消；原專案保持不變') {
+    selectionControls?.cancel()
     if (!job) return
     const kind = job.kind
     job.controller.abort(); generation++; job = null
+    if (kind === 'note-analysis') { noteAnalysisClient?.dispose(); noteAnalysisClient = null }
     if (['replacement', 'transpose', 'audition'].includes(kind)) { replacement = null; replacementOwner = null; stop(); renderReplacement() }
     status(message); refreshControls()
   }
   function invalidate() {
     discardReplacement()
+    resetNoteCentering()
     automationDrag = null
     stop()
-    mix = null
-    if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('設定已修改，請重新產生混音')
+    mix = null; selectionMix = null; selectionControls?.cancel()
+    if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('設定已修改，請重新產生混音或分析')
   }
   function retainHistoryAssets() {
     const ids = history.retainedAssetIds()
@@ -133,12 +145,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     for (const id of files.keys()) if (!ids.has(id)) files.delete(id)
   }
   function commit(next, label) {
+    const rangeCleared = Boolean(project.timelineSelection && !next.timelineSelection && getProjectDuration(next) < project.timelineSelection.endSeconds)
     history.push(next) // Validate before replacing state or invalidating playback.
     invalidate(); project = next
     retainHistoryAssets()
     if (!selected()) selection = null
     cursor = clamp(cursor, 0, duration())
-    render(); status(label)
+    render(); status(label + (rangeCleared ? '；原選區已超出工程，已清除，可復原找回' : ''))
   }
   function command(value, label) {
     if (job && ['import', 'open'].includes(job.kind)) throw new Error('請等待匯入完成，或先取消目前工作')
@@ -165,7 +178,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     button('redo').disabled = Boolean(locked || !history.canRedo)
     for (const key of ['import', 'open', 'save', 'export', 'master']) button(key).disabled = Boolean(job || (['save', 'export', 'master'].includes(key) && !project.tracks.length) || (['export', 'master'].includes(key) && !hasClips) || (key === 'master' && !onSendToMaster))
     button('play').disabled = Boolean(job || !hasClips)
-    button('stop').disabled = !source && !job && cursor === 0
+    button('stop').disabled = !source && !noteReference && !job && cursor === 0
     button('cancel').hidden = !job
     button('add-track').disabled = Boolean(locked || project.tracks.length >= DAW_LIMITS.maxTracks)
     el('clip-fields').disabled = Boolean(locked || !selected())
@@ -175,11 +188,17 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     button('transpose-render').disabled = Boolean(job || transposeBusy || !selected())
     button('transpose-original').hidden = !selected()?.clip.transpose
     button('transpose-original').disabled = Boolean(locked || !selected()?.clip.transpose)
+    button('note-center-analyze').disabled = Boolean(job || !selected())
+    const targetCanHelp = noteProposal?.ok || ['invalid-target', 'transpose-out-of-range', 'stereo-target-disagreement'].includes(noteProposal?.reason)
+    el('note-center-target').disabled = Boolean(job || !noteAnalyses || !targetCanHelp)
+    button('note-center-reference').disabled = Boolean(job || !noteProposal?.ok)
+    button('note-center-render').disabled = Boolean(job || !noteProposal?.ok || !noteProposal.canRecommendRender)
     el('replacement-offset').disabled = Boolean(job)
     for (const key of ['replacement-original', 'replacement-preview', 'replacement-confirm']) button(key).disabled = Boolean(job || !replacement?.project)
     button('replacement-cancel').disabled = false
     el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
     refreshRegionControls()
+    selectionControls?.render()
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
@@ -197,6 +216,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       el('clip-track').value = track.id
     }
     renderTransposeSettings(item)
+    const noteKey = item ? `${project.id}:${project.revision}:${item.track.id}:${item.clip.id}:${selectionVersion}` : null
+    if (noteKey !== noteControlOwner) { resetNoteCentering(); noteControlOwner = noteKey }
     renderRegions(item)
     renderAutomation()
     renderReplacement()
@@ -484,6 +505,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     el('tracks').replaceChildren(...rows); el('empty').hidden = project.tracks.length > 0
     if (focusKey) ([...root.querySelectorAll('.daw-clip')].find(item => item.dataset.clipId === focusKey) || el('timeline')).focus({ preventScroll: true })
     if (focusTrack) ([...root.querySelectorAll('[data-track-control]')].find(item => item.dataset.trackId === focusTrack.id && item.dataset.trackControl === focusTrack.control) || button('add-track')).focus({ preventScroll: true })
+    selectionControls?.render()
   }
   function render() {
     el('name').value = project.name; el('tempo').value = String(project.tempo); el('sample-rate').value = String(project.sampleRate); el('master-gain').value = String(project.masterGainDb)
@@ -494,12 +516,20 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   }
   async function withJob(kind, work) {
     if (job) throw new Error('另一項工作正在進行；請等待或先取消')
-    const current = { kind, controller: new AbortController(), generation: ++generation }
+    const current = { kind, controller: new AbortController(), generation: ++generation, buffers: new Set(), mixBuffers: new Set(), extraBytes: 0 }
+    operationLeases.add(current)
     job = current; refreshControls()
     const isCurrent = () => !destroyed && !current.controller.signal.aborted && current.generation === generation
     const check = () => { if (!isCurrent()) throw abortError() }
-    try { const result = await work({ signal: current.controller.signal, isCurrent, check }); check(); return result }
-    finally { if (job === current) { job = null; refreshControls() } }
+    const retainBuffer = (buffer, nativeMix = false) => {
+      current.buffers.add(buffer); if (nativeMix) current.mixBuffers.add(buffer)
+    }
+    const reserveBytes = (bytes, message = '目前工作超出編輯器的保守記憶體預算') => {
+      if (!Number.isSafeInteger(bytes) || bytes < 0 || retainedBytes() - current.extraBytes + bytes > DAW_LIMITS.maxCombinedBytes) throw new Error(message)
+      current.extraBytes = bytes
+    }
+    try { const result = await work({ signal: current.controller.signal, isCurrent, check, retainBuffer, reserveBytes }); check(); return result }
+    finally { operationLeases.delete(current); if (job === current) { job = null; refreshControls() } }
   }
   async function decode(bytes, metadata, signal, trackNative) {
     let timer, aborted
@@ -591,8 +621,25 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
   const replacementBytes = () => replacement ? (replacement.kind === 'gain-regions' ? 0 : replacement.buffer.length * replacement.buffer.numberOfChannels * 4 + replacement.file.size) +
     (replacement.mix ? replacement.mix.buffer.length * replacement.mix.buffer.numberOfChannels * 4 : 0) + JSON.stringify(replacement.registeredProject || replacement.project).length * 4 : 0
-  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + replacementBytes() + pendingReplacementBytes + pendingLoadBytes + getPendingNativeRenderBytes() +
-    (pendingAudition && replacement !== pendingAudition.staged ? pendingAudition.bytes : 0)
+  const pcmBytes = buffer => buffer ? buffer.length * buffer.numberOfChannels * 4 : 0
+  function operationAndNativeCopyBytes() {
+    // Web Audio can keep an acquired immutable mix while getChannelData lazily
+    // materializes another full copy. Reserve one extra copy conservatively,
+    // even before playback; a tiny exported range does not make it a tiny copy.
+    const heldMixes = new Set([mix?.buffer, replacement?.mix?.buffer, pendingAudition?.staged?.mix?.buffer, source?.buffer].filter(Boolean))
+    const counted = new Set([...buffers.values(), mix?.buffer, replacement?.buffer, replacement?.mix?.buffer,
+      ...(pendingAudition?.staged?.buffers?.values() || []), pendingAudition?.staged?.mix?.buffer].filter(Boolean))
+    let bytes = 0
+    for (const lease of operationLeases) {
+      bytes += lease.extraBytes
+      for (const buffer of lease.buffers) if (!counted.has(buffer)) { counted.add(buffer); bytes += pcmBytes(buffer) }
+      for (const buffer of lease.mixBuffers) heldMixes.add(buffer)
+    }
+    for (const buffer of heldMixes) bytes += pcmBytes(buffer)
+    return bytes
+  }
+  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + replacementBytes() + pendingReplacementBytes + pendingLoadBytes + noteAnalysisBytes + getPendingNativeRenderBytes() +
+    (pendingAudition && replacement !== pendingAudition.staged ? pendingAudition.bytes : 0) + operationAndNativeCopyBytes()
   function captureReplacementOwner() {
     const item = selected()
     if (!item) throw new Error('請先選取要替換的一個片段')
@@ -602,6 +649,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     if (destroyed || owner.snapshot !== project || owner.selectionVersion !== selectionVersion ||
       owner.trackId !== selection?.trackId || owner.clipId !== selection?.clipId || owner.sourceId !== selected()?.clip.assetId ||
       owner.transposeVersion !== undefined && (owner.transposeVersion !== transposeVersion || owner.settingsKey !== transposeSettingsKey()) ||
+      owner.noteCenterTarget !== undefined && owner.noteCenterTarget !== el('note-center-target').value ||
       owner.regionVersion !== undefined && (owner.regionVersion !== regionVersion || owner.settingsKey !== regionSettingsKey() || owner.lyricKey !== undefined && owner.lyricKey !== lyricSelectionKey(readLyricSelection()))) throw abortError()
   }
   function discardReplacement(message) {
@@ -691,11 +739,108 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       const input = el(`transpose-${id}`); return input.type === 'checkbox' ? input.checked : input.value
     }))
   }
-  async function prepareTranspose() {
+  function stopNoteReference() {
+    if (!noteReference) return
+    const held = noteReference; noteReference = null
+    clearTimeout(held.timer); held.oscillator.onended = null
+    try { held.oscillator.stop() } catch { /* Already ended. */ }
+    held.oscillator.disconnect(); held.gain.disconnect()
+  }
+  function resetNoteCentering() {
+    noteAnalysisClient?.dispose(); noteAnalysisClient = null; stopNoteReference()
+    noteAnalyses = null; noteOwner = null; noteProposal = null
+    el('note-center-result').textContent = '尚未分析'
+    el('note-center-target').value = 'nearest'
+    refreshControls()
+  }
+  function noteCurrentOwner(channel = 0) {
+    const owner = captureReplacementOwner()
+    return { ...owner, sourceBuffer: buffers.get(owner.sourceId), channel }
+  }
+  function updateNoteProposal() {
+    if (!noteAnalyses || !noteOwner) return
+    const item = selected(), raw = el('note-center-target').value
+    const targetMidi = raw === 'nearest' ? null : Number(raw)
+    const current = noteCurrentOwner()
+    noteProposal = combineNoteCenteringPlans(noteAnalyses.map((analysis, channel) =>
+      planNoteCentering(analysis, { clip: item.clip, owner: { ...noteOwner, channel }, currentOwner: { ...current, channel }, targetMidi })))
+    if (!noteProposal.ok) el('note-center-result').textContent = noteProposal.message
+    else {
+      const cents = noteProposal.correctionCents, direction = cents < 0 ? '降低' : '提高'
+      el('note-center-result').textContent = `估計中心 ${midiToNote(noteProposal.centerMidi)} · ${noteProposal.centerHz.toFixed(1)} Hz\n目標 ${noteProposal.targetNote}：整段${direction} ${Math.abs(cents).toFixed(1)} 音分${noteProposal.nearTarget ? '\n已很接近，建議保留目前聲音' : '\n產生後請 A/B 試聽，尚未改變聲音'}`
+    }
+    refreshControls()
+  }
+  async function analyzeNoteCenter() {
+    if (job) throw new Error('請先等待或取消目前工作')
+    discardReplacement(); resetNoteCentering()
+    const owner = noteCurrentOwner(), clip = selected().clip, input = owner.sourceBuffer
+    if (!input || ![44100, 48000, 96000].includes(input.sampleRate) || ![1, 2].includes(input.numberOfChannels)) throw new Error('單音分析支援 44.1／48／96 kHz 的單聲道或立體聲錄音')
+    if (clip.durationSeconds < NOTE_CENTERING_LIMITS.minDurationSeconds || clip.durationSeconds > NOTE_CENTERING_LIMITS.maxDurationSeconds) throw new Error('先剪出 0.35–30 秒的穩定單音片段')
+    // Only one source channel is copied/transferred at a time. Reserve its PCM,
+    // analysis work arrays and both channels' small contour results until done.
+    const reserve = Math.ceil(clip.durationSeconds * input.sampleRate) * 4 + 6 * 1024 * 1024
+    if (retainedBytes() + reserve > DAW_LIMITS.maxCombinedBytes) throw new Error('單音分析超出記憶體預算，請先保存工程並精簡素材')
+    stop(); noteAnalysisBytes += reserve
+    let analysisClient = null
+    try {
+      await withJob('note-analysis', async request => {
+        request.retainBuffer(input)
+        const check = () => { request.check(); checkReplacementOwner(owner); if (buffers.get(owner.sourceId) !== input) throw abortError() }
+        analysisClient = noteAnalysisClientFactory(); noteAnalysisClient = analysisClient
+        const client = analysisClient, analyses = []
+        for (let channel = 0; channel < input.numberOfChannels; channel++) {
+          check()
+          analyses.push(await client.analyze(input, { start: clip.offsetSeconds, duration: clip.durationSeconds, channel, signal: request.signal,
+            onProgress: value => { if (!request.signal.aborted) status(`正在估計單音：聲道 ${channel + 1}/${input.numberOfChannels} · ${Math.round((value.progress || 0) * 100)}%`) } }))
+          check()
+        }
+        noteOwner = owner; noteAnalyses = analyses; updateNoteProposal()
+        status(noteProposal.ok ? '單音估計完成；請核對目標音，產生候選後先 A/B 聽過' : '此片段不適合自動建議；原音保持不變')
+      })
+    } finally {
+      analysisClient?.dispose(); if (noteAnalysisClient === analysisClient) noteAnalysisClient = null
+      noteAnalysisBytes -= reserve; refreshControls()
+    }
+  }
+  async function prepareCenteredNote() {
+    if (!noteAnalyses || !noteOwner) throw new Error('請先估計目前片段的單音')
+    updateNoteProposal()
+    if (!noteProposal?.ok || !noteProposal.canRecommendRender) throw new Error(noteProposal?.message || '估計已很接近目標，建議先保留目前聲音')
+    const settings = noteProposal.settings
+    discardReplacement(); transposeVersion++
+    for (const [key, value] of Object.entries({ semitones: settings.semitones, cents: settings.cents, formants: settings.formantSemitones })) el(`transpose-${key}`).value = String(value)
+    el('transpose-compensation').checked = settings.formantCompensation
+    await prepareTranspose({ noteCenterTarget: el('note-center-target').value })
+  }
+  async function playNoteReference() {
+    updateNoteProposal()
+    if (!noteProposal?.ok) throw new Error('請先取得有效的單音與目標音')
+    // A reference oscillator needs selection identity, never source PCM.
+    // resume()/beforePlayback may remain pending after Cancel or Clear.
+    const owner = captureReplacementOwner(), target = noteProposal.targetMidi
+    stop()
+    await withJob('note-reference', async request => {
+      await beforePlayback?.(); request.check(); checkReplacementOwner(owner)
+      const ctx = getContext(); await ctx.resume(); request.check(); checkReplacementOwner(owner)
+      if (noteProposal?.targetMidi !== target) throw abortError()
+      const oscillator = ctx.createOscillator(), gain = ctx.createGain(), now = ctx.currentTime
+      oscillator.type = 'sine'; oscillator.frequency.value = midiToFrequency(target)
+      gain.gain.setValueAtTime(0, now); gain.gain.linearRampToValueAtTime(.035, now + .02)
+      gain.gain.setValueAtTime(.035, now + .75); gain.gain.linearRampToValueAtTime(0, now + .8)
+      oscillator.connect(gain); gain.connect(ctx.destination)
+      const held = { oscillator, gain, timer: null }; noteReference = held
+      oscillator.onended = () => { if (noteReference === held) { stopNoteReference(); refreshControls() } }
+      oscillator.start(now); oscillator.stop(now + .81)
+      held.timer = setTimeout(() => { if (noteReference === held) { stopNoteReference(); refreshControls() } }, 1500)
+      status(`正在播放目標參考音 ${midiToNote(target)}；原音保持不變`)
+    })
+  }
+  async function prepareTranspose({ noteCenterTarget } = {}) {
     if (job && !['replacement', 'transpose', 'audition'].includes(job.kind)) throw new Error('請先等待或取消目前工作')
     discardReplacement()
     if (transposeBusy || replacementReadBusy) throw new Error('上一份音訊仍在整理，請稍候再試')
-    const owner = { ...captureReplacementOwner(), transposeVersion, settingsKey: transposeSettingsKey() }
+    const owner = { ...captureReplacementOwner(), transposeVersion, settingsKey: transposeSettingsKey(), ...(noteCenterTarget !== undefined ? { noteCenterTarget } : {}) }
     const settings = transposeSettings(), clip = selected().clip
     const sourceAsset = project.assets.find(asset => asset.id === (clip.transpose?.sourceAssetId || clip.assetId))
     if (sourceAsset.decodeBackend === 'generated-float32-wav') throw new Error('此舊處理素材沒有原音連結；請先選擇原錄音，避免疊加移調')
@@ -824,13 +969,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       if (useReplacement) {
         if (!staged.mix) {
           const renderBytes = Math.ceil(duration() * project.sampleRate) * 2 * 4
-          if (retainedBytes() + renderBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('替換試聽會超出記憶體預算；請縮短錄音或時間軸')
+          if (retainedBytes() + renderBytes * 2 > DAW_LIMITS.maxCombinedBytes) throw new Error('替換試聽與瀏覽器混音副本會超出記憶體預算；請縮短錄音或時間軸')
           status(staged.kind === 'gain-regions' ? '正在準備人聲區間混音試聽；尚未接受…' : '正在準備替換後的混音試聽；尚未套用…')
           const rendered = await renderProject(staged.project, staged.buffers, { signal: request.signal, isCurrent: () => replacement === staged && project === staged.owner.snapshot && selectionVersion === staged.owner.selectionVersion })
           check(); staged.mix = rendered
         }
         result = staged.mix
       } else result = await getMix({ ...request, check })
+      request.retainBuffer(result.buffer, true)
       check()
       assertSafePlayback(result)
       const clip = selected().clip, start = staged.kind === 'gain-regions' ? staged.plan.timelineRange.startSeconds : clip.atSeconds, end = staged.kind === 'gain-regions' ? Math.min(duration(), staged.plan.timelineRange.endSeconds) : start + clip.durationSeconds
@@ -869,15 +1015,15 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       } finally { reservation.finish() }
     })
   }
-  async function getMix({ signal, check }) {
-    if (mix) return mix
+  async function getMix({ signal, check, retainBuffer }) {
+    if (mix) { retainBuffer?.(mix.buffer, true); return mix }
     const snapshot = project
     const renderBytes = Math.ceil(duration() * project.sampleRate) * 2 * 4
-    if (retainedBytes() + renderBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('原檔、復原音訊與混音合計超出記憶體預算；請縮短時間軸或降低混音取樣率')
+    if (retainedBytes() + renderBytes * 2 > DAW_LIMITS.maxCombinedBytes) throw new Error('原檔、復原音訊、混音與瀏覽器副本合計超出記憶體預算；請縮短時間軸或降低混音取樣率')
     status('正在合成目前專案混音…')
     const result = await renderProject(snapshot, buffers, { signal, isCurrent: () => !destroyed && project === snapshot })
     check(); if (project !== snapshot) throw abortError()
-    mix = result
+    mix = result; retainBuffer?.(result.buffer, true)
     const db = value => Number.isFinite(value) ? `${value.toFixed(2)} dBFS` : '−∞ dBFS'
     el('render-info').textContent = `第 ${result.revision} 版 · ${project.sampleRate / 1000} kHz · 採樣峰值 ${db(result.peaks?.samplePeakDb ?? 20 * Math.log10(result.peak))} · 估計 True Peak（4×）${db(result.peaks?.truePeakDb)}。${result.peak > 1 || result.peaks?.truePeakDb > 0 ? '有過載，請降低總混音音量後重試' : 'WAV 輸出不會自動增減音量'}`
     return result
@@ -890,33 +1036,57 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       throw new Error(`混音峰值超過 0 dBFS，已停止試聽；未自動截幅或降低音量。${guidance}`)
     }
   }
-  async function play() {
-    if (source) { stop(); return }
+  async function getSelectionMix(request) {
+    const snapshot = project, full = await getMix(request)
+    request.check()
+    if (!selectionMix || selectionMix.snapshot !== snapshot || selectionMix.view.buffer !== full.buffer) {
+      const view = await selectedRenderView(snapshot, full, { signal: request.signal,
+        isCurrent: () => request.isCurrent() && project === snapshot && mix === full })
+      request.check()
+      const description = { ...view }; delete description.channels
+      selectionMix = { snapshot, view: description }
+    }
+    const view = selectionMix.view
+    // AudioBufferSourceNode.start() acquires buffer contents and may detach
+    // earlier getChannelData arrays. Cache metadata/peaks, then reacquire views
+    // for each use; never export channel views retained across playback.
+    const channels = Array.from({ length: view.buffer.numberOfChannels }, (_, index) => {
+      const data = view.buffer.getChannelData(index)
+      if (!(data instanceof Float32Array) || data.length !== view.buffer.length) throw new Error('選區混音樣本不可用，請重新產生')
+      return data.subarray(view.firstFrame, view.lastFrame)
+    })
+    return { ...view, channels }
+  }
+  async function play({ rangeOnly = false, loopRange = false } = {}) {
+    if (noteReference) stopNoteReference()
+    if (source) { stop(); if (!rangeOnly) return }
     if (!duration() || root.hidden) return
     await withJob('render', async request => {
       await beforePlayback?.(); request.check()
       const ctx = getContext(); await ctx.resume(); request.check()
-      const result = await getMix(request); request.check()
+      const result = rangeOnly ? await getSelectionMix(request) : await getMix(request); request.check()
       assertSafePlayback(result)
-      const item = selected(), looping = el('loop').checked
-      if (looping && !item) throw new Error('循環試聽前請先選取片段')
-      const start = looping ? item.clip.atSeconds : cursor >= duration() ? 0 : cursor
-      const end = looping ? item.clip.atSeconds + item.clip.durationSeconds : duration()
+      const item = selected(), looping = rangeOnly ? loopRange : el('loop').checked
+      if (looping && !rangeOnly && !item) throw new Error('循環試聽前請先選取片段')
+      const start = rangeOnly ? result.startSeconds : looping ? item.clip.atSeconds : cursor >= duration() ? 0 : cursor
+      const end = rangeOnly ? result.endSeconds : looping ? item.clip.atSeconds + item.clip.durationSeconds : duration()
       source = ctx.createBufferSource(); source.buffer = result.buffer; source.connect(ctx.destination)
       playback = { start, end, loop: looping, started: ctx.currentTime }; cursor = start
       if (looping) { source.loop = true; source.loopStart = start; source.loopEnd = end }
       const activeSource = source
       source.onended = () => { if (source === activeSource) { cursor = end; source.disconnect(); source = null; playback = null; if (frame !== null) cancelAnimationFrame(frame); frame = null; button('play').textContent = '播放混音'; refreshControls(); paintPlayhead() } }
       if (looping) source.start(0, start); else source.start(0, start, end - start)
-      button('play').textContent = '暫停'; status(looping ? '正在循環所選片段的完整混音' : '正在播放目前專案混音'); paintPlayhead()
+      button('play').textContent = '暫停'
+      status(rangeOnly ? (looping ? '正在循環時間軸選區的完整混音' : '正在播放時間軸選區的完整混音') : looping ? '正在循環所選片段的完整混音' : '正在播放目前專案混音'); paintPlayhead()
     })
   }
-  async function exportMix(toMaster = false) {
+  async function exportMix(toMaster = false, rangeOnly = false) {
+    if (toMaster && rangeOnly) throw new Error('送往母帶目前使用完整混音；選區可另存 WAV')
     const transferred = await withJob(toMaster ? 'transfer' : 'render', async request => {
-      const result = await getMix(request); request.check()
+      const result = rangeOnly ? await getSelectionMix(request) : await getMix(request); request.check()
       const bitDepth = toMaster ? 24 : Number(el('bit-depth').value)
-      const encodedBytes = result.buffer.length * result.buffer.numberOfChannels * bitDepth / 8 + 44
-      if (retainedBytes() + encodedBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('WAV 編碼會超出編輯器的保守記憶體預算；請縮短時間軸或降低混音取樣率')
+      const encodedBytes = (rangeOnly ? result.length : result.buffer.length) * result.buffer.numberOfChannels * bitDepth / 8 + 44
+      request.reserveBytes(encodedBytes * 2, 'WAV 編碼會超出編輯器的保守記憶體預算（含下載副本）；請縮短時間軸或降低混音取樣率')
       if (toMaster) {
         const accepted = await onSendToMaster(result.buffer, { name: project.name, revision: project.revision, signal: request.signal, isCurrent: request.isCurrent })
         request.check()
@@ -926,10 +1096,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       }
       else {
         if (result.peak > 1 || result.peaks?.samplePeakDb > 0 || result.peaks?.truePeakDb > 0) throw new Error('混音採樣峰值或估計 True Peak 超過 0 dBFS，已停止 WAV 輸出。請降低「總混音音量」後重新試聽／匯出')
-        const channels = Array.from({ length: result.buffer.numberOfChannels }, (_, index) => result.buffer.getChannelData(index))
+        const channels = rangeOnly ? result.channels : Array.from({ length: result.buffer.numberOfChannels }, (_, index) => result.buffer.getChannelData(index))
         const wav = encodeWAV(channels, result.buffer.sampleRate, Number(el('bit-depth').value))
-        downloadFile(new Blob([wav], { type: 'audio/wav' }), `${project.name.replace(/[^\p{L}\p{N}._ -]/gu, '_') || 'mix'}-mix.wav`)
-        status(`已交付下載：完整立體聲混音 WAV · ${result.buffer.sampleRate / 1000} kHz · ${el('bit-depth').value}-bit；工程仍留在本頁`)
+        // Let a Cancel/edit queued during synchronous encoding win before the
+        // external download handoff. Original PCM and project remain untouched.
+        await new Promise(resolve => setTimeout(resolve, 0)); request.check()
+        const suffix = rangeOnly ? `range-${result.firstFrame}-${result.lastFrame}` : 'mix'
+        downloadFile(new Blob([wav], { type: 'audio/wav' }), `${project.name.replace(/[^\p{L}\p{N}._ -]/gu, '_') || 'mix'}-${suffix}.wav`)
+        status(`已交付下載：${rangeOnly ? `時間軸選區 ${formatDawTime(result.startSeconds)}–${formatDawTime(result.endSeconds)}` : '完整立體聲混音'} WAV · ${result.buffer.sampleRate / 1000} kHz · ${el('bit-depth').value}-bit；工程仍留在本頁`)
       }
     })
     // Retire ownership before our successful navigation; user navigation while
@@ -951,7 +1125,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   function clear() {
     discardReplacement(); cancelJob(); stop({ rewind: true }); generation++
     project = createProject({ name: '未命名專案' }); history = new ProjectHistory(project)
-    buffers.clear(); files.clear(); mix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; resetRegionMapping()
+    buffers.clear(); files.clear(); mix = null; selectionMix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; resetRegionMapping()
     el('audio-files').value = ''; el('project-file').value = ''; el('replacement-file').value = ''; el('replacement-offset').value = '0'; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
@@ -966,6 +1140,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     clipCommand('clip.move', { atSeconds: Math.max(0, item.clip.atSeconds + direction * step) }, direction < 0 ? '已把片段提早' : '已把片段延後')
   }
   const actions = {
+    'note-center-analyze': analyzeNoteCenter, 'note-center-render': prepareCenteredNote, 'note-center-reference': playNoteReference,
     'region-designate': designateVocalTrack, 'region-use-lyric': useLyricRegion, 'region-prepare': prepareGainRegions,
     'region-remove': () => clipCommand('clip.gainRegion.remove', { regionId }, '已刪除此人聲區間；可復原'),
     'region-reset': () => clipCommand('clip.gainRegion.reset', {}, '已清除此片段的人聲區間；可一次復原'),
@@ -1014,6 +1189,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     }
     else if (id === 'daw-region-select') { discardReplacement(); regionId = target.value; regionControlOwner = null; renderRegions(selected()); refreshControls() }
     else if (id === 'daw-replacement-offset') updateReplacementOffset()
+    else if (id === 'daw-note-center-target') { discardReplacement('目標音已修改，請重新產生試聽'); stopNoteReference(); updateNoteProposal() }
     else if (id === 'daw-project-file') { try { await openArchive(target.files?.[0]) } finally { target.value = '' } }
     else if (id === 'daw-name') command({ type: 'project.update', patch: { name: target.value.trim() } }, '已更新專案名稱')
     else if (id === 'daw-tempo') command({ type: 'project.update', patch: { tempo: Number(target.value) } }, '已更新拍格；錄音速度與音高不變')
@@ -1036,6 +1212,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       }
     }
     if (event.target.id?.startsWith('daw-transpose-')) {
+      resetNoteCentering()
       transposeVersion++
       if (replacement?.kind === 'transpose' || job?.kind === 'transpose') discardReplacement('移調設定已修改，請重新產生試聽')
     }
@@ -1113,19 +1290,28 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return
-    destroyed = true; discardReplacement(); cancelJob(); pitchClient?.dispose(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null
+    destroyed = true; discardReplacement(); cancelJob(); resetNoteCentering(); pitchClient?.dispose(); selectionControls?.destroy(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null; selectionMix = null
     if (context) { context.close().catch(() => {}); context = null }
   }
-  listen(window, 'pagehide', event => { if (event.persisted) { selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
+  listen(window, 'pagehide', event => { if (event.persisted) { selectionControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
   observedLyricKey = lyricSelectionKey(readLyricSelection())
   if (subscribeLyricSelection) {
     const unsubscribe = subscribeLyricSelection(onLyricSelectionChange)
     if (typeof unsubscribe === 'function') disposers.push(unsubscribe)
   }
+  selectionControls = createTimelineSelectionControls({ root, getProject: () => project, isBusy: () => Boolean(job),
+    getZoom: () => Number(el('zoom').value), snapTime: snap,
+    commitSelection: range => command({ type: 'timelineSelection.set', selection: range }, '已設定時間軸選區；可試聽、循環或另存 WAV'),
+    clearSelection: () => command({ type: 'timelineSelection.clear' }, '已清除時間軸選區；片段與聲音保持不變'),
+    playSelection: ({ loop = false } = {}) => run(() => play({ rangeOnly: true, loopRange: loop })),
+    exportSelection: () => run(() => exportMix(false, true)), onStatus: status })
+  for (let midi = 24; midi <= 95; midi++) {
+    const option = node('option', '', midiToNote(midi)); option.value = String(midi); el('note-center-target').append(option)
+  }
   render()
-  return { prepareGainRegions, clear, stop, destroy, importFiles, openArchive, prepareReplacement, prepareTranspose, confirmReplacement, getProject: () => JSON.parse(JSON.stringify(project)) }
+  return { prepareGainRegions, analyzeNoteCenter, prepareCenteredNote, clear, stop, destroy, importFiles, openArchive, prepareReplacement, prepareTranspose, confirmReplacement, getProject: () => JSON.parse(JSON.stringify(project)) }
 }

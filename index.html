@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="/src/css/studio.css">
   <link rel="stylesheet" href="/src/css/lyrics.css">
   <link rel="stylesheet" href="/src/css/daw.css">
+  <link rel="stylesheet" href="/src/css/daw-selection.css">
 </head>
 <body>
 
@@ -1213,6 +1214,14 @@
           <details id="daw-transpose-details"><summary>片段移調（試用）</summary>
             <p id="daw-transpose-source" class="daw-note">先 A/B 試聽，再接受；可回到原音</p>
             <button type="button" data-daw="transpose-original" class="daw-full-width" hidden>回到原音</button>
+            <details id="daw-note-center-details"><summary>單音中心對準（試用）</summary>
+              <p class="daw-note">先剪出一個穩定長音。限獨立人聲或單一樂器，不用於整段旋律。</p>
+              <button type="button" data-daw="note-center-analyze" class="daw-full-width">估計這個單音</button>
+              <p id="daw-note-center-result" class="daw-note" role="status">尚未分析</p>
+              <label>目標參考音<select id="daw-note-center-target" disabled><option value="nearest">最接近的音</option></select></label>
+              <div class="daw-actions"><button type="button" data-daw="note-center-reference" disabled>聽目標音</button><button type="button" data-daw="note-center-render" disabled>產生單音試聽</button></div>
+              <details><summary>怎麼判讀</summary><p class="daw-note">音名是估計，可靠程度不代表唱對。這項操作只把整個短片段等量移調，不逐音修正，也不移除顫音。已很接近時建議保留原音；先 A/B 聽過再接受。參考音不是樂譜答案。</p><p class="daw-note">0.35–30 秒，分析左右聲道並檢查是否一致。多聲部、泛音與八度錯判仍可能誤導估計；總移調維持 ±2 半音。聽目標音前請先降低裝置音量。</p></details>
+            </details>
             <div class="daw-two"><label>音高（半音）<input id="daw-transpose-semitones" type="number" min="-2" max="2" step="1" value="0" required></label><label>微調（音分）<input id="daw-transpose-cents" type="number" min="-100" max="100" step="1" value="0" required></label></div>
             <details id="daw-transpose-timbre"><summary>音色調整（選用）</summary>
               <label>共振峰（半音）<input id="daw-transpose-formants" type="number" min="-2" max="2" step="0.1" value="0" required></label>
