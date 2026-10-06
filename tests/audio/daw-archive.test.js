@@ -157,6 +157,15 @@ describe('portable DAW archive', () => {
     expect(decoder).not.toHaveBeenCalled()
   })
 
+  it('publishes its reservation before reading source entries and respects refusal', async () => {
+    const { archive, originals } = await fixture(), reads = [], decoder = vi.fn(decodeAsset)
+    const tracked = { size: archive.size, arrayBuffer: () => archive.arrayBuffer(), slice(start, end, type) { reads.push(end - start); return archive.slice(start, end, type) } }
+    const budget = vi.fn(bytes => { expect(bytes).toBeGreaterThan(archive.size); throw new Error('reservation refused') })
+    await expect(importProjectArchive(tracked, { decodeAsset: decoder, onMemoryBudget: budget })).rejects.toThrow('reservation refused')
+    expect(budget).toHaveBeenCalledTimes(1); expect(decoder).not.toHaveBeenCalled()
+    for (const bytes of originals) expect(reads).not.toContain(bytes.length)
+  })
+
   it('verifies every source hash before calling the decoder', async () => {
     const { archive } = await fixture()
     const entries = await entriesOf(archive)

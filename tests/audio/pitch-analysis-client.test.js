@@ -26,6 +26,21 @@ function fixture(options = {}) {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('pitch worker client lifecycle (mock Worker, real DSP results)', () => {
+  it('balances worker, abort-listener and timer ownership across 100 cancelled analyses', async () => {
+    vi.useFakeTimers()
+    const { client, workers } = fixture()
+    const buffer = fakeAudioBuffer([new Float32Array(800)], 8000)
+    for (let round = 0; round < 100; round++) {
+      const controller = new AbortController()
+      const add = vi.spyOn(controller.signal, 'addEventListener'), remove = vi.spyOn(controller.signal, 'removeEventListener')
+      const pending = client.analyze(buffer, { signal: controller.signal }).catch(error => error)
+      controller.abort(); expect(await pending).toMatchObject({ name: 'AbortError' })
+      expect(add).toHaveBeenCalledTimes(1); expect(remove).toHaveBeenCalledTimes(1)
+      expect(workers.at(-1).terminate).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0)
+    }
+    client.dispose(); expect(workers).toHaveLength(100)
+    expect(workers.every(worker => worker.terminate.mock.calls.length === 1)).toBe(true)
+  })
   it('is lazy and preserves selected source PCM while transferring only a window copy', async () => {
     const { client, workerFactory, request, workers, complete } = fixture()
     expect(client.info).toBe(PITCH_ANALYSIS_INFO)

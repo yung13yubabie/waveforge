@@ -220,6 +220,9 @@ test('mobile keyboard controls inspect the real channel without sideways page ov
   await expect(page.locator('#pitch-point-readout')).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await mobileViewportCapture(page, testInfo, 'pitch-mobile-top.png', null, ['#pitch-title', '#pitch-waveform'])
+  const initialContour = await page.locator('#pitch-contour').boundingBox()
+  expect(initialContour.height).toBeGreaterThanOrEqual(220)
+  expect(initialContour.y + initialContour.height, 'The complete contour should appear before setup pushes it below the first screen').toBeLessThanOrEqual(844)
   await mobileViewportCapture(page, testInfo, 'pitch-mobile-reference.png', '#pitch-reference-title', ['#pitch-reference-title', '#pitch-play-original', '#pitch-play-tone'])
   await mobileViewportCapture(page, testInfo, 'pitch-mobile-chart.png', '#pitch-contour', ['#pitch-contour', '#pitch-point-readout'])
   const axis = await page.locator('#pitch-contour text').first().evaluate(text => {

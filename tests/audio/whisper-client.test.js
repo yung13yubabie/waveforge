@@ -32,6 +32,20 @@ function fixture(options = {}) {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('mocked Whisper client lifecycle (no models)', () => {
+  it('balances worker, abort-listener and timer ownership across 100 cancelled mock transcriptions', async () => {
+    vi.useFakeTimers()
+    const { client, workers } = fixture()
+    for (let round = 0; round < 100; round++) {
+      const controller = new AbortController()
+      const add = vi.spyOn(controller.signal, 'addEventListener'), remove = vi.spyOn(controller.signal, 'removeEventListener')
+      const pending = client.transcribe({ ...input(), signal: controller.signal }).catch(error => error)
+      controller.abort(); expect(await pending).toMatchObject({ name: 'AbortError' })
+      expect(add).toHaveBeenCalledTimes(1); expect(remove).toHaveBeenCalledTimes(1)
+      expect(workers.at(-1).terminate).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0)
+    }
+    client.dispose(); expect(workers).toHaveLength(100)
+    expect(workers.every(worker => worker.terminate.mock.calls.length === 1)).toBe(true)
+  })
   it('is side-effect free on creation and requires explicit model-source approval', async () => {
     const { client, workerFactory } = fixture({ modelSourceApproved: false })
     expect(client.info).toBe(WHISPER_INFO)

@@ -68,6 +68,20 @@ afterEach(() => {
 })
 
 describe('lyrics panel interrupted workflows', () => {
+  it('renders imported lyrics, source names and alignment diagnostics without HTML execution', async () => {
+    const { apply, load } = await setup({ applyOriginal: false })
+    const payload = '<img src=x onerror="globalThis.__wfXss=1"><svg onload="globalThis.__wfXss=1">'
+    await load(file(payload, 2)); apply(payload)
+    expect(el('list').querySelector('.lyrics-line-text').textContent).toBe(payload)
+    expect(el('source').textContent).toContain(payload)
+    const project = createSession(payload, { name: payload, hash: '2'.repeat(64), duration: 8 })
+    project.lines[0].alignment = { status: 'unresolved', evidence: { coverage: 0, reasons: [payload] }, engine: payload, model: payload, modelRevision: payload, language: 'en', backend: 'wasm', pass: 1 }
+    openProject({ size: 2000, text: async () => JSON.stringify(project) })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(el('selected-text').textContent).toBe(payload)
+    expect(document.querySelector('#mode-lyrics img, #mode-lyrics svg[onload], #mode-lyrics [onerror]')).toBeNull()
+    expect(globalThis.__wfXss).toBeUndefined()
+  })
   it('starts with paste only, then exposes timing and keeps the original editor closed after application', async () => {
     const { apply } = await setup({ applyOriginal: false })
     expect(el('original').open).toBe(true)

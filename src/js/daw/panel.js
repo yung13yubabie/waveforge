@@ -1,7 +1,7 @@
 import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt } from './project.js'
 import { renderProject } from './render.js'
 import { ProjectHistory } from './history.js'
-import { exportProjectArchive, importProjectArchive, archiveFileName } from './archive.js'
+import { exportProjectArchive, importProjectArchive, archiveFileName, ARCHIVE_LIMITS } from './archive.js'
 import { sha256Hex } from '../audio/sha256.js'
 import { encodeWAV } from '../audio/wav.js'
 import { decodeDawAsset } from './decode.js'
@@ -52,6 +52,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   let buffers = new Map(), files = new Map()
   let saved = JSON.stringify(project), hasDownloaded = false
   let selection = null, cursor = 0, mix = null, job = null, generation = 0
+  let loadWorkPending = false, pendingLoadBytes = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
   let drag = null, suppressClick = false, automationDrag = null, automationIndex = 0, automationClipId = null
   const getContext = () => context ||= new AudioContextClass()
@@ -318,58 +319,117 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     try { const result = await work({ signal: current.controller.signal, isCurrent, check }); check(); return result }
     finally { if (job === current) { job = null; refreshControls() } }
   }
-  async function decode(bytes, metadata, signal) {
+  async function decode(bytes, metadata, signal, trackNative) {
     let timer, aborted
     const cancelled = new Promise((_, reject) => { aborted = () => reject(abortError()); signal.addEventListener('abort', aborted, { once: true }) })
     try {
+      const decoder = decodeAsset || decodeDawAsset
+      const operation = Promise.resolve(decoder(bytes, metadata, { signal }))
+      // The shared decoder rejects promptly on Abort, but its native promise
+      // still owns audio. Injected decoders expose their own settlement here.
+      trackNative?.(typeof decoder.whenIdle === 'function' ? decoder.whenIdle() : operation.then(() => {}, () => {}))
       const result = await Promise.race([
-        (decodeAsset || decodeDawAsset)(bytes, metadata, { signal }), cancelled,
+        operation, cancelled,
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('音檔解碼逾時；原專案仍保留')), 30000) }),
       ])
       return result?.buffer?.getChannelData ? result.buffer : result
     } finally { clearTimeout(timer); signal.removeEventListener('abort', aborted) }
   }
+  function reserveLoad(bytes) {
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
+    let reservedBytes = 0, nativeSettled = true, finished = false
+    const set = value => {
+      if (!Number.isSafeInteger(value) || value < 0 || retainedBytes() - reservedBytes + value > DAW_LIMITS.maxCombinedBytes) throw new Error('讀取工作會超出記憶體預算；請先下載並清理舊專案')
+      pendingLoadBytes += value - reservedBytes; reservedBytes = value
+    }
+    set(bytes); loadWorkPending = true
+    const release = () => { pendingLoadBytes -= reservedBytes; reservedBytes = 0; loadWorkPending = false }
+    return {
+      set,
+      add(bytes) { set(reservedBytes + bytes) },
+      trackNative(settlement) {
+        nativeSettled = false
+        // Its output size is unknown until decode returns. Reserve the maximum
+        // accepted PCM allowance against OTHER work while it is native-owned.
+        // A codec may internally allocate more; this is not a native hard cap.
+        const nativeAllowance = DAW_LIMITS.maxDecodedBytes
+        pendingLoadBytes += nativeAllowance
+        settlement.then(() => {
+          pendingLoadBytes -= nativeAllowance; nativeSettled = true
+          if (finished) release()
+        })
+      },
+      finish() {
+        // UI cancellation is not the settlement of unabortable native work.
+        finished = true
+        if (nativeSettled) release()
+      },
+    }
+  }
   async function importFiles(inputFiles) {
     const list = [...inputFiles]
     if (!list.length) return
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
     return withJob('import', async ({ signal, check }) => {
       if (project.tracks.length + list.length > DAW_LIMITS.maxTracks) throw new Error('最多 16 軌；請先刪除不需要的音軌')
-      for (const file of list) if (!file.size || file.size > FILE_LIMIT) throw new Error(`${file.name}：原檔須介於 1 byte 與 64 MiB 之間`)
+      for (const file of list) if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > FILE_LIMIT) throw new Error(`${file.name}：原檔須介於 1 byte 與 64 MiB 之間`)
       let next = project, nextSelection = selection
       const nextBuffers = new Map(buffers), nextFiles = new Map(files)
       const inputBytes = list.reduce((sum, file) => sum + file.size, 0)
-      if (inputBytes + retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('匯入會超出記憶體預算；請先下載並清理舊專案')
-      for (let i = 0; i < list.length; i++) {
-        const file = list[i]; status(`正在解碼 ${i + 1}/${list.length}：${file.name}`)
-        const bytes = await file.arrayBuffer(); check()
-        const hash = await sha256Hex(bytes); check()
-        const buffer = await decode(bytes, { name: file.name }, signal); check()
-        const originalBytes = [...nextFiles.values()].reduce((sum, value) => sum + value.size, 0) + file.size
-        if (decodedBytes(nextBuffers) + buffer.length * buffer.numberOfChannels * 4 + originalBytes + file.size * 2 + cachedMixBytes() + metadataBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('音檔解碼後超出記憶體預算；原專案仍保留')
-        const registered = registerAudioBuffer(next, nextBuffers, buffer, { name: file.name, hash })
-        next = registered.project; nextFiles.set(registered.asset.id, file)
-        const trackId = generateId('track'), clipId = generateId('clip')
-        next = applyCommand(next, { type: 'track.add', track: { id: trackId, name: file.name } })
-        next = applyCommand(next, { type: 'clip.add', trackId, clip: { id: clipId, assetId: registered.asset.id, name: file.name } })
-        if (i === list.length - 1) nextSelection = { trackId, clipId }
+      const transientBytes = 2 * Math.max(...list.map(file => file.size))
+      if (inputBytes + transientBytes + retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('匯入會超出記憶體預算；請先下載並清理舊專案')
+      const reservation = reserveLoad(inputBytes + transientBytes)
+      try {
+        for (let i = 0; i < list.length; i++) {
+          const file = list[i]; status(`正在解碼 ${i + 1}/${list.length}：${file.name}`)
+          const bytes = await file.arrayBuffer(); check()
+          const hash = await sha256Hex(bytes); check()
+          const buffer = await decode(bytes, { name: file.name }, signal, reservation.trackNative); check()
+          const bufferBytes = buffer.length * buffer.numberOfChannels * 4
+          if (retainedBytes() + bufferBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('音檔解碼後超出記憶體預算；原專案仍保留')
+          const registered = registerAudioBuffer(next, nextBuffers, buffer, { name: file.name, hash })
+          reservation.add(bufferBytes)
+          next = registered.project; nextFiles.set(registered.asset.id, file)
+          const trackId = generateId('track'), clipId = generateId('clip')
+          next = applyCommand(next, { type: 'track.add', track: { id: trackId, name: file.name } })
+          next = applyCommand(next, { type: 'clip.add', trackId, clip: { id: clipId, assetId: registered.asset.id, name: file.name } })
+          if (i === list.length - 1) nextSelection = { trackId, clipId }
+        }
+        check(); history.push(next); invalidate(); project = next; selection = nextSelection; buffers = nextBuffers; files = nextFiles
+        retainHistoryAssets(); cursor = 0; render(); status(`已匯入 ${list.length} 個音檔，各自從 0 秒開始。可復原整批匯入`)
+      } finally {
+        // Cancel/Clear only retire UI ownership. Unabortable reads, hashes and
+        // native decode keep their bytes reserved until actual settlement.
+        reservation.finish()
       }
-      check(); history.push(next); invalidate(); project = next; selection = nextSelection; buffers = nextBuffers; files = nextFiles
-      retainHistoryAssets(); cursor = 0; render(); status(`已匯入 ${list.length} 個音檔，各自從 0 秒開始。可復原整批匯入`)
     })
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
-  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes()
+  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + pendingLoadBytes
   async function openArchive(file) {
     if (!file) return
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
     if ((dirty() || project.assets.length) && !await confirmAction('開啟工程會取代此多軌專案與復原紀錄。尚未下載的修改將遺失；要繼續嗎？')) return
     return withJob('open', async ({ signal, check }) => {
-      status('正在檢查工程與原始音檔…')
-      const restored = await importProjectArchive(file, { signal, decodeAsset: (bytes, metadata, options) => decode(bytes, metadata, options.signal), retainedBytes: retainedBytes(), onProgress: value => { check(); status(`正在還原工程：${value.phase} ${value.completed}/${value.total}`) } })
-      check(); const nextHistory = new ProjectHistory(restored.project)
-      invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
-      saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0
-      render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
+      const beforeLoadBytes = retainedBytes()
+      // Before the manifest is trusted, only bounded headers and its two JSON
+      // representations may be read. The importer supplies the decoded estimate
+      // before it starts reading or decoding any media entry.
+      const reservation = reserveLoad(Math.min(file.size, ARCHIVE_LIMITS.archiveBytes) + 2 * ARCHIVE_LIMITS.manifestBytes)
+      try {
+        status('正在檢查工程與原始音檔…')
+        const restored = await importProjectArchive(file, { signal,
+          decodeAsset: (bytes, metadata, options) => decode(bytes, metadata, options.signal, reservation.trackNative),
+          retainedBytes: beforeLoadBytes,
+          onMemoryBudget: bytes => reservation.set(bytes + 2 * ARCHIVE_LIMITS.manifestBytes),
+          onProgress: value => { check(); status(`正在還原工程：${value.phase} ${value.completed}/${value.total}`) },
+        })
+        check(); const nextHistory = new ProjectHistory(restored.project)
+        invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
+        saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0
+        render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
+      } finally { reservation.finish() }
     })
   }
   async function getMix({ signal, check }) {

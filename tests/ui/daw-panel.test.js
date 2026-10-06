@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 import { initDawPanel, formatDawTime, snapDawTime } from '../../src/js/daw/panel.js'
 import { createProject } from '../../src/js/daw/project.js'
+import { createDawDecoder } from '../../src/js/daw/decode.js'
+import { sha256Hex } from '../../src/js/audio/sha256.js'
 import { initModeNav } from '../../src/js/mode-nav.js'
 import { renderProject } from '../../src/js/daw/render.js'
 import { exportProjectArchive, importProjectArchive } from '../../src/js/daw/archive.js'
@@ -11,6 +13,7 @@ vi.mock('../../src/js/daw/render.js', () => ({ renderProject: vi.fn() }))
 vi.mock('../../src/js/daw/archive.js', () => ({
   exportProjectArchive: vi.fn(async () => new Blob(['zip'])),
   importProjectArchive: vi.fn(), archiveFileName: () => 'session.waveforge.zip',
+  ARCHIVE_LIMITS: { archiveBytes: 256 * 1024 * 1024, manifestBytes: 1024 * 1024 },
 }))
 const html = readFileSync('index.html', 'utf8')
 const el = id => document.getElementById(`daw-${id}`)
@@ -75,6 +78,17 @@ describe('local DAW panel', () => {
     document.querySelector('.daw-clip').click()
     expect(el('clip-fields').hidden).toBe(false)
     expect(el('clip-fields').disabled).toBe(false)
+  })
+  it('renders attacker-controlled media and restored project names only as text', async () => {
+    const payload = '<img src=x onerror="globalThis.__wfXss=1"><svg onload="globalThis.__wfXss=1">'
+    await setup({ importAudio: false }); await panel.importFiles([makeFile(payload)])
+    expect(document.querySelector('.daw-clip-name').textContent).toBe(payload)
+    expect(el('selection-title').textContent).toBe(payload)
+    expect(document.querySelector('#mode-editor img, #mode-editor svg[onload], #mode-editor [onerror]')).toBeNull()
+    const restored = panel.getProject(); restored.name = payload
+    importProjectArchive.mockResolvedValueOnce({ project: restored, files: new Map(), buffers: new Map() })
+    await panel.openArchive(makeFile('safe.zip'))
+    expect(el('name').value).toBe(payload); expect(globalThis.__wfXss).toBeUndefined()
   })
   it('formats time and snaps only positions to the chosen beat grid', () => {
     expect(formatDawTime(65.125)).toBe('01:05.125')
@@ -393,6 +407,115 @@ describe('local DAW panel', () => {
     const loading = panel.importFiles([makeFile()]); await tick(); panel.clear(); pending.resolve(getBuffer())
     await expect(loading).rejects.toMatchObject({ name: 'AbortError' })
     expect(panel.getProject().tracks).toHaveLength(0); expect(el('save-state').textContent).toBe('尚無修改')
+  })
+  it('keeps one ordinary file read owned across repeated cancel and clear', async () => {
+    await setup(); const accepted = panel.getProject(), pending = deferred()
+    const read = vi.fn(() => pending.promise), nextRead = vi.fn(async () => new ArrayBuffer(8))
+    const loading = panel.importFiles([{ ...makeFile('delayed.wav'), size: 64 * 1024 * 1024, arrayBuffer: read }]).catch(error => error)
+    await tick(); await click('cancel')
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(panel.importFiles([{ ...makeFile(), arrayBuffer: nextRead }])).rejects.toThrow(/上一批音檔/)
+    }
+    expect(read).toHaveBeenCalledTimes(1); expect(nextRead).not.toHaveBeenCalled()
+    expect(panel.getProject()).toEqual(accepted)
+    panel.clear()
+    await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    pending.resolve(new ArrayBuffer(8)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    expect(panel.getProject().assets).toHaveLength(0)
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(1)
+  })
+  it('keeps hash work reserved and blocks overlapping restore reads', async () => {
+    await setup(); const accepted = panel.getProject(), pending = deferred()
+    sha256Hex.mockReturnValueOnce(pending.promise)
+    const loading = panel.importFiles([{ ...makeFile('hashing.wav'), size: 64 * 1024 * 1024 }]).catch(error => error)
+    await tick(); await click('cancel')
+    await expect(panel.openArchive(makeFile('bad.zip'))).rejects.toThrow(/上一批音檔/)
+    expect(importProjectArchive).not.toHaveBeenCalled()
+    await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    expect(panel.getProject()).toEqual(accepted)
+    pending.resolve('a'.repeat(64)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(2)
+  })
+  it('retains cancelled import bytes until the real native decoder settles', async () => {
+    const pending = deferred(), source = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(getBuffer())
+    class Context { constructor(channels, length, sampleRate) { Object.assign(this, { channels, length, sampleRate }) } }
+    const bounded = createDawDecoder({ OfflineAudioContextClass: Context, decodeSource: source })
+    await setup({ importAudio: false, decodeAsset: bounded })
+    const loading = panel.importFiles([{ ...makeFile(), size: 64 * 1024 * 1024 }]).catch(error => error)
+    await tick(); await click('cancel'); expect(await loading).toMatchObject({ name: 'AbortError' })
+    panel.clear()
+    const read = vi.fn(async () => new ArrayBuffer(8))
+    for (let attempt = 0; attempt < 10; attempt++) await expect(panel.importFiles([{ ...makeFile(), arrayBuffer: read }])).rejects.toThrow(/上一批音檔/)
+    expect(read).not.toHaveBeenCalled(); expect(source).toHaveBeenCalledTimes(1)
+    await expect(panel.openArchive(makeFile('bad.zip'))).rejects.toThrow(/上一批音檔/)
+    expect(importProjectArchive).not.toHaveBeenCalled()
+    pending.reject(new Error('late native failure')); await tick()
+    await panel.importFiles([makeFile()]); expect(source).toHaveBeenCalledTimes(2)
+  })
+  it('includes cancelled import reservations before starting another render', async () => {
+    await setup({ importAudio: false })
+    await panel.importFiles(Array.from({ length: 3 }, (_, i) => ({ ...makeFile(`accepted-${i}.wav`), size: 64 * 1024 * 1024 })))
+    const pending = deferred()
+    const loading = panel.importFiles([{ ...makeFile(), size: 64 * 1024 * 1024, arrayBuffer: () => pending.promise }]).catch(error => error)
+    await tick(); await click('cancel')
+    await change('clip-at', 496); await click('move'); await click('export')
+    expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
+    pending.resolve(new ArrayBuffer(8)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
+  })
+  it('reserves unknown native output against a render started after cancellation', async () => {
+    await setup({ importAudio: false })
+    await panel.importFiles(Array.from({ length: 3 }, (_, i) => ({ ...makeFile(`accepted-${i}.wav`), size: 64 * 1024 * 1024 })))
+    const pending = deferred(); decode.mockReturnValueOnce(pending.promise)
+    const loading = panel.importFiles([makeFile('compressed.bin')]).catch(error => error)
+    await tick(); await click('cancel'); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await change('clip-at', 496); await click('move'); await click('play')
+    expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
+    pending.resolve(getBuffer()); await tick()
+    await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
+  })
+  it('reserves cancelled ZIP reads, blocks new loads, and preserves accepted PCM', async () => {
+    await setup(); await click('play'); await click('stop')
+    const accepted = panel.getProject(), acceptedBuffers = renderProject.mock.calls.at(-1)[1]
+    const acceptedBuffer = [...acceptedBuffers.values()][0], samples = acceptedBuffer.getChannelData(0).slice()
+    const pending = deferred()
+    importProjectArchive.mockImplementationOnce(async (_file, options) => {
+      options.onMemoryBudget(300 * 1024 * 1024)
+      return pending.promise
+    })
+    const opening = panel.openArchive(makeFile('slow.zip')).catch(error => error)
+    await tick(); await click('cancel')
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(panel.openArchive(makeFile('next.zip'))).rejects.toThrow(/上一批音檔/)
+      await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    }
+    expect(importProjectArchive).toHaveBeenCalledTimes(1)
+    expect(panel.getProject()).toEqual(accepted)
+    expect(acceptedBuffer.getChannelData(0)).toEqual(samples)
+    // Native late success must never replace the accepted project after Cancel.
+    pending.resolve({ project: createProject({ name: 'obsolete' }), files: new Map(), buffers: new Map() })
+    expect(await opening).toMatchObject({ name: 'AbortError' })
+    expect(panel.getProject()).toEqual(accepted)
+    expect(acceptedBuffers.get(accepted.assets[0].id)).toBe(acceptedBuffer)
+    expect(acceptedBuffer.getChannelData(0)).toEqual(samples)
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(2)
+  })
+  it('holds ZIP native-decode reservation after prompt cancellation until real settlement', async () => {
+    const pending = deferred(), source = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(getBuffer())
+    class Context { constructor(channels, length, sampleRate) { Object.assign(this, { channels, length, sampleRate }) } }
+    const bounded = createDawDecoder({ OfflineAudioContextClass: Context, decodeSource: source })
+    await setup({ importAudio: false, decodeAsset: bounded })
+    importProjectArchive.mockImplementationOnce(async (_file, options) => {
+      options.onMemoryBudget(300 * 1024 * 1024)
+      await options.decodeAsset(new ArrayBuffer(8), {}, { signal: options.signal })
+      return { project: createProject(), files: new Map(), buffers: new Map() }
+    })
+    const opening = panel.openArchive(makeFile('slow.zip')).catch(error => error)
+    await tick(); await click('cancel'); expect(await opening).toMatchObject({ name: 'AbortError' })
+    panel.clear(); await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    await expect(panel.openArchive(makeFile('again.zip'))).rejects.toThrow(/上一批音檔/)
+    pending.resolve(getBuffer()); await tick()
+    await panel.importFiles([makeFile()]); expect(source).toHaveBeenCalledTimes(2)
   })
   it('saves originals with project metadata and leaves subsequent edits dirty', async () => {
     await setup(); await click('save')
