@@ -264,6 +264,7 @@ for (const width of [1440, 390]) test(`vocal regions stay contextual with reacha
   console.info('VOCAL_REGION_GEOMETRY', width, JSON.stringify({ initialGeometry, reviewGeometry }))
   if (width === 390) {
     expect(reviewGeometry.windowX).toBe(0)
+    for (const snapshot of [initialGeometry, reviewGeometry]) for (const node of snapshot.nodes.filter(node => ['body', '#app', '#mode-editor'].includes(node.selector))) expect(node.scrollWidth, `${node.selector} actual scrollable width`).toBeLessThanOrEqual(node.clientWidth)
     expect(reviewGeometry.nodes.filter(node => ['body', '#app', '#mode-editor', '.daw-inspector'].includes(node.selector)).map(node => ({ selector: node.selector, scrollLeft: node.scrollLeft }))).toEqual([
       { selector: 'body', scrollLeft: 0 }, { selector: '#app', scrollLeft: 0 }, { selector: '#mode-editor', scrollLeft: 0 }, { selector: '.daw-inspector', scrollLeft: 0 },
     ])
@@ -274,4 +275,31 @@ for (const width of [1440, 390]) test(`vocal regions stay contextual with reacha
   await page.locator('#daw-region-select').selectOption(accepted.tracks[0].clips[0].gainRegions[0].id)
   await expect(action(page, 'region-remove')).toBeEnabled(); await action(page, 'region-remove').scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath(`vocal-region-recovery-${width}.png`) })
+})
+
+test('right-edge account tooltip cannot enlarge the mobile body, including long text and keyboard focus', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto('/'); await page.locator('#tab-editor').click()
+  const trigger = page.locator('#auth-login-pill')
+  const original = await trigger.getAttribute('data-tooltip')
+  // Counterfactual uses the previous exact text/placement to prove the cause,
+  // then removes only this test stylesheet. No scroll reset hides the defect.
+  await trigger.evaluate(element => element.setAttribute('data-tooltip', '尚未設定 Supabase 後端（.env 缺少 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY），登入功能無法使用'))
+  const oldRule = await page.addStyleTag({ content: '#auth-login-pill::after { top:auto; bottom:calc(100% + 6px); left:50%; right:auto; width:auto; transform:translateX(-50%) translateY(2px); }' })
+  const before = await horizontalGeometry(page)
+  expect(before.nodes.find(node => node.selector === 'body').scrollWidth).toBeGreaterThan(390)
+  await oldRule.evaluate(element => element.remove())
+  const after = await horizontalGeometry(page)
+  expect(after.nodes.find(node => node.selector === 'body').scrollWidth).toBe(390)
+  expect(after.nodes.find(node => node.selector === '#app').scrollWidth).toBe(390)
+  await page.locator('#tab-lyrics').focus(); await page.keyboard.press('Tab')
+  await expect(trigger).toBeFocused()
+  await expect.poll(() => trigger.evaluate(element => getComputedStyle(element, '::after').visibility)).toBe('visible')
+  const focused = await horizontalGeometry(page)
+  expect(focused.nodes.find(node => node.selector === 'body').scrollWidth).toBe(390)
+  expect(focused.nodes.find(node => node.selector === 'body').scrollLeft).toBe(0)
+  await trigger.evaluate((element, text) => element.setAttribute('data-tooltip', text), original)
+  await page.screenshot({ path: testInfo.outputPath('account-tooltip-keyboard-390.png') })
+  const path = testInfo.outputPath('account-tooltip-overflow-cause.json')
+  await writeFile(path, JSON.stringify({ before, after, focused }, null, 2))
+  await testInfo.attach('account-tooltip-overflow-cause.json', { path, contentType: 'application/json' })
 })

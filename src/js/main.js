@@ -198,7 +198,9 @@ async function boot() {
   const loginPill = document.getElementById('auth-login-pill')
   if (loginPill) {
     if (!SUPABASE_CONFIGURED) {
-      loginPill.setAttribute('data-tooltip', '尚未設定 Supabase 後端（.env 缺少 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY），登入功能無法使用')
+      const unavailableMessage = '登入服務尚未啟用，目前可使用本機編輯功能'
+      loginPill.setAttribute('data-tooltip', unavailableMessage)
+      loginPill.setAttribute('aria-description', unavailableMessage)
       loginPill.classList.add('backend-unavailable')
     }
     loginPill.addEventListener('click', () => {
