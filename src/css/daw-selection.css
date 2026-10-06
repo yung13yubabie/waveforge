@@ -1,5 +1,9 @@
 /* Range tools stay beside the arrangement; precision fields open on demand. */
-.daw-selection-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; padding-block: 0 6px; }
+.daw-selection-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; padding-block: 6px 0; }
+/* Reserve one command row without moving the ruler or shrinking touch targets. */
+@media (min-width: 761px) {
+  .daw-timeline { height: clamp(300px, calc(100dvh - 374px), 630px); }
+}
 .daw-selection-controls > button, .daw-selection-details > summary { flex: 0 0 auto; }
 .daw-selection-summary { min-width: 0; font: 12px var(--font-mono); color: var(--c-text-2); overflow-wrap: anywhere; }
 .daw-selection-summary:empty { display: none; }

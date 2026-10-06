@@ -55,7 +55,9 @@ export function createTimelineSelectionControls({ root, getProject, isBusy = () 
   actions.append(button('play', '試聽', '試聽選取範圍'), button('loop', '循環', '循環播放選取範圍'),
     button('export', '範圍 WAV', '匯出選取範圍 WAV'), button('clear', '清除', '清除時間軸範圍'))
   bar.append(drawButton, summary, details, actions)
-  timeline.before(bar)
+  // Keep the arrangement at the top of the editor. Range commands live directly
+  // below its canvas instead of adding another setup row above the ruler.
+  timeline.after(bar)
   let destroyed = false, drawing = false, drag = null, pending = false, fieldOwner = null, fieldsDirty = false
   let suppressClick = false, clickTimer = null
   const busy = () => pending || isBusy()
