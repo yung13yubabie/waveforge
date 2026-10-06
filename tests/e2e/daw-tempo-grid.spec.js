@@ -212,6 +212,35 @@ async function gridGeometry(page, bpm, origin, division, zoom) {
   return actual
 }
 
+async function markerTextGeometry(page, { proveOldPlacement = false } = {}) {
+  const measured = await page.evaluate(proveOld => {
+    const marker = document.querySelector('.daw-grid-origin-marker'), ruler = document.querySelector('#daw-ruler')
+    const textBox = element => { const range = document.createRange(); range.selectNodeContents(element); return range.getBoundingClientRect().toJSON() }
+    const caption = textBox(marker), ticks = [...ruler.querySelectorAll('.daw-tick')].map(textBox)
+    const overlaps = box => ticks.some(tick => box.left < tick.right && box.right > tick.left && box.top < tick.bottom && box.bottom > tick.top)
+    let oldPlacement = null
+    if (proveOld) {
+      const before = marker.style.cssText
+      marker.style.padding = '1px 3px'
+      const text = textBox(marker)
+      oldPlacement = { caption: text, overlapsSeconds: overlaps(text) }
+      marker.style.cssText = before
+    }
+    return { caption, ticks, ruler: ruler.getBoundingClientRect().toJSON(), overlapsSeconds: overlaps(caption), oldPlacement,
+      handles: [...ruler.querySelectorAll('[data-range-handle]')].map(element => element.getBoundingClientRect().toJSON()) }
+  }, proveOldPlacement)
+  expect(measured.overlapsSeconds, 'reference caption must not collide with seconds').toBe(false)
+  expect(measured.caption.top).toBeGreaterThanOrEqual(Math.max(...measured.ticks.map(tick => tick.bottom)))
+  expect(measured.caption.bottom).toBeLessThanOrEqual(measured.ruler.bottom)
+  if (proveOldPlacement) expect(measured.oldPlacement.overlapsSeconds, 'prior caption padding must reproduce the collision').toBe(true)
+  for (const handle of measured.handles) {
+    expect(handle.height).toBeGreaterThanOrEqual(44)
+    expect(handle.top).toBeGreaterThanOrEqual(measured.ruler.top)
+    expect(handle.bottom).toBeLessThanOrEqual(measured.ruler.bottom)
+  }
+  return measured
+}
+
 for (const sampleRate of [44100, 48000, 96000]) test(`fractional BPM/origin leave native PCM24 unchanged through Undo and fresh ZIP at ${sampleRate} Hz`, async ({ page }, testInfo) => {
   test.setTimeout(90000)
   const fixture = await selectionFixture(sampleRate), observed = observeRequests(page)
@@ -611,7 +640,19 @@ for (const width of [1440, 390]) test(`tempo guidance stays compact, reachable a
   await expect(tempo(page, 'tap')).toBeHidden()
   keyboard.push(await keyboardDisclosure(page, '.daw-grid-settings', false, true))
   await daw(page, 'stop').click()
+  const marker = await markerTextGeometry(page, { proveOldPlacement: true })
+  await screenshot(page, testInfo, `tempo-marker-${width}.png`)
+  // Near-zero ranges place endpoint targets on separate rows. The caption and
+  // both 44px targets must remain inside the existing ruler in this state too.
+  await details(page, '.daw-selection-details')
+  await page.locator('[data-range-endpoint="startSeconds"]').fill('0')
+  await page.locator('[data-range-endpoint="endSeconds"]').fill('.05')
+  await page.locator('[data-range-action="apply"]').click()
+  await details(page, '.daw-selection-details', false)
+  const tightMarker = await markerTextGeometry(page)
+  expect(tightMarker.handles).toHaveLength(2)
+  await screenshot(page, testInfo, `tempo-marker-tight-${width}.png`)
   const final = await horizontalGeometry(page)
   expectNoOverflow(final); expectQuiet(observed)
-  await evidence(testInfo, `tempo-layout-${width}.json`, { closed, expanded, final, targets, keyboard, tapRun, finalTapRun, observed })
+  await evidence(testInfo, `tempo-layout-${width}.json`, { closed, expanded, final, targets, keyboard, tapRun, finalTapRun, marker, tightMarker, observed })
 })

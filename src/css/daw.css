@@ -59,7 +59,8 @@
 .daw-track-mix label { font-size: 12px; }
 .daw-track-mix input { width: 100%; min-width: 0; padding: 5px !important; }
 .daw-lane { position: relative; width: var(--daw-lane-width); flex-shrink: 0; background-image: linear-gradient(to right, var(--c-border) 1px, transparent 1px); background-size: var(--daw-beat-width, 24px) 100%; background-position-x: var(--daw-grid-origin, 0px); cursor: crosshair; }
-.daw-grid-origin-marker { position: absolute; top: 0; height: 100%; padding: 1px 3px; border-left: 1px dashed var(--c-primary); color: var(--c-primary); font-size: 10px; pointer-events: none; }
+.daw-ruler:has(.daw-grid-origin-marker) { min-height: 44px; }
+.daw-grid-origin-marker { position: absolute; top: 0; height: 100%; padding: 26px 3px 0; border-left: 1px dashed var(--c-primary); color: var(--c-primary); font-size: 10px; line-height: 12px; pointer-events: none; }
 #daw-tempo-tools { flex-basis: 100%; min-width: 0; }
 .daw-grid-fields { max-height: max(132px, calc(100dvh - 300px)); overflow-y: auto; overscroll-behavior: contain; }
 .daw-tempo-controls { border-top: 1px solid var(--c-border); }
