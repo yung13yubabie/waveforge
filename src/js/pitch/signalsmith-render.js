@@ -35,7 +35,7 @@ export function validateSignalsmithInput(channels, sampleRate, options = {}) {
   if (typeof formantCompensation !== 'boolean') throw new TypeError('Formant compensation must be a boolean')
   if (formantBaseHz !== 0 && (formantBaseHz < 50 || formantBaseHz > 1000)) throw new RangeError('Formant base must be 0 (automatic) or 50–1000 Hz')
   const bypassed = amount === 0 && formantSemitones === 0
-  if (!bypassed && length > 0 && length < Math.ceil(sampleRate * 0.12)) throw new RangeError('Nonzero pitch/formant render requires at least 120 ms')
+  if (!bypassed && length > 0 && length < Math.ceil(sampleRate * 0.12)) throw new RangeError('片段太短；移調或音色調整至少需要 0.12 秒（120 ms），請保留更長的片段')
   if (options.yieldControl != null && typeof options.yieldControl !== 'function') throw new TypeError('yieldControl must be a function')
   if (options.onProgress != null && typeof options.onProgress !== 'function') throw new TypeError('onProgress must be a function')
   return { length, amount, formantSemitones, formantCompensation, formantBaseHz, bypassed }

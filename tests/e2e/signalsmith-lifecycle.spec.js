@@ -155,6 +155,8 @@ async function withEvidence(testInfo, name, records, run) {
   const persist = () => writeFile(path, JSON.stringify({ ...records,
     ownershipTolerance: { liveWorkers: 0, connectedSources: 0, pendingNativeRenders: 0, objectURLs: 0 },
     heapAcceptanceThreshold: null,
+    warmedHeapDeltaBytes: records.rounds.length > 3 && records.rounds[2].heap && records.rounds.at(-1).heap
+      ? records.rounds.at(-1).heap.usedSize - records.rounds[2].heap.usedSize : null,
     caveat: 'Scalar ownership evidence and WeakRef observations only. No strong audio references, no whole-browser/native-memory bound or leak-free claim.' }, null, 2))
   try { await run(persist); records.completed = true }
   catch (error) { originalFailure = error; records.failure = { name: error.name, message: error.message }; throw error }
@@ -169,11 +171,12 @@ function checkAttempt(entry) {
   expect(entry.terminateCalls).toBe(1)
 }
 
-test('real DSP progress cancellation, genuine retries and Clear release Signalsmith and native audition ownership', async ({ page }, testInfo) => {
+test('real DSP progress cancellation, genuine retries and Clear release Signalsmith and native audition ownership', async ({ page, context }, testInfo) => {
   test.setTimeout(180000)
-  const records = { completed: false, rounds: [], unexpectedNetwork: [], pageErrors: [] }
+  const records = { completed: false, plannedWarmupRounds: 2, plannedMeasuredRounds: 4, rounds: [], unexpectedNetwork: [], pageErrors: [] }
   await withEvidence(testInfo, 'signalsmith-lifecycle.json', records, async persist => {
     await installProbe(page, records); await page.goto('/')
+    const cdp = await context.newCDPSession(page)
     for (let round = 0; round < 6; round++) {
       await loadSource(page)
       const accepted = await savedProjectHash(page)
@@ -210,10 +213,16 @@ test('real DSP progress cancellation, genuine retries and Clear release Signalsm
       expect(await savedProjectHash(page)).toBe(accepted)
       await action(page, 'clear').click(); await expect(page.locator('#daw-summary')).toContainText('0 軌 · 0 片段')
       await ownershipSettled(page)
+      // Ownership must settle before collection. Heap and WeakRef observations
+      // remain diagnostic; no growth threshold or native-memory claim is made.
+      await cdp.send('HeapProfiler.collectGarbage')
+      await page.waitForTimeout(25)
+      await cdp.send('HeapProfiler.collectGarbage')
+      const heap = await cdp.send('Runtime.getHeapUsage')
       const observed = await snapshot(page), native = observed.nativeRenders.at(-1)
       expect(native.settled).toBe(true); expect(observed.realtimeStarts).toBe(0)
       expect(observed.attempts).toHaveLength((round + 1) * 2)
-      records.rounds.push({ round, acceptedProjectSha256: accepted, cancelled, succeeded, observed })
+      records.rounds.push({ round, acceptedProjectSha256: accepted, cancelled, succeeded, observed, heap })
       await persist()
     }
     expect(records.unexpectedNetwork).toEqual([]); expect(records.pageErrors).toEqual([])

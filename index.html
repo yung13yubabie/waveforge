@@ -1213,15 +1213,15 @@
           <details id="daw-transpose-details"><summary>片段移調（試用）</summary>
             <p id="daw-transpose-source" class="daw-note">先 A/B 試聽，再接受；可回到原音</p>
             <button type="button" data-daw="transpose-original" class="daw-full-width" hidden>回到原音</button>
-            <div class="daw-two"><label>半音<input id="daw-transpose-semitones" type="number" min="-2" max="2" step="1" value="0" required></label><label>音分<input id="daw-transpose-cents" type="number" min="-100" max="100" step="1" value="0" required></label></div>
+            <div class="daw-two"><label>音高（半音）<input id="daw-transpose-semitones" type="number" min="-2" max="2" step="1" value="0" required></label><label>微調（音分）<input id="daw-transpose-cents" type="number" min="-100" max="100" step="1" value="0" required></label></div>
             <details id="daw-transpose-timbre"><summary>音色調整（選用）</summary>
               <label>共振峰（半音）<input id="daw-transpose-formants" type="number" min="-2" max="2" step="0.1" value="0" required></label>
               <label class="daw-check"><input id="daw-transpose-compensation" type="checkbox">近似音色補償</label>
             </details>
             <button type="button" data-daw="transpose-render" class="daw-full-width" aria-describedby="daw-transpose-limits">產生試聽</button>
             <details id="daw-transpose-help"><summary>範圍與音質限制</summary>
-              <p id="daw-transpose-limits" class="daw-note">每次最多 30 秒，總移調範圍 ±2 半音（100 音分 = 1 半音），長度不變。共振峰可獨立調整 ±2 半音，補償是近似處理，音色仍可能改變。這不是自動音準校正。</p>
-              <p class="daw-note">子音、氣音、起音、片段邊界及立體聲可能改變；目前仍待瀏覽器與人聲聆聽驗證。建議短句、獨立人聲，務必試聽。ZIP 會保存處理音訊、原音連結與這次參數；重開後可回到原音或重新產生。復原／重做歷史不會存入 ZIP。</p>
+              <p id="daw-transpose-limits" class="daw-note">每次最多 30 秒；有調整時至少需 0.12 秒。總移調範圍 ±2 半音（100 音分 = 1 半音），長度不變。共振峰可獨立調整 ±2 半音，補償是近似處理，音色仍可能改變。這不是自動音準校正。</p>
+              <p class="daw-note">子音、氣音、起音、片段邊界及立體聲可能改變；音質仍待更多人聲聆聽驗證。建議短句、獨立人聲，務必試聽。ZIP 會保存處理音訊、原音連結與這次參數；重開後可回到原音或重新產生。復原／重做歷史不會存入 ZIP。</p>
               <p class="daw-note">Signalsmith Stretch 1.3.2 · 裝置內處理，不上傳、不下載模型。不自動正規化或截幅；過載時請降低總音量。ZIP 包含保留的完整原錄音。</p>
             </details>
           </details>

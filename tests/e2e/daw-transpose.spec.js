@@ -594,7 +594,7 @@ test('ready candidates are invalidated by settings, edits, navigation and select
 for (const width of [1440, 390]) {
   test(`collapsed transpose and contextual A/B are touch and keyboard reachable at ${width}px`, async ({ page }, testInfo) => {
     test.setTimeout(90_000)
-    await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 }); await page.emulateMedia({ reducedMotion: 'reduce' })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('/'); await page.locator('#tab-editor').click()
@@ -629,7 +629,26 @@ for (const width of [1440, 390]) {
       expect(box.height).toBeGreaterThanOrEqual(44)
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width)
     }
-    await page.locator('#daw-transpose-details > summary').scrollIntoViewIfNeeded()
+    // Capture and hit-test the actual pending actions above the fixed transport,
+    // rather than a details crop that can omit them or scroll them below it.
+    await review(page).evaluate(element => element.scrollIntoView({ block: 'center' }))
+    for (const command of ['replacement-original', 'replacement-preview', 'replacement-confirm', 'replacement-cancel']) {
+      const control = action(page, command), box = await control.boundingBox()
+      const transport = await page.locator('.daw-transport').boundingBox()
+      expect(box.y).toBeGreaterThanOrEqual(0)
+      expect(box.y + box.height).toBeLessThanOrEqual(transport.y)
+      expect(await control.evaluate(element => {
+        const box = element.getBoundingClientRect()
+        return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
+      })).toBe(true)
+    }
+    await action(page, 'replacement-original').click()
+    await expect(page.locator('#daw-status')).toContainText('A：正在試聽')
+    await action(page, 'stop').click()
+    await action(page, 'replacement-preview').click()
+    await expect(page.locator('#daw-status')).toContainText('B：正在試聽')
+    await action(page, 'stop').click()
+    await review(page).evaluate(element => element.scrollIntoView({ block: 'center' }))
     await page.screenshot({ path: testInfo.outputPath(`transpose-review-compact-${width}.png`) })
     await openDetails(page, 'daw-transpose-help')
     await expect(page.locator('#daw-transpose-help')).toContainText('不上傳')
@@ -647,6 +666,11 @@ for (const width of [1440, 390]) {
     const originalBox = await originalControl.boundingBox()
     expect(originalBox.height).toBeGreaterThanOrEqual(44)
     expect(originalBox.x).toBeGreaterThanOrEqual(0); expect(originalBox.x + originalBox.width).toBeLessThanOrEqual(width)
+    await originalControl.evaluate(element => element.scrollIntoView({ block: 'center' }))
+    const recoveryBox = await originalControl.boundingBox(), transportBox = await page.locator('.daw-transport').boundingBox()
+    expect(recoveryBox.y).toBeGreaterThanOrEqual(0)
+    expect(recoveryBox.y + recoveryBox.height).toBeLessThanOrEqual(transportBox.y)
+    await page.screenshot({ path: testInfo.outputPath(`transpose-original-recovery-${width}.png`) })
     await originalControl.focus(); await page.keyboard.press('Enter')
     await expect(originalControl).toBeHidden()
     await action(page, 'undo').click()
