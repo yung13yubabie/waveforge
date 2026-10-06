@@ -10,7 +10,10 @@ vi.mock('../../src/js/daw/render.js', () => ({ renderProject: vi.fn(), getPendin
 vi.mock('../../src/js/daw/archive.js', () => ({ exportProjectArchive: vi.fn(async () => new Blob(['zip'])), importProjectArchive: vi.fn(), archiveFileName: () => 'project.zip', ARCHIVE_LIMITS: { archiveBytes: 256 * 1024 * 1024, manifestBytes: 1024 * 1024 } }))
 const html = readFileSync('index.html', 'utf8'), el = id => document.getElementById(`daw-${id}`), action = id => document.querySelector(`[data-daw="${id}"]`)
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
-const click = async id => { action(id).click(); await tick() }
+const click = async id => {
+  action(id).click(); await tick()
+  if (id === 'export') { await new Promise(resolve => setTimeout(resolve, 0)); await tick() }
+}
 const change = async (id, value, type = 'input') => { el(id).value = String(value); el(id).dispatchEvent(new Event(type, { bubbles: true })); await tick() }
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes }); return { promise, resolve } }
 const file = { name: 'voice.wav', size: 8, arrayBuffer: async () => new ArrayBuffer(8) }

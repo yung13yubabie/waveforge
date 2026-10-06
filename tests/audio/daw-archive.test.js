@@ -65,6 +65,25 @@ async function editZip(archive, fn) {
 }
 
 describe('portable DAW archive', () => {
+  it('roundtrips the saved timeline selection with edits, tails and untouched original media', async () => {
+    let { project, files, originals } = await fixture()
+    project = applyCommand(project, { type: 'clip.automation.add', trackId: 'track-one', clipId: 'clip-a', point: { timeSeconds: .5, value: .6 } })
+    project = applyCommand(project, { type: 'clip.gainRegion.add', trackId: 'track-one', clipId: 'clip-a',
+      region: { id: 'quiet-line', startSeconds: .2, endSeconds: .8, gain: .3 } })
+    project = applyCommand(project, { type: 'timelineSelection.set', selection: { startSeconds: 12.125, endSeconds: 14 } })
+    const archive = await exportProjectArchive(project, files)
+    const result = await importProjectArchive(archive, { decodeAsset })
+    expect(result.project).toEqual(project)
+    expect(result.project.timelineSelection).not.toBe(project.timelineSelection)
+    const entries = await entriesOf(archive)
+    expect(entries[1].data).toEqual(originals[0]); expect(entries[2].data).toEqual(originals[1])
+    expect(await entriesOf(await exportProjectArchive(result.project, result.files))).toEqual(entries)
+    const history = new ProjectHistory(result.project)
+    history.push(applyCommand(result.project, { type: 'timelineSelection.clear' }))
+    expect(history.current).not.toHaveProperty('timelineSelection')
+    expect(history.undo()).toEqual(project)
+  })
+
   it('is standard store ZIP containing the complete metadata and actual unmodified originals', async () => {
     const { project, files, archive, originals } = await fixture()
     const entries = await entriesOf(archive)
@@ -313,6 +332,22 @@ describe('portable DAW archive', () => {
 })
 
 describe('strict archive rejection', () => {
+  it.each([
+    null, [], { startSeconds: 12 }, { startSeconds: '12', endSeconds: 14 },
+    { startSeconds: -1, endSeconds: 14 }, { startSeconds: 14, endSeconds: 14 },
+    { startSeconds: 13, endSeconds: 12 }, { startSeconds: 12, endSeconds: 14.0001 },
+    { startSeconds: 0, endSeconds: 601 }, { startSeconds: 0, endSeconds: Number.EPSILON },
+    { startSeconds: 12, endSeconds: 14, samples: [0, 1] },
+    JSON.parse('{"startSeconds":12,"endSeconds":14,"__proto__":{}}'),
+  ])('rejects malformed saved selection %j before any audio decode or state replacement', async timelineSelection => {
+    const { project, archive, files } = await fixture(), before = copy(project), decoder = vi.fn(decodeAsset)
+    const bad = await editManifest(archive, manifest => { manifest.project.timelineSelection = timelineSelection })
+    const current = { project, files, buffers: new Map() }
+    await expect(importProjectArchive(bad, { decodeAsset: decoder }).then(restored => Object.assign(current, restored))).rejects.toThrow()
+    expect(decoder).not.toHaveBeenCalled(); expect(current.project).toBe(project); expect(project).toEqual(before)
+    expect(current.files).toBe(files); expect(current.buffers.size).toBe(0)
+  })
+
   it.each([
     r => { r.gain = 1.1 }, r => { r.startSeconds = -.1 }, r => { r.endSeconds = 2 },
     r => { r.label = 'a'.repeat(121) }, r => { r.transcript = { tokens: ['unbounded ASR data'] } },

@@ -61,8 +61,19 @@ export function getProjectDuration(project) {
 export function getDecodedBytes(project) {
   return project.assets.reduce((total, asset) => total + (asset.length ?? Math.ceil(asset.duration * asset.sampleRate)) * asset.channels * 4, 0)
 }
+/** Optional saved timeline range, independent of selected clips. Frame bounds
+ * cover the half-open range using the output rate, never a source asset rate. */
+export function validateTimelineSelection(selection, durationSeconds, sampleRate) {
+  onlyKeys(selection, ['startSeconds', 'endSeconds'], 'timeline selection')
+  number(selection.startSeconds, 'timeline selection start', 0, Math.min(durationSeconds, DAW_LIMITS.maxDurationSeconds))
+  number(selection.endSeconds, 'timeline selection end', selection.startSeconds, Math.min(durationSeconds, DAW_LIMITS.maxDurationSeconds))
+  if (!(selection.endSeconds > selection.startSeconds)) fail('timeline selection must have positive duration')
+  const bounds = sourceFrameBounds(selection.startSeconds, selection.endSeconds - selection.startSeconds, sampleRate)
+  if (bounds.last <= bounds.first) fail('timeline selection must contain at least one output frame')
+  return selection
+}
 export function validateProject(project) {
-  onlyKeys(project, ['schema', 'id', 'revision', 'name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'assets', 'tracks'], 'project')
+  onlyKeys(project, ['schema', 'id', 'revision', 'name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'assets', 'tracks', 'timelineSelection'], 'project')
   if (project.schema !== PROJECT_SCHEMA) fail('unsupported project schema')
   id(project.id, 'project ID'); text(project.name, 'project name')
   integer(project.revision, 'revision', 0, Number.MAX_SAFE_INTEGER - 1)
@@ -155,6 +166,7 @@ export function validateProject(project) {
       }
     }
   }
+  if (own(project, 'timelineSelection')) validateTimelineSelection(project.timelineSelection, getProjectDuration(project), project.sampleRate)
   return project
 }
 function validateGainRegion(region, clipDuration) {
@@ -315,6 +327,18 @@ export function applyCommand(project, command) {
   const next = clone(project)
   switch (command.type) {
     case 'project.update': patch(next, command.patch, ['name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature'], 'project patch'); break
+    case 'timelineSelection.set': {
+      onlyKeys(command, ['type', 'selection'], 'timeline selection command')
+      // Validate before JSON cloning; non-finite numbers must never become null.
+      validateTimelineSelection(command.selection, getProjectDuration(next), next.sampleRate)
+      next.timelineSelection = clone(command.selection)
+      break
+    }
+    case 'timelineSelection.clear': {
+      onlyKeys(command, ['type'], 'timeline selection command')
+      delete next.timelineSelection
+      break
+    }
     case 'asset.add': next.assets.push(clone(command.asset)); break
     case 'track.add': next.tracks.push(makeTrack(command.track ? clone(command.track) : {})); break
     case 'track.remove': {
@@ -468,6 +492,11 @@ export function applyCommand(project, command) {
     }
     default: fail(`unsupported command ${command.type}`)
   }
+  // A structural edit can remove the end of a saved range. Clear the entire
+  // range in this same undoable edit, never silently clamp either endpoint.
+  // A newly requested out-of-bounds range is rejected above, never cleared.
+  if (next.timelineSelection && command.type !== 'timelineSelection.set' &&
+      next.timelineSelection.endSeconds > getProjectDuration(next)) delete next.timelineSelection
   next.revision = project.revision + 1
   validateProject(next)
   return next
