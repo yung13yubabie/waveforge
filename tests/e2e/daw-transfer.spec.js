@@ -85,6 +85,7 @@ test('clearing the editor while its first master transfer is pending leaves no g
 test('editing cancels an old transfer; a fresh transfer succeeds and repeated loads do not double-toggle trim', async ({ page }) => {
   await setupEditor(page, true)
   await beginHeldTransfer(page)
+  await page.locator('#daw-output-settings > summary').click()
   await page.locator('#daw-master-gain').fill('-3')
   await page.locator('#daw-master-gain').dispatchEvent('change')
   await release(page)

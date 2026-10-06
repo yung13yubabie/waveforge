@@ -2,15 +2,18 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 import { initDawPanel, formatDawTime, snapDawTime } from '../../src/js/daw/panel.js'
 import { createProject } from '../../src/js/daw/project.js'
+import { createDawDecoder } from '../../src/js/daw/decode.js'
+import { sha256Hex } from '../../src/js/audio/sha256.js'
 import { initModeNav } from '../../src/js/mode-nav.js'
 import { renderProject } from '../../src/js/daw/render.js'
 import { exportProjectArchive, importProjectArchive } from '../../src/js/daw/archive.js'
 
 vi.mock('../../src/js/audio/sha256.js', () => ({ sha256Hex: vi.fn(async () => 'a'.repeat(64)) }))
-vi.mock('../../src/js/daw/render.js', () => ({ renderProject: vi.fn() }))
+vi.mock('../../src/js/daw/render.js', async importOriginal => ({ ...await importOriginal(), renderProject: vi.fn() }))
 vi.mock('../../src/js/daw/archive.js', () => ({
   exportProjectArchive: vi.fn(async () => new Blob(['zip'])),
   importProjectArchive: vi.fn(), archiveFileName: () => 'session.waveforge.zip',
+  ARCHIVE_LIMITS: { archiveBytes: 256 * 1024 * 1024, manifestBytes: 1024 * 1024 },
 }))
 const html = readFileSync('index.html', 'utf8')
 const el = id => document.getElementById(`daw-${id}`)
@@ -43,6 +46,50 @@ beforeEach(() => {
 afterEach(() => { panel?.destroy(); document.body.replaceChildren(); vi.restoreAllMocks() })
 
 describe('local DAW panel', () => {
+  it('keeps the canvas first, details collapsed, and ZIP/loss warnings attached to Save', async () => {
+    await setup({ importAudio: false })
+    const root = document.getElementById('mode-editor')
+    expect(root.querySelector('.daw-heading')).toBeNull()
+    expect(el('clip-fields').hidden).toBe(true)
+    expect(el('selection-title').textContent).toBe('選取片段以編輯')
+    expect(el('help').open).toBe(false)
+    expect(el('output-settings').open).toBe(false)
+    expect(root.querySelector('.daw-grid-settings').open).toBe(false)
+    expect(action('save').getAttribute('aria-describedby')).toBe('daw-save-warning daw-zip-warning')
+    expect(el('save-warning').textContent).toContain('不會自動保存')
+    expect(el('zip-warning').textContent).toContain('包括裁掉的聲音')
+    expect(el('zip-warning').closest('details')).toBeNull()
+    expect(el('timeline').compareDocumentPosition(el('help')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+  it('reveals only the selected clip inspector and hides it again when selection disappears', async () => {
+    await setup({ importAudio: false })
+    await panel.importFiles([makeFile('voice.wav')])
+    expect(el('clip-fields').hidden).toBe(false)
+    expect(el('selection-title').textContent).toBe('voice.wav')
+    expect(el('trim-title').textContent).toBe('保留範圍（時間軸秒數）')
+    expect(el('selection-title').textContent).not.toContain('›')
+    action('delete').focus()
+    await click('delete')
+    expect(el('clip-fields').hidden).toBe(true)
+    expect(el('clip-fields').disabled).toBe(true)
+    expect(document.activeElement).toBe(el('timeline'))
+    expect(el('selection-title').textContent).toBe('選取片段以編輯')
+    await click('undo')
+    document.querySelector('.daw-clip').click()
+    expect(el('clip-fields').hidden).toBe(false)
+    expect(el('clip-fields').disabled).toBe(false)
+  })
+  it('renders attacker-controlled media and restored project names only as text', async () => {
+    const payload = '<img src=x onerror="globalThis.__wfXss=1"><svg onload="globalThis.__wfXss=1">'
+    await setup({ importAudio: false }); await panel.importFiles([makeFile(payload)])
+    expect(document.querySelector('.daw-clip-name').textContent).toBe(payload)
+    expect(el('selection-title').textContent).toBe(payload)
+    expect(document.querySelector('#mode-editor img, #mode-editor svg[onload], #mode-editor [onerror]')).toBeNull()
+    const restored = panel.getProject(); restored.name = payload
+    importProjectArchive.mockResolvedValueOnce({ project: restored, files: new Map(), buffers: new Map() })
+    await panel.openArchive(makeFile('safe.zip'))
+    expect(el('name').value).toBe(payload); expect(globalThis.__wfXss).toBeUndefined()
+  })
   it('formats time and snaps only positions to the chosen beat grid', () => {
     expect(formatDawTime(65.125)).toBe('01:05.125')
     expect(snapDawTime(.74, 120, 1, true)).toBe(.5)
@@ -145,6 +192,90 @@ describe('local DAW panel', () => {
     expect(document.querySelector('input[data-track-control="gainDb"]').value).toBe('0')
     expect(panel.getProject().masterGainDb).toBe(0)
   })
+  it('adds, edits, deletes and resets accessible volume points independently of fades', async () => {
+    await setup()
+    expect(el('automation-time').readOnly).toBe(true)
+    expect(action('automation-remove').disabled).toBe(true)
+    expect(action('automation-reset').disabled).toBe(true)
+    await change('fade-in', .5); await click('fades')
+    await click('automation-add')
+    expect(clip().volumeAutomation).toHaveLength(3)
+    expect(el('automation-time').readOnly).toBe(false)
+    expect(el('automation-point').value).toBe('1')
+    expect(document.activeElement).toBe(el('automation-value'))
+    await change('automation-time', 1.25); await change('automation-value', 50)
+    expect(clip().volumeAutomation[1]).toEqual({ timeSeconds: 2, value: 1 })
+    await click('automation-apply')
+    expect(clip().volumeAutomation[1]).toEqual({ timeSeconds: 1.25, value: .5 })
+    expect(el('automation-graph').querySelector('.daw-automation-line').getAttribute('points')).toBe('16,70 106,97 304,70')
+    await click('automation-remove'); expect(clip().volumeAutomation).toHaveLength(2)
+    await click('undo'); expect(clip().volumeAutomation).toHaveLength(3)
+    await click('redo'); expect(clip().volumeAutomation).toHaveLength(2)
+    await click('automation-reset'); expect(clip().volumeAutomation).toBeUndefined()
+    expect(clip().fadeInSeconds).toBe(.5)
+    await click('undo'); expect(clip().volumeAutomation).toHaveLength(2)
+  })
+  it('rejects blank, over-limit and unordered automation edits and restores canonical fields', async () => {
+    await setup(); await click('automation-add')
+    const before = panel.getProject()
+    for (const [field, value] of [['automation-value', 201], ['automation-time', 4], ['automation-value', '']]) {
+      await change(field, value); await click('automation-apply')
+      expect(panel.getProject()).toEqual(before)
+      expect(el('status').dataset.error).toBe('true')
+      expect(el('automation-value').value).toBe('100')
+      expect(el('automation-time').value).toBe('2')
+    }
+    await change('automation-value', 150); await click('automation-apply')
+    expect(clip().volumeAutomation[1].value).toBe(1.5)
+    expect(el('status').dataset.error).toBe('false')
+  })
+  it('commits a whole graph drag once, and cancels Escape/pointercancel/selection changes', async () => {
+    await setup(); await click('automation-add')
+    const before = panel.getProject()
+    vi.spyOn(el('automation-graph'), 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 320, height: 140 })
+    const down = () => el('automation-graph').querySelector('[data-automation-index="1"]').dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 160, clientY: 70 }))
+    const move = (x = 88, y = 97) => window.dispatchEvent(new MouseEvent('pointermove', { clientX: x, clientY: y }))
+    down(); move(100, 80); move()
+    expect(panel.getProject()).toEqual(before)
+    expect(el('automation-value').value).toBe('50')
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 88, clientY: 97 })); await tick()
+    expect(clip().volumeAutomation[1]).toEqual({ timeSeconds: 1, value: .5 })
+    expect(panel.getProject().revision).toBe(before.revision + 1)
+    await click('undo'); expect(panel.getProject()).toEqual(before)
+    for (const cancellation of ['escape', 'pointercancel', 'selection']) {
+      down(); move()
+      if (cancellation === 'escape') el('automation-graph').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      else if (cancellation === 'pointercancel') window.dispatchEvent(new Event('pointercancel'))
+      else document.querySelector('.daw-clip').click()
+      window.dispatchEvent(new MouseEvent('pointerup')); await tick()
+      expect(panel.getProject()).toEqual(before)
+      expect(el('automation-value').value).toBe('100')
+    }
+  })
+  it('passes edited and split automation to the shared preview/export cache and saves it', async () => {
+    await setup(); await click('automation-add'); await change('automation-value', 50); await click('automation-apply')
+    await click('play'); await click('play'); await click('export')
+    expect(renderProject).toHaveBeenCalledTimes(1)
+    expect(renderProject.mock.calls[0][0].tracks[0].clips[0].volumeAutomation[1].value).toBe(.5)
+    el('seek').value = '1'; el('seek').dispatchEvent(new Event('input'))
+    await click('split'); await click('export')
+    expect(renderProject).toHaveBeenCalledTimes(2)
+    expect(renderProject.mock.calls[1][0].tracks[0].clips[0].volumeAutomation.at(-1)).toEqual({ timeSeconds: 1, value: .75 })
+    await click('save')
+    expect(exportProjectArchive.mock.calls[0][0]).toEqual(panel.getProject())
+  })
+  it('retains automation and original project when amplified output hits the peak guard', async () => {
+    await setup(); await change('automation-value', 200); await click('automation-apply')
+    const before = panel.getProject()
+    renderProject.mockResolvedValueOnce({ buffer: getBuffer(), revision: before.revision, peak: 1.4, clippedSamples: 10, peaks: { samplePeakDb: 2.9, truePeakDb: 3 } })
+    await click('export')
+    expect(download).not.toHaveBeenCalled()
+    expect(el('status').textContent).toContain('停止 WAV 輸出')
+    expect(panel.getProject()).toEqual(before)
+    await change('master-gain', -6); await click('export')
+    expect(download).toHaveBeenCalledOnce()
+    expect(clip().volumeAutomation).toEqual(before.tracks[0].clips[0].volumeAutomation)
+  })
   it('uses the same renderer result for preview and WAV, then invalidates it on edits', async () => {
     await setup(); await click('play'); await click('play'); await click('export')
     expect(renderProject).toHaveBeenCalledTimes(1)
@@ -163,7 +294,7 @@ describe('local DAW panel', () => {
     await setup(); await click('master')
     expect(toMaster).toHaveBeenCalledWith(expect.objectContaining({ sampleRate: 48000 }), expect.objectContaining({ name: '未命名專案', revision: panel.getProject().revision, signal: expect.any(AbortSignal), isCurrent: expect.any(Function) }))
   })
-  for (const interruption of ['cancel', 'clear', 'leave', 'modify', 'undo']) {
+  for (const interruption of ['cancel', 'clear', 'leave', 'modify', 'automation', 'undo']) {
     it(`aborts transfer ownership on ${interruption} and never accepts late success`, async () => {
       const pending = deferred(), committed = vi.fn()
       const send = vi.fn(async (_buffer, { signal, isCurrent }) => {
@@ -181,6 +312,7 @@ describe('local DAW panel', () => {
       if (interruption === 'clear') panel.clear()
       else if (interruption === 'leave') document.dispatchEvent(new CustomEvent('wf:mode-change', { detail: { mode: 'lyrics' } }))
       else if (interruption === 'modify') await change('master-gain', -3)
+      else if (interruption === 'automation') await click('automation-add')
       else if (interruption === 'undo') await click('undo')
       else await click('cancel')
       expect(ownership.signal.aborted).toBe(true)
@@ -276,6 +408,147 @@ describe('local DAW panel', () => {
     await expect(loading).rejects.toMatchObject({ name: 'AbortError' })
     expect(panel.getProject().tracks).toHaveLength(0); expect(el('save-state').textContent).toBe('尚無修改')
   })
+  it('keeps one ordinary file read owned across repeated cancel and clear', async () => {
+    await setup(); const accepted = panel.getProject(), pending = deferred()
+    const read = vi.fn(() => pending.promise), nextRead = vi.fn(async () => new ArrayBuffer(8))
+    const loading = panel.importFiles([{ ...makeFile('delayed.wav'), size: 64 * 1024 * 1024, arrayBuffer: read }]).catch(error => error)
+    await tick(); await click('cancel')
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(panel.importFiles([{ ...makeFile(), arrayBuffer: nextRead }])).rejects.toThrow(/上一批音檔/)
+    }
+    expect(read).toHaveBeenCalledTimes(1); expect(nextRead).not.toHaveBeenCalled()
+    expect(panel.getProject()).toEqual(accepted)
+    panel.clear()
+    await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    pending.resolve(new ArrayBuffer(8)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    expect(panel.getProject().assets).toHaveLength(0)
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(1)
+  })
+  it('keeps hash work reserved and blocks overlapping restore reads', async () => {
+    await setup(); const accepted = panel.getProject(), pending = deferred()
+    sha256Hex.mockReturnValueOnce(pending.promise)
+    const loading = panel.importFiles([{ ...makeFile('hashing.wav'), size: 64 * 1024 * 1024 }]).catch(error => error)
+    await tick(); await click('cancel')
+    await expect(panel.openArchive(makeFile('bad.zip'))).rejects.toThrow(/上一批音檔/)
+    expect(importProjectArchive).not.toHaveBeenCalled()
+    await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    expect(panel.getProject()).toEqual(accepted)
+    pending.resolve('a'.repeat(64)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(2)
+  })
+  it('retains cancelled import bytes until the real native decoder settles', async () => {
+    const pending = deferred(), source = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(getBuffer())
+    class Context { constructor(channels, length, sampleRate) { Object.assign(this, { channels, length, sampleRate }) } }
+    const bounded = createDawDecoder({ OfflineAudioContextClass: Context, decodeSource: source })
+    await setup({ importAudio: false, decodeAsset: bounded })
+    const loading = panel.importFiles([{ ...makeFile(), size: 64 * 1024 * 1024 }]).catch(error => error)
+    await tick(); await click('cancel'); expect(await loading).toMatchObject({ name: 'AbortError' })
+    panel.clear()
+    const read = vi.fn(async () => new ArrayBuffer(8))
+    for (let attempt = 0; attempt < 10; attempt++) await expect(panel.importFiles([{ ...makeFile(), arrayBuffer: read }])).rejects.toThrow(/上一批音檔/)
+    expect(read).not.toHaveBeenCalled(); expect(source).toHaveBeenCalledTimes(1)
+    await expect(panel.openArchive(makeFile('bad.zip'))).rejects.toThrow(/上一批音檔/)
+    expect(importProjectArchive).not.toHaveBeenCalled()
+    pending.reject(new Error('late native failure')); await tick()
+    await panel.importFiles([makeFile()]); expect(source).toHaveBeenCalledTimes(2)
+  })
+  it('includes cancelled import reservations before starting another render', async () => {
+    await setup({ importAudio: false })
+    await panel.importFiles(Array.from({ length: 3 }, (_, i) => ({ ...makeFile(`accepted-${i}.wav`), size: 64 * 1024 * 1024 })))
+    const pending = deferred()
+    const loading = panel.importFiles([{ ...makeFile(), size: 64 * 1024 * 1024, arrayBuffer: () => pending.promise }]).catch(error => error)
+    await tick(); await click('cancel')
+    await change('clip-at', 496); await click('move'); await click('export')
+    expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
+    pending.resolve(new ArrayBuffer(8)); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
+  })
+  it('reserves unknown native output against a render started after cancellation', async () => {
+    await setup({ importAudio: false })
+    await panel.importFiles(Array.from({ length: 3 }, (_, i) => ({ ...makeFile(`accepted-${i}.wav`), size: 64 * 1024 * 1024 })))
+    const pending = deferred(); decode.mockReturnValueOnce(pending.promise)
+    const loading = panel.importFiles([makeFile('compressed.bin')]).catch(error => error)
+    await tick(); await click('cancel'); expect(await loading).toMatchObject({ name: 'AbortError' })
+    await change('clip-at', 496); await click('move'); await click('play')
+    expect(renderProject).not.toHaveBeenCalled(); expect(el('status').textContent).toContain('記憶體預算')
+    pending.resolve(getBuffer()); await tick()
+    await click('play'); expect(renderProject).toHaveBeenCalledTimes(1)
+  })
+  it('counts a cancelled native render after Clear before admitting fresh import reads', async () => {
+    const actual = await vi.importActual('../../src/js/daw/render.js')
+    const native = deferred(), made = [], nodes = []
+    class DelayedContext {
+      constructor(channels, frames, sampleRate) { this.destination = {}; made.push({ channels, frames, sampleRate }) }
+      node(fields = {}) { const value = { connect() {}, disconnect: vi.fn(), ...fields }; nodes.push(value); return value }
+      parameter() { return { setValueAtTime() {}, linearRampToValueAtTime() {} } }
+      createGain() { return this.node({ gain: this.parameter() }) }
+      createStereoPanner() { return this.node({ pan: this.parameter() }) }
+      createBufferSource() { return this.node({ start() {} }) }
+      startRendering() { return native.promise }
+    }
+    await setup(); await change('clip-at', 596); await click('move')
+    const accepted = panel.getProject(), plan = actual.buildRenderPlan(accepted)
+    renderProject.mockImplementation((project, buffers, options) => actual.renderProject(project, buffers, { ...options, OfflineAudioContextClass: DelayedContext }))
+    await click('play'); expect(made).toHaveLength(1)
+    const source = nodes.find(node => node.buffer), original = source.buffer, samples = original.getChannelData(0).slice()
+    await click('cancel'); panel.clear()
+    const read = vi.fn(async () => new ArrayBuffer(8))
+    const nextFiles = Array.from({ length: 5 }, (_, index) => ({ ...makeFile(`next-${index}.wav`), size: 64 * 1024 * 1024, arrayBuffer: read }))
+    const inputReservation = 7 * 64 * 1024 * 1024
+    expect(plan.renderBytes + plan.decodedBytes + inputReservation).toBeGreaterThan(512 * 1024 * 1024)
+    try {
+      expect(panel.getProject().assets).toHaveLength(0)
+      await expect(panel.importFiles(nextFiles)).rejects.toThrow('記憶體預算')
+      expect(read).not.toHaveBeenCalled(); expect(source.buffer).toBe(original)
+      expect(original.getChannelData(0)).toEqual(samples)
+    } finally { native.resolve(null); await tick() }
+    await panel.importFiles(nextFiles)
+    expect(read).toHaveBeenCalledTimes(5); expect(panel.getProject().assets).toHaveLength(5)
+    expect(made).toHaveLength(1)
+  })
+  it('reserves cancelled ZIP reads, blocks new loads, and preserves accepted PCM', async () => {
+    await setup(); await click('play'); await click('stop')
+    const accepted = panel.getProject(), acceptedBuffers = renderProject.mock.calls.at(-1)[1]
+    const acceptedBuffer = [...acceptedBuffers.values()][0], samples = acceptedBuffer.getChannelData(0).slice()
+    const pending = deferred()
+    importProjectArchive.mockImplementationOnce(async (_file, options) => {
+      options.onMemoryBudget(300 * 1024 * 1024)
+      return pending.promise
+    })
+    const opening = panel.openArchive(makeFile('slow.zip')).catch(error => error)
+    await tick(); await click('cancel')
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(panel.openArchive(makeFile('next.zip'))).rejects.toThrow(/上一批音檔/)
+      await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    }
+    expect(importProjectArchive).toHaveBeenCalledTimes(1)
+    expect(panel.getProject()).toEqual(accepted)
+    expect(acceptedBuffer.getChannelData(0)).toEqual(samples)
+    // Native late success must never replace the accepted project after Cancel.
+    pending.resolve({ project: createProject({ name: 'obsolete' }), files: new Map(), buffers: new Map() })
+    expect(await opening).toMatchObject({ name: 'AbortError' })
+    expect(panel.getProject()).toEqual(accepted)
+    expect(acceptedBuffers.get(accepted.assets[0].id)).toBe(acceptedBuffer)
+    expect(acceptedBuffer.getChannelData(0)).toEqual(samples)
+    await panel.importFiles([makeFile()]); expect(panel.getProject().assets).toHaveLength(2)
+  })
+  it('holds ZIP native-decode reservation after prompt cancellation until real settlement', async () => {
+    const pending = deferred(), source = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(getBuffer())
+    class Context { constructor(channels, length, sampleRate) { Object.assign(this, { channels, length, sampleRate }) } }
+    const bounded = createDawDecoder({ OfflineAudioContextClass: Context, decodeSource: source })
+    await setup({ importAudio: false, decodeAsset: bounded })
+    importProjectArchive.mockImplementationOnce(async (_file, options) => {
+      options.onMemoryBudget(300 * 1024 * 1024)
+      await options.decodeAsset(new ArrayBuffer(8), {}, { signal: options.signal })
+      return { project: createProject(), files: new Map(), buffers: new Map() }
+    })
+    const opening = panel.openArchive(makeFile('slow.zip')).catch(error => error)
+    await tick(); await click('cancel'); expect(await opening).toMatchObject({ name: 'AbortError' })
+    panel.clear(); await expect(panel.importFiles([makeFile()])).rejects.toThrow(/上一批音檔/)
+    await expect(panel.openArchive(makeFile('again.zip'))).rejects.toThrow(/上一批音檔/)
+    pending.resolve(getBuffer()); await tick()
+    await panel.importFiles([makeFile()]); expect(source).toHaveBeenCalledTimes(2)
+  })
   it('saves originals with project metadata and leaves subsequent edits dirty', async () => {
     await setup(); await click('save')
     expect(exportProjectArchive).toHaveBeenCalledWith(expect.objectContaining({ assets: expect.any(Array) }), expect.any(Map), expect.any(Object))
@@ -311,8 +584,11 @@ describe('local DAW panel', () => {
     expect(document.getElementById('mode-master').hidden).toBe(true)
     expect(document.getElementById('tab-editor').getAttribute('aria-selected')).toBe('true')
     expect(document.querySelector('.chain-panel').getAttribute('aria-hidden')).toBe('true')
+    const tabs = [...document.querySelectorAll('.mode-tab')]
+    const nextTab = tabs[(tabs.indexOf(document.getElementById('tab-editor')) + 1) % tabs.length]
     document.getElementById('tab-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-    expect(document.getElementById('tab-lyrics').getAttribute('aria-selected')).toBe('true')
+    expect(nextTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.getElementById(nextTab.getAttribute('aria-controls')).hidden).toBe(false)
     expect(document.getElementById('mode-editor').hidden).toBe(true)
   })
 })

@@ -1,7 +1,7 @@
-import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS } from './project.js'
-import { renderProject } from './render.js'
+import { createProject, applyCommand, registerAudioBuffer, getProjectDuration, generateId, DAW_LIMITS, getClipVolumeAutomation, envelopeValueAt } from './project.js'
+import { renderProject, getPendingNativeRenderBytes } from './render.js'
 import { ProjectHistory } from './history.js'
-import { exportProjectArchive, importProjectArchive, archiveFileName } from './archive.js'
+import { exportProjectArchive, importProjectArchive, archiveFileName, ARCHIVE_LIMITS } from './archive.js'
 import { sha256Hex } from '../audio/sha256.js'
 import { encodeWAV } from '../audio/wav.js'
 import { decodeDawAsset } from './decode.js'
@@ -52,8 +52,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   let buffers = new Map(), files = new Map()
   let saved = JSON.stringify(project), hasDownloaded = false
   let selection = null, cursor = 0, mix = null, job = null, generation = 0
+  let loadWorkPending = false, pendingLoadBytes = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
-  let drag = null, suppressClick = false
+  let drag = null, suppressClick = false, automationDrag = null, automationIndex = 0, automationClipId = null
   const getContext = () => context ||= new AudioContextClass()
   const dirty = () => saved !== JSON.stringify(project)
   const selected = () => {
@@ -75,6 +76,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       const track = project.tracks.find(track => track.id === input.dataset.trackId)
       if (track) input.value = String(track[input.dataset.trackControl])
     })
+    renderAutomation()
     status(error?.message || String(error), true)
   }
   const run = task => Promise.resolve().then(task).catch(report)
@@ -109,6 +111,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     status(message); refreshControls()
   }
   function invalidate() {
+    automationDrag = null
     stop()
     mix = null
     if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('設定已修改，請重新產生混音')
@@ -156,21 +159,80 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('clip-fields').disabled = Boolean(locked || !selected())
     for (const key of ['name', 'tempo', 'sample-rate', 'master-gain']) el(key).disabled = Boolean(locked)
     root.querySelectorAll('[data-track-control]').forEach(control => { control.disabled = Boolean(locked) })
-    el('save-state').textContent = job?.kind === 'save' ? '正在製作工程下載…' : dirty() ? '有未下載的修改' : hasDownloaded ? '目前版本已交付下載；請確認檔案已存好' : project.tracks.length ? '已開啟工程；修改後請重新下載' : '尚無修改'
+    el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
     const item = selected()
-    el('selection-title').textContent = item ? `${item.track.name} › ${item.clip.name}` : '尚未選取片段'
-    el('selection-range').textContent = item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)} · 原檔保留不變${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : '點選波形，這裡只修改該片段'
+    // Keep keyboard focus in the workspace when its contextual form disappears.
+    const inspectorHadFocus = el('clip-fields').contains(document.activeElement)
+    el('clip-fields').hidden = !item
+    if (!item && inspectorHadFocus) el('timeline').focus({ preventScroll: true })
+    el('selection-title').textContent = item ? item.clip.name : '選取片段以編輯'
+    el('selection-range').textContent = item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)}${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : '點選時間軸上的波形'
     if (item) {
       const { clip, track } = item
       for (const [key, value] of Object.entries({ 'clip-name': clip.name, 'clip-at': clip.atSeconds, 'trim-start': clip.atSeconds, 'trim-end': clip.atSeconds + clip.durationSeconds, 'clip-gain': clip.gainDb, 'fade-in': clip.fadeInSeconds, 'fade-out': clip.fadeOutSeconds })) el(key).value = typeof value === 'number' ? String(value) : value
       el('clip-track').replaceChildren(...project.tracks.map(t => { const option = node('option', '', t.name); option.value = t.id; return option }))
       el('clip-track').value = track.id
     }
+    renderAutomation()
     root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.clipId === selection?.clipId)))
     refreshControls()
+  }
+  function renderAutomation(previewPoints) {
+    const item = selected(), graph = el('automation-graph')
+    const points = item ? previewPoints || getClipVolumeAutomation(item.clip) : []
+    if (automationClipId !== item?.clip.id) { automationClipId = item?.clip.id; automationIndex = 0; automationDrag = null }
+    automationIndex = clamp(automationIndex, 0, Math.max(0, points.length - 1))
+    graph.replaceChildren()
+    const svgNode = (tag, attributes, text) => {
+      const result = document.createElementNS('http://www.w3.org/2000/svg', tag)
+      for (const [key, value] of Object.entries(attributes)) result.setAttribute(key, String(value))
+      if (text !== undefined) result.textContent = text
+      graph.append(result); return result
+    }
+    for (const value of [0, 1, 2]) {
+      const y = 124 - value * 54
+      svgNode('line', { x1: 16, x2: 304, y1: y, y2: y, class: value === 1 ? 'daw-automation-unity' : 'daw-automation-grid' })
+      svgNode('text', { x: 20, y: y - 3 }, `${value * 100}%`)
+    }
+    if (item) {
+      const coordinates = points.map(point => [16 + point.timeSeconds / item.clip.durationSeconds * 288, 124 - point.value * 54])
+      svgNode('polyline', { points: coordinates.map(point => point.join(',')).join(' '), class: 'daw-automation-line' })
+      coordinates.forEach(([cx, cy], index) => svgNode('circle', { cx, cy, r: 7, class: 'daw-automation-dot', 'data-automation-index': index, 'data-selected': index === automationIndex }))
+    }
+    el('automation-point').replaceChildren(...points.map((point, index) => {
+      const label = index === 0 ? '起點' : index === points.length - 1 ? '終點' : `中間點 ${index}`
+      const option = node('option', '', `${label} · ${Number(point.timeSeconds.toFixed(4))} 秒 · ${Number((point.value * 100).toFixed(2))}%`)
+      option.value = String(index); return option
+    }))
+    el('automation-point').value = String(automationIndex)
+    const point = points[automationIndex], endpoint = automationIndex === 0 || automationIndex === points.length - 1
+    el('automation-time').value = point ? String(point.timeSeconds) : ''
+    el('automation-time').max = String(item?.clip.durationSeconds || 0)
+    el('automation-time').readOnly = endpoint
+    el('automation-value').value = point ? String(point.value * 100) : ''
+    button('automation-remove').disabled = !item || endpoint
+    button('automation-reset').disabled = !item?.clip.volumeAutomation
+    button('automation-add').disabled = !item || points.length >= DAW_LIMITS.maxAutomationPoints
+    el('automation-summary').textContent = item ? `${item.clip.volumeAutomation ? '已套用' : '尚無變化，整句 100%'} · ${points.length}/${DAW_LIMITS.maxAutomationPoints} 點 · 0–${Number(item.clip.durationSeconds.toFixed(4))} 秒` : '尚未選取片段'
+    graph.setAttribute('aria-label', item ? `片段音量曲線，${points.length} 點，範圍 0 至 200%，可用下方數字編輯` : '尚未選取片段的音量曲線')
+  }
+  function addAutomationPoint() {
+    const item = selected(); if (!item) return
+    const points = getClipVolumeAutomation(item.clip)
+    let widest = 1
+    for (let index = 2; index < points.length; index++) {
+      if (points[index].timeSeconds - points[index - 1].timeSeconds > points[widest].timeSeconds - points[widest - 1].timeSeconds) widest = index
+    }
+    const timeSeconds = (points[widest - 1].timeSeconds + points[widest].timeSeconds) / 2
+    clipCommand('clip.automation.add', { point: { timeSeconds, value: envelopeValueAt(points, timeSeconds) } }, '已新增音量點；調整數字後按「套用音量點」')
+    automationIndex = widest; renderAutomation(); el('automation-value').focus({ preventScroll: true })
+  }
+  function applyAutomationPoint() {
+    if (!el('automation-time').value || !el('automation-value').value) throw new Error('請填入音量點的時間與音量；原設定仍保留')
+    clipCommand('clip.automation.update', { index: automationIndex, patch: { timeSeconds: Number(el('automation-time').value), value: Number(el('automation-value').value) / 100 } }, '已套用句內音量；試聽與匯出都會使用這條曲線')
   }
   function waveform(clip) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -204,7 +266,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     const focusTrack = focused?.dataset.trackControl ? { id: focused.dataset.trackId, control: focused.dataset.trackControl } : null
     const rate = Number(el('zoom').value), seconds = Math.min(600, Math.max(20, Math.ceil((duration() + 5) / 5) * 5))
     const timeline = el('timeline'); timeline.style.setProperty('--daw-lane-width', `${seconds * rate}px`); timeline.style.setProperty('--daw-beat-width', `${gridStep() * rate}px`)
-    const rulerLabel = node('span', 'daw-ruler-label', '音軌混音 · 點刻度定位')
+    const rulerLabel = node('span', 'daw-ruler-label', '音軌 / 秒')
     const rulerLane = node('div', 'daw-ruler-lane'); rulerLane.dataset.seekLane = 'true'
     const tickSize = seconds > 120 ? 10 : 5
     for (let sec = 0; sec <= seconds; sec += tickSize) { const tick = node('span', 'daw-tick', formatDawTime(sec).slice(0, 5)); tick.style.left = `${sec * rate}px`; rulerLane.append(tick) }
@@ -245,7 +307,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('name').value = project.name; el('tempo').value = String(project.tempo); el('sample-rate').value = String(project.sampleRate); el('master-gain').value = String(project.masterGainDb)
     el('summary').textContent = `${project.tracks.length} 軌 · ${project.tracks.reduce((sum, track) => sum + track.clips.length, 0)} 片段 · ${formatDawTime(duration())}`
     el('seek').max = String(duration()); el('seek').disabled = !duration()
-    if (!mix) el('render-info').textContent = '尚未產生目前版本的混音；採樣峰值或估計 True Peak 超過 0 dBFS 會停止 WAV 輸出，請先降低總混音音量'
+    if (!mix) el('render-info').textContent = '尚未產生目前版本的混音；峰值過載時會停止 WAV 輸出'
     renderTracks(); renderInspector(); paintPlayhead()
   }
   async function withJob(kind, work) {
@@ -257,58 +319,117 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     try { const result = await work({ signal: current.controller.signal, isCurrent, check }); check(); return result }
     finally { if (job === current) { job = null; refreshControls() } }
   }
-  async function decode(bytes, metadata, signal) {
+  async function decode(bytes, metadata, signal, trackNative) {
     let timer, aborted
     const cancelled = new Promise((_, reject) => { aborted = () => reject(abortError()); signal.addEventListener('abort', aborted, { once: true }) })
     try {
+      const decoder = decodeAsset || decodeDawAsset
+      const operation = Promise.resolve(decoder(bytes, metadata, { signal }))
+      // The shared decoder rejects promptly on Abort, but its native promise
+      // still owns audio. Injected decoders expose their own settlement here.
+      trackNative?.(typeof decoder.whenIdle === 'function' ? decoder.whenIdle() : operation.then(() => {}, () => {}))
       const result = await Promise.race([
-        (decodeAsset || decodeDawAsset)(bytes, metadata, { signal }), cancelled,
+        operation, cancelled,
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('音檔解碼逾時；原專案仍保留')), 30000) }),
       ])
       return result?.buffer?.getChannelData ? result.buffer : result
     } finally { clearTimeout(timer); signal.removeEventListener('abort', aborted) }
   }
+  function reserveLoad(bytes) {
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
+    let reservedBytes = 0, nativeSettled = true, finished = false
+    const set = value => {
+      if (!Number.isSafeInteger(value) || value < 0 || retainedBytes() - reservedBytes + value > DAW_LIMITS.maxCombinedBytes) throw new Error('讀取工作會超出記憶體預算；請先下載並清理舊專案')
+      pendingLoadBytes += value - reservedBytes; reservedBytes = value
+    }
+    set(bytes); loadWorkPending = true
+    const release = () => { pendingLoadBytes -= reservedBytes; reservedBytes = 0; loadWorkPending = false }
+    return {
+      set,
+      add(bytes) { set(reservedBytes + bytes) },
+      trackNative(settlement) {
+        nativeSettled = false
+        // Its output size is unknown until decode returns. Reserve the maximum
+        // accepted PCM allowance against OTHER work while it is native-owned.
+        // A codec may internally allocate more; this is not a native hard cap.
+        const nativeAllowance = DAW_LIMITS.maxDecodedBytes
+        pendingLoadBytes += nativeAllowance
+        settlement.then(() => {
+          pendingLoadBytes -= nativeAllowance; nativeSettled = true
+          if (finished) release()
+        })
+      },
+      finish() {
+        // UI cancellation is not the settlement of unabortable native work.
+        finished = true
+        if (nativeSettled) release()
+      },
+    }
+  }
   async function importFiles(inputFiles) {
     const list = [...inputFiles]
     if (!list.length) return
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
     return withJob('import', async ({ signal, check }) => {
       if (project.tracks.length + list.length > DAW_LIMITS.maxTracks) throw new Error('最多 16 軌；請先刪除不需要的音軌')
-      for (const file of list) if (!file.size || file.size > FILE_LIMIT) throw new Error(`${file.name}：原檔須介於 1 byte 與 64 MiB 之間`)
+      for (const file of list) if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > FILE_LIMIT) throw new Error(`${file.name}：原檔須介於 1 byte 與 64 MiB 之間`)
       let next = project, nextSelection = selection
       const nextBuffers = new Map(buffers), nextFiles = new Map(files)
       const inputBytes = list.reduce((sum, file) => sum + file.size, 0)
-      if (inputBytes + retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('匯入會超出記憶體預算；請先下載並清理舊專案')
-      for (let i = 0; i < list.length; i++) {
-        const file = list[i]; status(`正在解碼 ${i + 1}/${list.length}：${file.name}`)
-        const bytes = await file.arrayBuffer(); check()
-        const hash = await sha256Hex(bytes); check()
-        const buffer = await decode(bytes, { name: file.name }, signal); check()
-        const originalBytes = [...nextFiles.values()].reduce((sum, value) => sum + value.size, 0) + file.size
-        if (decodedBytes(nextBuffers) + buffer.length * buffer.numberOfChannels * 4 + originalBytes + file.size * 2 + cachedMixBytes() + metadataBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('音檔解碼後超出記憶體預算；原專案仍保留')
-        const registered = registerAudioBuffer(next, nextBuffers, buffer, { name: file.name, hash })
-        next = registered.project; nextFiles.set(registered.asset.id, file)
-        const trackId = generateId('track'), clipId = generateId('clip')
-        next = applyCommand(next, { type: 'track.add', track: { id: trackId, name: file.name } })
-        next = applyCommand(next, { type: 'clip.add', trackId, clip: { id: clipId, assetId: registered.asset.id, name: file.name } })
-        if (i === list.length - 1) nextSelection = { trackId, clipId }
+      const transientBytes = 2 * Math.max(...list.map(file => file.size))
+      if (inputBytes + transientBytes + retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('匯入會超出記憶體預算；請先下載並清理舊專案')
+      const reservation = reserveLoad(inputBytes + transientBytes)
+      try {
+        for (let i = 0; i < list.length; i++) {
+          const file = list[i]; status(`正在解碼 ${i + 1}/${list.length}：${file.name}`)
+          const bytes = await file.arrayBuffer(); check()
+          const hash = await sha256Hex(bytes); check()
+          const buffer = await decode(bytes, { name: file.name }, signal, reservation.trackNative); check()
+          const bufferBytes = buffer.length * buffer.numberOfChannels * 4
+          if (retainedBytes() + bufferBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('音檔解碼後超出記憶體預算；原專案仍保留')
+          const registered = registerAudioBuffer(next, nextBuffers, buffer, { name: file.name, hash })
+          reservation.add(bufferBytes)
+          next = registered.project; nextFiles.set(registered.asset.id, file)
+          const trackId = generateId('track'), clipId = generateId('clip')
+          next = applyCommand(next, { type: 'track.add', track: { id: trackId, name: file.name } })
+          next = applyCommand(next, { type: 'clip.add', trackId, clip: { id: clipId, assetId: registered.asset.id, name: file.name } })
+          if (i === list.length - 1) nextSelection = { trackId, clipId }
+        }
+        check(); history.push(next); invalidate(); project = next; selection = nextSelection; buffers = nextBuffers; files = nextFiles
+        retainHistoryAssets(); cursor = 0; render(); status(`已匯入 ${list.length} 個音檔，各自從 0 秒開始。可復原整批匯入`)
+      } finally {
+        // Cancel/Clear only retire UI ownership. Unabortable reads, hashes and
+        // native decode keep their bytes reserved until actual settlement.
+        reservation.finish()
       }
-      check(); history.push(next); invalidate(); project = next; selection = nextSelection; buffers = nextBuffers; files = nextFiles
-      retainHistoryAssets(); cursor = 0; render(); status(`已匯入 ${list.length} 個音檔，各自從 0 秒開始。可復原整批匯入`)
     })
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
-  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes()
+  const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + pendingLoadBytes + getPendingNativeRenderBytes()
   async function openArchive(file) {
     if (!file) return
+    if (loadWorkPending) throw new Error('上一批音檔或工程仍在讀取或背景解碼，請稍候再試；原專案仍保留')
     if ((dirty() || project.assets.length) && !await confirmAction('開啟工程會取代此多軌專案與復原紀錄。尚未下載的修改將遺失；要繼續嗎？')) return
     return withJob('open', async ({ signal, check }) => {
-      status('正在檢查工程與原始音檔…')
-      const restored = await importProjectArchive(file, { signal, decodeAsset: (bytes, metadata, options) => decode(bytes, metadata, options.signal), retainedBytes: retainedBytes(), onProgress: value => { check(); status(`正在還原工程：${value.phase} ${value.completed}/${value.total}`) } })
-      check(); const nextHistory = new ProjectHistory(restored.project)
-      invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
-      saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0
-      render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
+      const beforeLoadBytes = retainedBytes()
+      // Before the manifest is trusted, only bounded headers and its two JSON
+      // representations may be read. The importer supplies the decoded estimate
+      // before it starts reading or decoding any media entry.
+      const reservation = reserveLoad(Math.min(file.size, ARCHIVE_LIMITS.archiveBytes) + 2 * ARCHIVE_LIMITS.manifestBytes)
+      try {
+        status('正在檢查工程與原始音檔…')
+        const restored = await importProjectArchive(file, { signal,
+          decodeAsset: (bytes, metadata, options) => decode(bytes, metadata, options.signal, reservation.trackNative),
+          retainedBytes: beforeLoadBytes,
+          onMemoryBudget: bytes => reservation.set(bytes + 2 * ARCHIVE_LIMITS.manifestBytes),
+          onProgress: value => { check(); status(`正在還原工程：${value.phase} ${value.completed}/${value.total}`) },
+        })
+        check(); const nextHistory = new ProjectHistory(restored.project)
+        invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
+        saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0
+        render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
+      } finally { reservation.finish() }
     })
   }
   async function getMix({ signal, check }) {
@@ -388,6 +509,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     el('audio-files').value = ''; el('project-file').value = ''; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
+    automationDrag = null
     selection = { trackId, clipId }; const item = selected(); if (!item) { selection = null; return }
     stop(); cursor = item.clip.atSeconds; renderInspector(); paintPlayhead()
   }
@@ -402,6 +524,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     cancel: () => cancelJob(), undo: () => changeHistory('undo'), redo: () => changeHistory('redo'),
     'add-track': () => command({ type: 'track.add', track: { name: `音軌 ${project.tracks.length + 1}` } }, '已新增空白音軌'),
     earlier: () => nudge(-1), later: () => nudge(1),
+    'automation-add': addAutomationPoint, 'automation-apply': applyAutomationPoint,
+    'automation-remove': () => clipCommand('clip.automation.remove', { index: automationIndex }, '已刪除中間音量點；相鄰點會平滑連接'),
+    'automation-reset': () => clipCommand('clip.automation.reset', {}, '已重設句內音量為 100%；片段音量與淡入淡出仍保留'),
     move: () => { const clipId = selection?.clipId, toTrackId = el('clip-track').value; clipCommand('clip.move', { atSeconds: snap(Number(el('clip-at').value)), toTrackId }, '已套用片段位置'); selection = { trackId: toTrackId, clipId }; renderInspector() },
     trim: () => clipCommand('clip.trim', { startSeconds: Number(el('trim-start').value), endSeconds: Number(el('trim-end').value) }, '已裁切片段，原檔仍保留'),
     split: () => clipCommand('clip.split', { atSeconds: currentTime() }, '已在播放位置切開片段'),
@@ -435,6 +560,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     else if (id === 'daw-sample-rate') command({ type: 'project.update', patch: { sampleRate: Number(target.value) } }, '混音取樣率已更新，請重新產生混音')
     else if (id === 'daw-master-gain') command({ type: 'project.update', patch: { masterGainDb: Number(target.value) } }, '總混音音量已更新，試聽與輸出都會套用')
     else if (id === 'daw-clip-name') clipCommand('clip.update', { patch: { name: target.value.trim() } }, '已更新片段名稱')
+    else if (id === 'daw-automation-point') { automationDrag = null; automationIndex = Number(target.value); renderAutomation() }
     else if (id === 'daw-clip-gain') clipCommand('clip.update', { patch: { gainDb: Number(target.value) } }, '已更新片段音量')
     else if (['daw-zoom', 'daw-grid', 'daw-snap'].includes(id)) { renderTracks(); paintPlayhead() }
     else if (id === 'daw-loop') { stop(); refreshControls() }
@@ -442,6 +568,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }))
   listen(el('seek'), 'input', () => { const next = Number(el('seek').value); stop(); cursor = next; paintPlayhead(); refreshControls() })
   listen(root, 'keydown', event => {
+    if (event.key === 'Escape' && automationDrag) { automationDrag = null; renderAutomation(); return }
     if (event.defaultPrevented || event.isComposing || event.target.matches('input,textarea,select,[contenteditable=true]')) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(event.shiftKey ? 'redo' : 'undo') }
@@ -454,18 +581,51 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     if (clip && clip.dataset.clipId !== selection?.clipId) choose(clip.dataset.trackId, clip.dataset.clipId)
   })
   listen(root, 'pointerdown', event => {
+    const point = event.target.closest('[data-automation-index]')
+    if (point) {
+      if ((event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
+      const item = selected(); if (!item) return
+      event.preventDefault(); automationIndex = Number(point.dataset.automationIndex)
+      automationDrag = { revision: project.revision, trackId: item.track.id, clipId: item.clip.id, index: automationIndex, pointerId: event.pointerId, points: getClipVolumeAutomation(item.clip), changed: false }
+      el('automation-graph').setPointerCapture?.(event.pointerId)
+      renderAutomation(); return
+    }
     const clip = event.target.closest('.daw-clip')
     if (!clip || (event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
     choose(clip.dataset.trackId, clip.dataset.clipId)
     drag = { trackId: clip.dataset.trackId, clipId: clip.dataset.clipId, x: event.clientX, at: selected().clip.atSeconds, moved: false }
   })
   listen(window, 'pointermove', event => {
+    if (automationDrag) {
+      if (automationDrag.pointerId !== event.pointerId) return
+      const item = selected(), box = el('automation-graph').getBoundingClientRect()
+      if (!item || !box.width || !box.height || project.revision !== automationDrag.revision) { automationDrag = null; renderAutomation(); return }
+      const points = automationDrag.points, index = automationDrag.index
+      let timeSeconds = points[index].timeSeconds
+      if (index > 0 && index < points.length - 1) {
+        const spacing = Math.min(1 / project.assets.find(asset => asset.id === item.clip.assetId).sampleRate, (points[index + 1].timeSeconds - points[index - 1].timeSeconds) / 4)
+        timeSeconds = clamp(((event.clientX - box.left) / box.width * 320 - 16) / 288 * item.clip.durationSeconds, points[index - 1].timeSeconds + spacing, points[index + 1].timeSeconds - spacing)
+      }
+      points[index] = { timeSeconds, value: clamp((124 - (event.clientY - box.top) / box.height * 140) / 54, 0, DAW_LIMITS.maxAutomationGain) }
+      automationDrag.changed = true; renderAutomation(points); return
+    }
     if (!drag || Math.abs(event.clientX - drag.x) < 4 && !drag.moved) return
     drag.moved = true
     const clip = [...root.querySelectorAll('.daw-clip')].find(c => c.dataset.clipId === drag.clipId)
     if (clip) clip.style.left = `${snap(drag.at + (event.clientX - drag.x) / Number(el('zoom').value)) * Number(el('zoom').value)}px`
   })
   listen(window, 'pointerup', event => {
+    if (automationDrag) {
+      if (automationDrag.pointerId !== event.pointerId) return
+      const previous = automationDrag; automationDrag = null
+      if (previous.changed && previous.revision === project.revision && previous.clipId === selected()?.clip.id) {
+        run(() => {
+          if (previous.revision !== project.revision || previous.clipId !== selected()?.clip.id) { renderAutomation(); return }
+          command({ type: 'clip.automation.update', trackId: previous.trackId, clipId: previous.clipId, index: previous.index, patch: previous.points[previous.index] }, '已調整句內音量；這次拖曳可一次復原')
+        })
+      } else renderAutomation()
+      return
+    }
     if (!drag) return
     const previous = drag; drag = null
     if (!previous.moved) return
@@ -475,11 +635,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       selection = { trackId: target?.dataset.trackId || previous.trackId, clipId: previous.clipId }; renderInspector()
     }).finally(() => { renderTracks(); paintPlayhead() })
   })
-  listen(window, 'pointercancel', () => { drag = null; renderTracks(); paintPlayhead() })
+  listen(window, 'pointercancel', () => { drag = null; automationDrag = null; renderAutomation(); renderTracks(); paintPlayhead() })
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return

@@ -1,0 +1,27 @@
+{
+  "checkedAtUtc": "2026-10-06T00:46:21.876378+00:00",
+  "sourceCommit": "02dbb1a5ae197db39638a6275b7a2fa957d459d0",
+  "packageLockSha256": "725927bac091e38be141324007c197e8e93cee5faf84c9ace93fc0e3c1940098",
+  "command": "npm audit --json --ignore-scripts",
+  "registry": "https://registry.npmjs.org",
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "dependencies": {
+      "prod": 64,
+      "dev": 159,
+      "optional": 60,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 249
+    }
+  },
+  "vulnerabilities": {},
+  "limitation": "Known registry advisories only; this is not proof of application, generated asset, browser, model or dependency supply-chain safety."
+}

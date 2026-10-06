@@ -83,6 +83,20 @@ describe('portable DAW archive', () => {
     expect(await entriesOf(await exportProjectArchive(result.project, result.files))).toEqual(entries)
   })
 
+  it('roundtrips split and trimmed volume automation alongside fades and original media', async () => {
+    let { project, files, originals } = await fixture()
+    project = applyCommand(project, { type: 'clip.automation.add', trackId: 'track-one', clipId: 'clip-a', point: { timeSeconds: .5, value: 1.8 } })
+    project = applyCommand(project, { type: 'clip.split', trackId: 'track-one', clipId: 'clip-a', atSeconds: 12.6, newId: 'tail' })
+    project = applyCommand(project, { type: 'clip.trim', trackId: 'track-one', clipId: 'clip-a', startSeconds: 12.1, endSeconds: 12.5 })
+    const archive = await exportProjectArchive(project, files)
+    const result = await importProjectArchive(archive, { decodeAsset })
+    expect(result.project).toEqual(project)
+    expect(result.project.tracks[0].clips[0]).toHaveProperty('gainEnvelope')
+    expect(result.project.tracks[0].clips[0].volumeAutomation[0].value).toBeCloseTo(1.16)
+    expect((await entriesOf(archive))[1].data).toEqual(originals[0])
+    expect(await entriesOf(await exportProjectArchive(result.project, result.files))).toEqual(await entriesOf(archive))
+  })
+
   it('snapshots edits before awaiting and never mutates the live project to add hashes', async () => {
     const { project, files } = await fixture()
     delete project.assets[0].hash
@@ -141,6 +155,15 @@ describe('portable DAW archive', () => {
     const decoder = vi.fn(decodeAsset)
     await expect(importProjectArchive(archive, { decodeAsset: decoder, retainedBytes: ARCHIVE_LIMITS.workingBytes })).rejects.toThrow(/working memory/)
     expect(decoder).not.toHaveBeenCalled()
+  })
+
+  it('publishes its reservation before reading source entries and respects refusal', async () => {
+    const { archive, originals } = await fixture(), reads = [], decoder = vi.fn(decodeAsset)
+    const tracked = { size: archive.size, arrayBuffer: () => archive.arrayBuffer(), slice(start, end, type) { reads.push(end - start); return archive.slice(start, end, type) } }
+    const budget = vi.fn(bytes => { expect(bytes).toBeGreaterThan(archive.size); throw new Error('reservation refused') })
+    await expect(importProjectArchive(tracked, { decodeAsset: decoder, onMemoryBudget: budget })).rejects.toThrow('reservation refused')
+    expect(budget).toHaveBeenCalledTimes(1); expect(decoder).not.toHaveBeenCalled()
+    for (const bytes of originals) expect(reads).not.toContain(bytes.length)
   })
 
   it('verifies every source hash before calling the decoder', async () => {

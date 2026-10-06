@@ -64,6 +64,7 @@ function checkMemory(project, sourceBytes, largestAsset, retainedBytes = 0) {
   // Reserve two transient original-file buffers for hashing/decoding. Existing
   // page assets may be supplied so a transactional replacement stays bounded.
   requireValue(retainedBytes + sourceBytes + decoded + largestAsset * 2 <= ARCHIVE_LIMITS.workingBytes, 'restore exceeds the 512 MiB working memory budget; close a large project first')
+  return sourceBytes + decoded + largestAsset * 2
 }
 
 function zipHeaders(name, size, crc, offset) {
@@ -266,7 +267,11 @@ export async function importProjectArchive(blob, options = {}) {
   let manifest
   try { manifest = JSON.parse(decoder.decode(manifestBytes)) } catch { fail('manifest is not valid UTF-8 JSON') }
   const project = validateManifest(manifest, entries)
-  checkMemory(project, blob.size, Math.max(0, ...manifest.media.map(media => media.size)), options.retainedBytes ?? 0)
+  const workingBytes = checkMemory(project, blob.size, Math.max(0, ...manifest.media.map(media => media.size)), options.retainedBytes ?? 0)
+  // The UI owns this reservation through cancelled reads and native decode.
+  // Throwing here refuses allocation before any original media is read.
+  options.onMemoryBudget?.(workingBytes)
+  checkAbort(options.signal)
   report(options, 'validate', 0, project.assets.length)
   const assets = new Map(project.assets.map(asset => [asset.id, asset]))
   const files = new Map()

@@ -18,7 +18,13 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 
+function openControl(id) {
+  const disclosure = el(id).closest('details')
+  if (disclosure && !disclosure.open) disclosure.querySelector('summary').click()
+}
+
 function change(id, value) {
+  openControl(id)
   el(id).value = String(value)
   el(id).dispatchEvent(new Event('change', { bubbles: true }))
 }
@@ -38,7 +44,7 @@ async function setup({ applyOriginal = true } = {}) {
   const stopPlayback = vi.fn(() => { engine.currentTime = 0 })
   const panel = initLyricsPanel({ engine, getCurrentFile: () => currentFile, stopPlayback, playRange: vi.fn() })
   const load = async next => { currentFile = next; await panel.sourceAccepted(next, buffer) }
-  const apply = raw => { el('raw').value = raw; command('apply') }
+  const apply = raw => { openControl('raw'); el('raw').value = raw; command('apply') }
   const original = file('original.wav', 1)
   await load(original)
   if (applyOriginal) apply('Original lyric')
@@ -62,6 +68,90 @@ afterEach(() => {
 })
 
 describe('lyrics panel interrupted workflows', () => {
+  it('renders imported lyrics, source names and alignment diagnostics without HTML execution', async () => {
+    const { apply, load } = await setup({ applyOriginal: false })
+    const payload = '<img src=x onerror="globalThis.__wfXss=1"><svg onload="globalThis.__wfXss=1">'
+    await load(file(payload, 2)); apply(payload)
+    expect(el('list').querySelector('.lyrics-line-text').textContent).toBe(payload)
+    expect(el('source').textContent).toContain(payload)
+    const project = createSession(payload, { name: payload, hash: '2'.repeat(64), duration: 8 })
+    project.lines[0].alignment = { status: 'unresolved', evidence: { coverage: 0, reasons: [payload] }, engine: payload, model: payload, modelRevision: payload, language: 'en', backend: 'wasm', pass: 1 }
+    openProject({ size: 2000, text: async () => JSON.stringify(project) })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(el('selected-text').textContent).toBe(payload)
+    expect(document.querySelector('#mode-lyrics img, #mode-lyrics svg[onload], #mode-lyrics [onerror]')).toBeNull()
+    expect(globalThis.__wfXss).toBeUndefined()
+  })
+  it('starts with paste only, then exposes timing and keeps the original editor closed after application', async () => {
+    const { apply } = await setup({ applyOriginal: false })
+    expect(el('original').open).toBe(true)
+    expect(el('editor').hidden).toBe(true)
+    expect(el('alignment').hidden).toBe(true)
+    expect(el('delivery').hidden).toBe(true)
+    expect(el('model-settings').open).toBe(false)
+    expect(el('help').open).toBe(false)
+    el('raw').focus()
+    apply('First line\n\nLast line')
+    expect(el('original').open).toBe(false)
+    expect(el('editor').hidden).toBe(false)
+    expect(el('alignment').hidden).toBe(false)
+    expect(el('delivery').hidden).toBe(false)
+    expect(document.activeElement).toBe(el('waveform'))
+    expect(el('original-summary').textContent).toContain('3 行')
+    expect(el('list').querySelectorAll('.lyrics-line-text')).toHaveLength(3)
+    expect(el('list').querySelector('.lyrics-line-text').textContent).toBe('First line')
+    expect(el('list').querySelector('.lyrics-line-time').textContent).toBe('— → —')
+    expect(el('line-count').textContent).toBe('0／2 句已確認')
+    expect(el('model-consent').closest('details')).toBeNull()
+    expect(el('model-info').closest('details')).toBeNull()
+    expect(el('model-privacy').textContent).toContain('huggingface.co（收到下載請求）')
+    expect(el('model-privacy').textContent).toContain('不會上傳')
+    expect(document.querySelector('[data-command="lyrics.align"]').disabled).toBe(true)
+  })
+
+  it('keeps explicitly opened original text open across timing edits and returns to paste when undo removes the lyrics', async () => {
+    const { apply } = await setup({ applyOriginal: false })
+    apply('Original line')
+    openControl('raw')
+    expect(el('original').open).toBe(true)
+    change('start-value', 1)
+    expect(el('original').open).toBe(true)
+    expect(el('list').querySelector('.lyrics-line-time').textContent).toBe('1.00 → —')
+    command('undo')
+    command('undo')
+    expect(el('original').open).toBe(true)
+    expect(el('editor').hidden).toBe(true)
+    command('redo')
+    expect(el('original').open).toBe(false)
+    expect(el('editor').hidden).toBe(false)
+  })
+
+  it.each(['row', 'waveform'])('keeps keyboard undo and redo in a visible lyrics region from %s', async target => {
+    const { apply } = await setup({ applyOriginal: false })
+    apply('First line')
+    const focusTarget = target === 'row' ? el('list').querySelector('[data-line]') : el('waveform')
+    focusTarget.focus()
+    focusTarget.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(el('editor').hidden).toBe(true)
+    expect(document.activeElement).toBe(el('original-summary'))
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+    expect(el('editor').hidden).toBe(false)
+    expect(el('raw').value).toBe('First line')
+    expect(document.activeElement).toBe(el('waveform'))
+  })
+
+  it('opens a recovered meaningful project directly into the timing workspace', async () => {
+    await setup({ applyOriginal: false })
+    const restored = createSession('Recovered lyric')
+    openProject({ name: 'recovered.json', size: 1000, text: async () => JSON.stringify(restored) })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(el('original').open).toBe(false)
+    expect(el('raw').value).toBe('Recovered lyric')
+    expect(el('editor').hidden).toBe(false)
+    expect(el('selected-text').textContent).toBe('Recovered lyric')
+    expect(el('model-settings').open).toBe(false)
+  })
+
   it('does not let an obsolete source hash failure disconnect a newer accepted source', async () => {
     const { load, apply, engine } = await setup()
     const read = deferred()

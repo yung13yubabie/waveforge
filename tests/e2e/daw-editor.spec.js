@@ -67,13 +67,14 @@ test('real editor import, edits, preview, WAV and portable archive roundtrip use
   await expect(page.locator('#daw-clip-fields')).toBeEnabled()
   // Fades are intentionally progressive detail, not an always-visible field.
   // Use the same visible disclosure a person opens before editing the seam.
-  await page.getByText('細調音量與接縫', { exact: true }).click()
+  await page.locator('#daw-fades-details > summary').click()
   await expect(page.locator('#daw-fade-in')).toBeVisible()
   await expect(page.locator('#daw-fade-in')).toBeEnabled()
   await field(page, 'fade-in', .05); await field(page, 'fade-out', .05)
   await action(page, 'fades').click()
   const trackGain = page.locator('input[data-track-control="gainDb"]').first()
   await trackGain.fill('-3'); await trackGain.dispatchEvent('change')
+  await page.locator('#daw-output-settings > summary').click()
   await field(page, 'master-gain', -2)
   await page.locator('#daw-sample-rate').selectOption('44100')
   await action(page, 'begin').click()
@@ -186,7 +187,8 @@ test('mobile keyboard workflow, sticky transport and reduced motion remain usabl
     window.scrollTo(0, 0)
   })
   await expect(page.locator('#app > .header')).toBeInViewport()
-  await expect(page.locator('#mode-editor h1')).toBeInViewport()
+  await expect(page.locator('#daw-name')).toBeInViewport()
+  await expect(page.locator('#daw-ruler')).toBeInViewport()
   const top = await captureGeometry()
   expect(top.viewport).toMatchObject({ width: 390, height: 844 })
   expect(top.outsideEditorControls).toEqual([])
@@ -232,3 +234,58 @@ test('bad audio and declined clear preserve the current editor project', async (
   await page.locator('#tab-editor').click()
   await expect(action(page, 'play')).toHaveText('播放混音')
 })
+
+// These are viewport composition checks, not full-page captures. They prevent
+// setup copy from pushing the actual editor beneath the fold again.
+for (const viewport of [{ width: 390, height: 844 }, { width: 1188, height: 761 }, { width: 1440, height: 900 }]) {
+  test(`timeline-first layout and contextual details at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/'); await page.locator('#tab-editor').click()
+    await expect(page.locator('#daw-clip-fields')).toBeHidden()
+    await expect(page.locator('#daw-empty')).toBeVisible()
+    await expect(page.locator('#daw-zip-warning')).toBeVisible()
+    await expect(page.locator('#daw-help')).not.toHaveAttribute('open', '')
+    await page.screenshot({ path: testInfo.outputPath(`editor-empty-${viewport.width}.png`), fullPage: false, scale: 'css' })
+    await page.locator('#daw-audio-files').setInputFiles([fixture(), fixture('voice.wav')])
+    await expect(page.locator('.daw-clip')).toHaveCount(2)
+    const composition = await page.evaluate(() => {
+      const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON()
+      return { ruler: box('#daw-ruler'), timeline: box('#daw-timeline'), transport: box('.daw-transport'),
+        clip: box('.daw-clip'), inspector: box('.daw-inspector'),
+        overflow: document.documentElement.scrollWidth > innerWidth + 1 }
+    })
+    expect(composition.overflow).toBe(false)
+    expect(composition.ruler.y).toBeLessThanOrEqual(viewport.width <= 600 ? 330 : 250)
+    expect(composition.timeline.height).toBeGreaterThanOrEqual(300)
+    expect(composition.clip.y + composition.clip.height).toBeLessThan(composition.transport.y)
+    expect(composition.transport.height).toBeLessThanOrEqual(viewport.width <= 600 ? 110 : 70)
+    if (viewport.width > 760) {
+      expect(composition.timeline.width / viewport.width).toBeGreaterThan(.65)
+      expect(composition.inspector.width).toBeLessThanOrEqual(300)
+    }
+    for (const command of ['import', 'save', 'open', 'undo', 'redo', 'play', 'begin']) {
+      const box = await action(page, command).boundingBox()
+      expect(box.height, command).toBeGreaterThanOrEqual(44)
+      expect(box.width, command).toBeGreaterThanOrEqual(44)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`editor-loaded-${viewport.width}.png`), fullPage: false, scale: 'css' })
+    await testInfo.attach('editor-composition.json', { body: JSON.stringify(composition, null, 2), contentType: 'application/json' })
+    await page.locator('.daw-grid-settings > summary').click()
+    await expect(page.locator('#daw-zoom')).toBeVisible()
+    for (const selector of ['#daw-tempo', '#daw-grid', '#daw-zoom']) {
+      const box = await page.locator(selector).boundingBox()
+      expect(box.x, selector).toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, selector).toBeLessThanOrEqual(viewport.width)
+    }
+    await page.locator('#daw-zoom').selectOption('96')
+    await page.locator('.daw-grid-settings > summary').click()
+    await expect(page.locator('#daw-zoom')).toBeHidden()
+    await page.locator('#daw-output-settings > summary').click()
+    await field(page, 'master-gain', -3)
+    await page.locator('#daw-output-settings > summary').click()
+    await expect(page.locator('#daw-master-gain')).toBeHidden()
+    await page.locator('#daw-output-settings > summary').click()
+    await expect(page.locator('#daw-master-gain')).toHaveValue('-3')
+  })
+}

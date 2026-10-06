@@ -1,3 +1,6 @@
+import { initPitchPanel } from './pitch/panel.js'
+import { pitchPanelMarkup } from './pitch/markup.js'
+import { createPitchSourcePreview } from './pitch/source-preview.js'
 import { initLyricsPanel } from './lyrics/panel.js'
 import { initDawPanel } from './daw/panel.js'
 import { decodeDawAsset } from './daw/decode.js'
@@ -185,6 +188,7 @@ async function boot() {
   buildEQBands()
 
   // ── Mode navigation ──────────────────────────────────────
+  document.getElementById('mode-pitch').innerHTML = pitchPanelMarkup
   initModeNav()
 
   // ── Anti-theft detection ─────────────────────────────────
@@ -215,6 +219,9 @@ async function boot() {
   // Album sequence (Phase 6) + the currently-loaded File (for per-track snapshot)
   const album = new Album()
   let currentFile = null
+  let isLoadingFile = false
+  let pitchController = null
+  const pitchPreview = createPitchSourcePreview()
   const emptyWaveform = document.getElementById('waveform-empty').cloneNode(true)
   const { renderAlbum, renderAlbumTrack } = initAlbumPanel({
     album, engine, getCurrentFile: () => currentFile, captureRenderOptions, setProcessing, setStatus,
@@ -248,6 +255,7 @@ async function boot() {
   const lyricsController = initLyricsPanel({ engine, getCurrentFile: () => currentFile,
     playRange: async (start, end, loop) => {
       if (isLoadingFile) throw new Error('音檔正在載入')
+      pitchController?.stopPreview()
       document.dispatchEvent(new Event('wf:stop-stem-preview'))
       document.getElementById('final-preview-audio')?.pause()
       document.getElementById('original-preview-audio')?.pause()
@@ -255,7 +263,8 @@ async function boot() {
     },
     stopPlayback: () => { engine.stop(); engine.clearPlaybackRange(); ws?.pause(); updatePlayBtn(false) },
   })
-  function stopNonEditorPlayback() {
+  function stopNonEditorPlayback({ preservePitch = false } = {}) {
+    if (!preservePitch) pitchController?.stopPreview()
     engine.stop(); engine.clearPlaybackRange(); ws?.pause(); updatePlayBtn(false)
     document.dispatchEvent(new Event('wf:stop-stem-preview'))
     document.getElementById('final-preview-audio')?.pause()
@@ -279,14 +288,31 @@ async function boot() {
       return true
     },
   })
+  pitchController = initPitchPanel({
+    root: document.getElementById('pitch-section'),
+    beforePlayback: () => { stopNonEditorPlayback({ preservePitch: true }); dawController.stop() },
+    getSource: () => !isLoadingFile && currentFile && engine.buffer
+      ? { buffer: engine.sourceAsset?.buffer ?? engine.buffer, id: currentFile, name: currentFile.name } : null,
+    playRange: async (start, end, options = {}) => {
+      if (isLoadingFile || !currentFile || !engine.buffer) throw new Error('請先載入音檔')
+      stopNonEditorPlayback({ preservePitch: true }); dawController.stop()
+      const buffer = engine.sourceAsset?.buffer ?? engine.buffer
+      return pitchPreview.play(buffer, { start, end, ...options })
+    },
+    stop: () => pitchPreview.stop(),
+  })
+  window.addEventListener('pagehide', event => {
+    if (event.persisted) pitchController.stopPreview()
+    else { pitchController.dispose(); pitchPreview.dispose() }
+  })
   document.addEventListener('wf:mode-change', event => {
-    if (event.detail?.mode === 'editor') stopNonEditorPlayback()
-    else dawController.stop()
+    if (['editor', 'pitch'].includes(event.detail?.mode)) stopNonEditorPlayback()
+    if (event.detail?.mode !== 'pitch') pitchController?.stopPreview()
+    if (event.detail?.mode !== 'editor') dawController.stop()
     if (engine.playbackRange) { engine.stop(); engine.clearPlaybackRange(); updatePlayBtn(false) }
   })
 
   // ── File loading ────────────────────────────────────────
-  let isLoadingFile = false
   async function loadFile(file, { preserveStems = false, signal, isCurrent, blockingOverlay = true } = {}) {
     if (!file) return
     const check = () => { if (signal?.aborted || (isCurrent && !isCurrent())) throw new DOMException('已取消過期的音訊載入', 'AbortError') }
@@ -296,6 +322,7 @@ async function boot() {
       return
     }
     isLoadingFile = true
+    pitchController?.refreshSource()
     const abortLoad = () => engine.cancelPendingLoad()
     signal?.addEventListener('abort', abortLoad, { once: true })
     const previous = { file: currentFile, buffer: engine.buffer, asset: engine.sourceAsset, ws,
@@ -349,6 +376,7 @@ async function boot() {
     } finally {
       signal?.removeEventListener('abort', abortLoad)
       isLoadingFile = false
+      pitchController?.refreshSource()
     }
   }
 
@@ -599,6 +627,7 @@ async function boot() {
     engine.sourceAsset = null
     engine.duration = 0
     currentFile = null
+    pitchController?.refreshSource()
     lyricsController.clear()
     clearPreview()
     disableTrimDrag?.()
@@ -938,7 +967,7 @@ async function boot() {
 
   // Keyboard: Space → play/pause; Ctrl/Cmd+Z undo; Ctrl/Cmd+Shift+Z (or Ctrl+Y) redo
   document.addEventListener('keydown', e => {
-    if (document.getElementById('app')?.classList.contains('mode-editor') || e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.target.closest('#mode-lyrics') || e.target.matches('input, textarea, select, [contenteditable="true"]')) return
+    if (document.getElementById('app')?.classList.contains('mode-editor') || document.getElementById('app')?.classList.contains('mode-pitch') || e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.target.closest('#mode-lyrics') || e.target.matches('input, textarea, select, [contenteditable="true"]')) return
     const mod = e.ctrlKey || e.metaKey
     if (mod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault()
@@ -1383,13 +1412,15 @@ async function boot() {
     previewUrls.forEach(url => URL.revokeObjectURL(url)); previewUrls = []
   }
   for (const audio of [finalAudio, originalAudio]) audio.addEventListener('play', () => {
+    pitchController?.stopPreview()
     engine.pause(); ws?.pause(); updatePlayBtn(false)
     for (const other of [finalAudio, originalAudio]) if (other !== audio) other.pause()
     document.dispatchEvent(new Event('wf:stop-stem-preview'))
   })
-  btnPlay.addEventListener('click', () => { finalAudio.pause(); originalAudio.pause() })
+  btnPlay.addEventListener('click', () => { pitchController?.stopPreview(); finalAudio.pause(); originalAudio.pause() })
   window.addEventListener('pagehide', clearPreview)
   document.addEventListener('wf:stem-preview-start', () => {
+    pitchController?.stopPreview()
     engine.pause(); ws?.pause(); updatePlayBtn(false); finalAudio.pause(); originalAudio.pause()
   })
   document.getElementById('final-preview-btn').addEventListener('click', async () => {

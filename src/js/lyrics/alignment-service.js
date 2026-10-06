@@ -12,6 +12,9 @@ const LANGUAGES = new Set(['zh', 'en', 'ja', 'ar', 'es', 'fr', 'de', 'ko'])
 const abortError = () => new DOMException('已取消分析，原有時間未變', 'AbortError')
 function checkAbort(signal) { if (signal?.aborted) throw abortError() }
 const validRange = line => Number.isFinite(line.start) && Number.isFinite(line.end) && line.end > line.start
+// Offline rendering cannot reliably be aborted. Keep one owner across service
+// instances and cancelled runs until the native promise actually settles.
+let nativeResamplingOwner = null
 
 export function planAlignmentWindows(lines, targetIds, duration, secondPass = false) {
   if (!Number.isFinite(duration) || duration <= 0 || duration > 1200) throw new Error('本機自動對時目前限 20 分鐘；較長歌曲請分段處理，手動功能仍可用')
@@ -86,27 +89,59 @@ export async function prepareAlignmentWindow(buffer, range, { channel = 0, signa
   // Bound the actual PCM count, then report its measured offset/duration.
   const last = Math.min(source.length, first + Math.floor(20 * rate), Math.ceil(range.end * rate))
   if (last <= first || (last - first) / rate > 20.001) throw new Error('分析片段長度無效')
-  const input = source.slice(first, last)
-  if (input.some(value => !Number.isFinite(value))) throw new Error('音訊包含無效數值')
-  const offset = first / rate
-  let samples
-  if (rate === 16000) samples = input
-  else {
+  const owner = rate === 16000 ? null : {}
+  if (owner) {
     if (!OfflineContext) throw new Error('此瀏覽器無法準備分析音訊，仍可手動對時')
-    const context = new OfflineContext(1, Math.max(1, Math.min(320000, Math.round(input.length * 16000 / rate))), 16000)
-    const mono = context.createBuffer(1, input.length, rate)
-    mono.copyToChannel(input, 0)
-    const sourceNode = context.createBufferSource(); sourceNode.buffer = mono
-    sourceNode.connect(context.destination); sourceNode.start()
-    const rendered = await context.startRendering()
-    sourceNode.disconnect()
-    checkAbort(signal)
-    samples = rendered.getChannelData(0).slice()
+    if (nativeResamplingOwner) throw new Error('上一段音訊仍在完成取樣轉換，請稍候再試')
+    // Claim before slicing PCM or allocating an AudioBuffer/context. Clearing
+    // the service's active request on Cancel must not permit another allocation.
+    nativeResamplingOwner = owner
   }
-  let peak = 0
-  for (const value of samples) peak = Math.max(peak, Math.abs(value))
-  return { samples, sampleRate: 16000, offset, duration: samples.length / 16000,
-    silent: peak === 0 }
+  let sourceNode, nativePromise, abortHandler, nativeSettled = false, finished = false
+  const release = () => { if (owner && nativeResamplingOwner === owner) nativeResamplingOwner = null }
+  const disconnect = () => {
+    const node = sourceNode; sourceNode = null
+    try { node?.disconnect() } catch { /* Cleanup must not replace the original outcome. */ }
+  }
+  try {
+    const input = source.slice(first, last)
+    if (input.some(value => !Number.isFinite(value))) throw new Error('音訊包含無效數值')
+    const offset = first / rate
+    let samples
+    if (rate === 16000) samples = input
+    else {
+      const context = new OfflineContext(1, Math.max(1, Math.min(320000, Math.round(input.length * 16000 / rate))), 16000)
+      const mono = context.createBuffer(1, input.length, rate)
+      mono.copyToChannel(input, 0)
+      sourceNode = context.createBufferSource(); sourceNode.buffer = mono
+      sourceNode.connect(context.destination); sourceNode.start()
+      checkAbort(signal)
+      nativePromise = Promise.resolve(context.startRendering()).finally(() => {
+        nativeSettled = true
+        disconnect()
+        if (finished) release()
+      })
+      const interrupted = new Promise((_, reject) => {
+        abortHandler = () => { disconnect(); reject(abortError()) }
+        signal?.addEventListener('abort', abortHandler, { once: true })
+        if (signal?.aborted) abortHandler()
+      })
+      // Cancel returns promptly, but ownership stays with the native job. The
+      // race also consumes late native rejection after cancellation.
+      const rendered = await Promise.race([nativePromise, interrupted])
+      checkAbort(signal)
+      samples = rendered.getChannelData(0).slice()
+    }
+    let peak = 0
+    for (const value of samples) peak = Math.max(peak, Math.abs(value))
+    return { samples, sampleRate: 16000, offset, duration: samples.length / 16000,
+      silent: peak === 0 }
+  } finally {
+    finished = true
+    if (abortHandler) signal?.removeEventListener('abort', abortHandler)
+    disconnect()
+    if (!nativePromise || nativeSettled) release()
+  }
 }
 
 const normalized = text => text.normalize('NFKC').toLocaleLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '')

@@ -7,7 +7,9 @@ function buildDom() {
       <button class="mode-tab active" data-mode="master" aria-selected="true">Master</button>
       <button class="mode-tab" data-mode="stems" aria-selected="false">Stems</button>
       <button class="mode-tab" data-mode="antitheft" aria-selected="false">Anti-theft</button>
+      <button class="mode-tab" data-mode="pitch" aria-selected="false">Pitch</button>
       <div class="chain-panel"></div>
+      <section id="mode-pitch" hidden></section>
       <section id="mode-master"></section>
       <section id="mode-stems" hidden></section>
       <section id="mode-antitheft" hidden></section>
@@ -28,6 +30,18 @@ describe('initModeNav', () => {
     expect(panel('stems').hidden).toBe(false)
     expect(panel('master').hidden).toBe(true)
     expect(panel('antitheft').hidden).toBe(true)
+  })
+
+  it('routes pitch into its own full-width workspace and restores master', () => {
+    const { switchMode } = initModeNav()
+    switchMode('pitch')
+    expect(panel('pitch').hidden).toBe(false)
+    expect(panel('master').hidden).toBe(true)
+    expect(document.getElementById('app').classList.contains('mode-pitch')).toBe(true)
+    expect(document.querySelector('.chain-panel').getAttribute('aria-hidden')).toBe('true')
+    switchMode('master')
+    expect(panel('pitch').hidden).toBe(true)
+    expect(document.getElementById('app').classList.contains('mode-pitch')).toBe(false)
   })
 
   it('marks only the selected tab active and aria-selected', () => {

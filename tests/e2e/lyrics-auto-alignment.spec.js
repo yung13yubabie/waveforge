@@ -112,6 +112,11 @@ const test = base.extend({
   },
 })
 
+async function openDisclosure(page, id) {
+  const disclosure = page.locator(id)
+  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator(':scope > summary').click()
+}
+
 async function setup(page) {
   await page.goto('/')
   await page.setInputFiles('#file-input', AUDIO_FILE)
@@ -126,6 +131,7 @@ async function setup(page) {
 
 async function approveMockAnalysis(page) {
   // This exercises the UI consent gate; the harness still forbids real models.
+  await openDisclosure(page, '#lyrics-model-settings')
   await page.locator('#lyrics-language').selectOption('en')
   await page.locator('#lyrics-model-consent').check()
   await expect(command(page, 'lyrics.align')).toBeEnabled()
@@ -167,6 +173,7 @@ test.describe('Automatic lyrics workflow with mock ASR only', () => {
     await page.locator('#lyrics-model-consent').check()
     await expect(command(page, 'lyrics.align')).toBeDisabled()
     await expect(page.locator('#lyrics-alignment-availability')).toContainText('請先選擇')
+    await openDisclosure(page, '#lyrics-model-settings')
     await page.locator('#lyrics-language').selectOption('en')
     await page.locator('#lyrics-model-consent').uncheck()
     await expect(command(page, 'lyrics.align')).toBeDisabled()
@@ -266,6 +273,81 @@ test.describe('Automatic lyrics workflow with mock ASR only', () => {
     await expect(page.locator('#lyrics-diagnostics')).toContainText('line-3：尚未確認')
     await command(page, 'lyrics.confirm').click()
     expect(await project(page)).toEqual(complete)
+  })
+
+  test('keyboard cancellation restores visible focus before another analysis', async ({ page, mockAsr }) => {
+    await setup(page)
+    await approveMockAnalysis(page)
+    await command(page, 'lyrics.align').click()
+    await mockAsr.waitForJobs(1)
+    await command(page, 'lyrics.align.cancel').focus()
+    await page.keyboard.press('Enter')
+    await expect(command(page, 'lyrics.align.cancel')).toBeHidden()
+    await expect(page.locator('#lyrics-model-settings > summary')).toBeFocused()
+    await expect(command(page, 'lyrics.align')).toBeEnabled()
+    expect(await mockAsr.workers()).toMatchObject([{ terminated: true }])
+  })
+
+  test('cancelled native resampling blocks allocation until settlement, then permits retry', async ({ page, mockAsr }) => {
+    await setup(page)
+    await approveMockAnalysis(page)
+    const baseline = await project(page)
+    // Real Web Audio renders the synthetic fixture. Hold only delivery of its
+    // promise to deterministically cover Cancel while native work is pending.
+    // This is lifecycle coverage, not a heap measurement or real-ASR test.
+    await page.evaluate(() => {
+      const NativeContext = window.OfflineAudioContext, releases = []
+      const state = window.__lyricsNativeLifecycle = { contexts: 0, inputFrames: 0, sources: 0, disconnects: 0, pending: 0, held: true,
+        release() { state.held = false; releases.splice(0).forEach(resolve => resolve()) } }
+      window.OfflineAudioContext = class extends NativeContext {
+        constructor(...args) { super(...args); state.contexts++ }
+        createBuffer(channels, length, rate) { state.inputFrames += length; return super.createBuffer(channels, length, rate) }
+        createBufferSource() {
+          const node = super.createBufferSource(), disconnect = node.disconnect.bind(node)
+          state.sources++
+          node.disconnect = (...args) => { state.disconnects++; return disconnect(...args) }
+          return node
+        }
+        startRendering() {
+          const rendered = super.startRendering()
+          if (!state.held) return rendered
+          state.pending++
+          const delivery = new Promise(resolve => releases.push(resolve))
+          // Consume the native rejection immediately as well as delaying its
+          // delivery, so a browser failure cannot become an unhandled rejection.
+          return rendered.then(buffer => delivery.then(() => buffer), error => delivery.then(() => { throw error }))
+            .finally(() => { state.pending-- })
+        }
+      }
+    })
+    const state = () => page.evaluate(() => {
+      const { contexts, inputFrames, sources, disconnects } = window.__lyricsNativeLifecycle
+      return { contexts, inputFrames, sources, disconnects }
+    })
+    await command(page, 'lyrics.align').click()
+    await expect.poll(state).toMatchObject({ contexts: 1, sources: 1, disconnects: 0 })
+    const pending = await state()
+    await command(page, 'lyrics.align.cancel').click()
+    await expect.poll(state).toMatchObject({ contexts: 1, disconnects: 1 })
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await command(page, 'lyrics.align').click()
+      await expect(page.locator('#lyrics-alignment-message')).toContainText('上一段音訊仍在完成取樣轉換')
+      await expect(command(page, 'lyrics.align.cancel')).toBeHidden()
+      expect(await state()).toEqual({ ...pending, disconnects: 1 })
+    }
+    expect(await mockAsr.jobs()).toEqual([])
+    expect(await mockAsr.workers()).toEqual([])
+    expect(await project(page)).toEqual(baseline)
+    await page.evaluate(() => window.__lyricsNativeLifecycle.release())
+    // Let the real native completion (if still running) and its delivery settle
+    // before asking the app to create the next context.
+    await expect.poll(() => page.evaluate(() => window.__lyricsNativeLifecycle.pending)).toBe(0)
+    await command(page, 'lyrics.align').click()
+    await mockAsr.waitForJobs(1)
+    expect(await state()).toMatchObject({ contexts: 2, sources: 2, disconnects: 2 })
+    await mockAsr.complete(0, [{ text: 'Hello', timestamp: [1, 2] }])
+    await expect(page.locator('#lyrics-proposal-summary')).toContainText('找到 1 句時間')
+    expect(await project(page)).toEqual(baseline)
   })
 
   test('cancel permits a same-turn retry and ignores late progress/results from terminated mock ASR', async ({ page, mockAsr }) => {

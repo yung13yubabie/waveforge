@@ -54,6 +54,20 @@ describe('single-flight DAW native decoding', () => {
     expect(source).toHaveBeenCalledTimes(2)
   })
 
+  it('exposes actual native settlement separately from caller cancellation', async () => {
+    const pending = deferred(), source = vi.fn(() => pending.promise)
+    const decode = createDawDecoder({ OfflineAudioContextClass: Context, decodeSource: source })
+    await expect(decode.whenIdle()).resolves.toBeUndefined()
+    const controller = new AbortController()
+    const caller = decode(bytes(), {}, { signal: controller.signal }).catch(error => error)
+    let settled = false
+    const idle = decode.whenIdle().then(() => { settled = true })
+    controller.abort(); expect(await caller).toMatchObject({ name: 'AbortError' })
+    await tick(); expect(settled).toBe(false)
+    pending.reject(new Error('late native failure')); await idle
+    expect(settled).toBe(true); await expect(decode.whenIdle()).resolves.toBeUndefined()
+  })
+
   it('defaults to a 30-second caller deadline without unlocking the native slot', async () => {
     vi.useFakeTimers()
     const pending = deferred(), source = vi.fn(() => pending.promise)

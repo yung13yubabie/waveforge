@@ -26,8 +26,9 @@ export function createDawDecoder({ OfflineAudioContextClass, timeoutMs = 30000, 
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) throw new Error('解碼期限必須介於 1 至 120000 毫秒')
   if (typeof decodeSource !== 'function') throw new Error('音檔解碼器無法使用')
   let nativeBusy = false
+  let nativeSettlement = null
 
-  return async function decode(bytes, metadata = {}, { signal } = {}) {
+  const decode = async function decode(bytes, metadata = {}, { signal } = {}) {
     if (signal?.aborted) throw abortError()
     if (nativeBusy) throw busyError()
     const requestedRate = metadata.sampleRate ?? 48000
@@ -53,7 +54,8 @@ export function createDawDecoder({ OfflineAudioContextClass, timeoutMs = 30000, 
     }
     // Both handlers fulfill their derived promise, avoiding unhandled late
     // rejections after a timeout/abort. This is the ONLY asynchronous unlock.
-    native.then(() => { nativeBusy = false }, () => { nativeBusy = false })
+    const settled = () => { nativeBusy = false; nativeSettlement = null }
+    nativeSettlement = native.then(settled, settled)
 
     return new Promise((resolve, reject) => {
       let finished = false
@@ -84,6 +86,10 @@ export function createDawDecoder({ OfflineAudioContextClass, timeoutMs = 30000, 
       if (signal?.aborted) abort()
     })
   }
+  // A cancelled caller settles before the browser decoder. Resource owners use
+  // this non-rejecting snapshot to retain reservations until native work ends.
+  decode.whenIdle = () => nativeSettlement ?? Promise.resolve()
+  return decode
 }
 
 // Shared by initial import and archive restore, including separate panels.

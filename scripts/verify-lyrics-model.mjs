@@ -168,6 +168,7 @@ async function runAppUiSmoke(page, expect) {
     const baseline = await saveProject('beforeAnalysis')
     expect(baseline.lines.every(line => line.start === null && line.end === null && line.confirmed === false)).toBe(true)
     await expect(command('lyrics.align')).toBeDisabled()
+    await page.locator('#lyrics-model-settings > summary').click()
     await page.locator('#lyrics-language').selectOption('en')
     await expect(command('lyrics.align')).toBeDisabled()
     await page.locator('#lyrics-model-consent').check()

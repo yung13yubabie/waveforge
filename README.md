@@ -1,8 +1,10 @@
 # WaveForge
 
-新增整合：歌詞手動逐句對時、保存與 LRC／SRT／ASS／TXT 輸出。先看 [這次怎麼用](START_HERE.md) 與 [更新紀錄 PR #1](https://github.com/yung13yubabie/waveforge/pull/1)。自動對時仍需人工試聽確認，AI 換聲尚未完成。
+歌曲剪輯、多軌混音、原音 ZIP 工程與本機歌詞候選對時。這一版再加入「音高助手」與可保存的片段音量曲線，先看 [操作方式](START_HERE.md) 和 [音高／音量曲線驗證](docs/validation/PITCH_AND_AUTOMATION_STATUS.md)。線上版本以 [部署紀錄](https://github.com/yung13yubabie/waveforge/actions/workflows/deploy.yml) 為準。
 
-此開發分支已接上本機自動對時管線，並完成已核准模型的完整性檢查、真實英文清唱 CPU 測試與建置版瀏覽器實測：實際下載、辨識、候選採用、鎖定保護、取消重試及匯出限制均通過。歌唱時間邊界與多語準確度尚未校準，仍需逐句試聽，不保證自動對準。詳見 [實作範圍與待驗收關卡](docs/validation/LOCAL_LYRICS_ALIGNMENT_STATUS.md) 與 [真實模型證據](docs/validation/real-model/README.md)；這些分支結果不代表正式網站已更新。
+音高助手幫你比較聲音高低，不會直接判定旋律唱對，也不會改變原音。歌詞定位需逐句試聽確認，歌唱邊界與多語準確率仍未校準。保長度移調仍是未對使用者開放的研究原型；AI 換聲／改詞重唱、錄音和 MIDI 尚未完成。
+
+歌詞功能的真實模型與瀏覽器證據見 [實作範圍](docs/validation/LOCAL_LYRICS_ALIGNMENT_STATUS.md) 和 [模型實測](docs/validation/real-model/README.md)。
 
 線上瀏覽器母帶工作站。前端 Web Audio API 負責播放及匯出；AI 分軌與防盜偵測使用外部服務。一般母帶處理不需離線 App 或 AI 模型；自動歌詞對時需同意後下載瀏覽器本機模型。完整多軌 DAW 與人聲漂移修復仍依階段開發，見 [進度](docs/DAW_PROGRESS.md)。
 
@@ -33,7 +35,7 @@
 ## 快速開始
 
 ```bash
-npm install
+npm ci --ignore-scripts
 npm run dev        # http://localhost:5173/
 ```
 
