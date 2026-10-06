@@ -27,6 +27,9 @@
 .daw-panel .daw-selection-tight [data-range-handle=endSeconds] { top: 44px; }
 .daw-selection-drawing :is(.daw-ruler-lane, .daw-lane, .daw-clip) { touch-action: none; cursor: crosshair; user-select: none; }
 @media (max-width: 600px) {
+  /* Active ranges need two command rows. Preserve their targets above the
+     fixed transport, keeping the unselected arrangement at its original size. */
+  .daw-timeline.daw-has-selection { height: 308px; }
   .daw-selection-controls { gap: 2px 4px; }
   .daw-selection-summary { flex: 1 1 90px; font-size: 11px; }
   .daw-selection-actions { margin-left: 0; }
