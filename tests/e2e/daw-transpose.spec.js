@@ -5,12 +5,17 @@
  * worker, AudioBuffer, decoder, playback or OfflineAudioContext is mocked. */
 import { test, expect } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { encodeWAV } from '../../src/js/audio/wav.js'
 
 const action = (page, command) => page.locator(`[data-daw="${command}"]`)
 const review = page => page.locator('#daw-replacement-review')
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+async function attachEvidence(testInfo, name, evidence) {
+  const path = testInfo.outputPath(name)
+  await writeFile(path, JSON.stringify(evidence, null, 2))
+  await testInfo.attach(name, { path, contentType: 'application/json' })
+}
 const field = async (page, name, value) => {
   await page.locator(`#daw-${name}`).fill(String(value))
   await page.locator(`#daw-${name}`).dispatchEvent('change')
@@ -104,6 +109,8 @@ async function observeNativeAudio(page) {
       }
       return source
     }
+    // This observer deliberately retains PCM/buffers for equality evidence;
+    // it is not a heap/leak probe.
     // A transparent constructor observer retains real workers and their real
     // transfers. The result listener copies evidence before application use.
     window.Worker = new Proxy(window.Worker, {
@@ -322,9 +329,9 @@ for (const sampleRate of [44100, 48000, 96000]) for (const channels of [1, 2]) {
     await restore(page, beforeZip, 'original-before-transpose.waveforge.zip')
     expect(await download(page, 'export')).toEqual(originalMix)
     expect(errors).toEqual([]); expect(uploads).toEqual([])
-    await testInfo.attach(`transpose-native-${sampleRate}-${channels}ch.json`, { contentType: 'application/json', body: JSON.stringify({ before: before.project, accepted: accepted.project,
+    await attachEvidence(testInfo, `transpose-native-${sampleRate}-${channels}ch.json`, { before: before.project, accepted: accepted.project,
       generated, bSource, bPlayback, aPlayback, ordinaryBeforeAccept, acceptedPlayback, restoredSource,
-      originalFileSha256: digest(original.buffer), generatedFileSha256: digest(generatedFile), acceptedMixSha256: digest(acceptedMix), workerRequestCount: restoredProof.requests.length }, null, 2) })
+      originalFileSha256: digest(original.buffer), generatedFileSha256: digest(generatedFile), acceptedMixSha256: digest(acceptedMix), workerRequestCount: restoredProof.requests.length })
   })
 }
 
@@ -424,10 +431,10 @@ test('a fresh ZIP reopen restores transpose settings, recovers the original in o
   expect(await download(page, 'export')).toEqual(processedMix)
   expect((await nativeEvidence(page)).requests).toHaveLength(1)
   expect(errors).toEqual([])
-  await testInfo.attach('transpose-persisted-lineage-and-original-recovery.json', { contentType: 'application/json', body: JSON.stringify({ originalClip, processedClip,
+  await attachEvidence(testInfo, 'transpose-persisted-lineage-and-original-recovery.json', { originalClip, processedClip,
     recoveredClip: recovered.project.tracks[0].clips[0], firstInput: firstProof.requests[0], reopenedInput: input,
     firstOutput: firstProof.results[0], reopenedOutput: output, acceptedAgainClip,
-    originalMixSha256: digest(originalMix), processedMixSha256: digest(processedMix) }, null, 2) })
+    originalMixSha256: digest(originalMix), processedMixSha256: digest(processedMix) })
 })
 
 test('independent formant and compensation controls render real audio without changing duration or pitch settings', async ({ page }) => {
@@ -600,6 +607,7 @@ for (const width of [1440, 390]) {
     await expect(action(page, 'transpose-render')).toBeHidden()
     await expect(page.locator('#daw-transpose-timbre')).not.toHaveAttribute('open', '')
     await expect(page.locator('#daw-transpose-help')).not.toHaveAttribute('open', '')
+    await page.screenshot({ path: testInfo.outputPath(`transpose-editor-collapsed-${width}.png`) })
     await page.locator('#daw-transpose-details > summary').focus(); await page.keyboard.press('Enter')
     await page.keyboard.press('Tab'); await expect(page.locator('#daw-transpose-semitones')).toBeFocused()
     await page.keyboard.press('Tab'); await expect(page.locator('#daw-transpose-cents')).toBeFocused()
@@ -621,6 +629,8 @@ for (const width of [1440, 390]) {
       expect(box.height).toBeGreaterThanOrEqual(44)
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width)
     }
+    await page.locator('#daw-transpose-details > summary').scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath(`transpose-review-compact-${width}.png`) })
     await openDetails(page, 'daw-transpose-help')
     await expect(page.locator('#daw-transpose-help')).toContainText('不上傳')
     await expect(page.locator('#daw-transpose-help')).toContainText('原錄音')
