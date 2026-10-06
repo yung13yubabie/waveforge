@@ -1,6 +1,6 @@
 # WaveForge
 
-歌曲剪輯、多軌混音、原音 ZIP 工程與本機歌詞候選對時。包含音高助手、片段音量曲線、替換錄音與片段移調試用；本次候選再加入指定人聲軌的局部消音。先看 [操作方式](START_HERE.md) 和 [人聲區間驗證狀態](docs/validation/VOCAL_GAIN_REGIONS_2026-10-06.md)。線上版本以 [部署紀錄](https://github.com/yung13yubabie/waveforge/actions/workflows/deploy.yml) 為準。
+歌曲剪輯、多軌混音、原音 ZIP 工程與本機歌詞候選對時。包含音高助手、片段音量曲線、替換錄音、局部人聲消音、短片段移調、時間軸選區、拍格對齊與多片段原子編輯。先看 [操作方式](START_HERE.md) 和 [多片段驗證紀錄](docs/validation/MULTICLIP_EDITING_2026-10-06.md)。線上版本以 [部署紀錄](https://github.com/yung13yubabie/waveforge/actions/workflows/deploy.yml) 為準。
 
 音高助手幫你比較聲音高低，不會直接判定旋律唱對，也不會改變原音。歌詞定位需逐句試聽確認，歌唱邊界與多語準確率仍未校準。片段移調試用限 0.12–30 秒與正負 2 個半音，需先 A/B 試聽再接受；音準吸附、AI 換聲／改詞重唱、麥克風錄音和 MIDI 尚未完成。局部消音需要已分離的人聲，混合音軌的伴奏也會一起降低。
 
