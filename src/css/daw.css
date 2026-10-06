@@ -164,3 +164,11 @@
 .daw-replacement-review > .daw-note:first-child { margin-top: 0; }
 .daw-replacement-review .daw-wave { height: 70px; }
 .daw-replacement-review .daw-actions button { flex: 1 1 100px; }
+
+/* Region stripes remain visible after a project is reopened. */
+.daw-region-cue { position: absolute; top: 27px; bottom: 5px; border-inline: 1px solid #e5b76c; border-bottom: 4px solid #e5b76c; background: #e5b76c25; pointer-events: none; }
+.daw-region-preview-wave { position: relative; min-height: 70px; background: #e5b76c12; border-block: 1px solid #e5b76c; overflow: hidden; }
+.daw-region-preview-piece { position: absolute; top: 0; height: 70px; overflow: hidden; background: #e5b76c20; }
+#daw-region-warning { color: var(--c-text-1); }
+#daw-region-details > .daw-actions button { flex-basis: 110px; }
+@media (forced-colors: active) { .daw-region-cue { border-color: Highlight; } .daw-region-preview-wave { border-color: Highlight; } }

@@ -1,4 +1,6 @@
 import { sourceFrameBounds, SOURCE_TIME_ROUNDOFF_SECONDS } from './sample-bounds.js'
+import { sliceGainRegions } from './gain-regions.js'
+import { intersectTrackRange } from './track-range.js'
 
 /** Bounded, non-destructive audio editing. Times are seconds; tempo is grid-only. */
 export const PROJECT_SCHEMA = 'waveforge.project.v1'
@@ -8,6 +10,7 @@ export const DAW_LIMITS = Object.freeze({
   maxDecodedBytes: 256 * 1024 * 1024, maxRenderBytes: 256 * 1024 * 1024,
   maxCombinedBytes: 512 * 1024 * 1024, maxEnvelopePoints: 8,
   maxAutomationPoints: 32, maxAutomationGain: 2,
+  maxGainRegionsPerClip: 64, maxGainRegions: 1024, maxGainRegionEnvelopePoints: 4, maxGainRegionLabel: 120,
 })
 const OUTPUT_RATES = [44100, 48000, 96000]
 const EPSILON = 1e-9
@@ -90,7 +93,7 @@ export function validateProject(project) {
     assets.set(asset.id, asset)
   }
   if (getDecodedBytes(project) > DAW_LIMITS.maxDecodedBytes) fail('decoded assets exceed 256 MiB; use shorter source files')
-  let clipCount = 0
+  let clipCount = 0, gainRegionCount = 0
   for (const track of project.tracks) {
     onlyKeys(track, ['id', 'name', 'gainDb', 'pan', 'mute', 'solo', 'clips'], 'track')
     unique(track.id, trackIds, 'track ID'); text(track.name, 'track name')
@@ -100,7 +103,7 @@ export function validateProject(project) {
     clipCount += track.clips.length
     if (clipCount > DAW_LIMITS.maxClips) fail('project exceeds 256 clips')
     for (const clip of track.clips) {
-      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope', 'volumeAutomation', 'transpose'], 'clip')
+      onlyKeys(clip, ['id', 'assetId', 'name', 'atSeconds', 'offsetSeconds', 'durationSeconds', 'gainDb', 'fadeInSeconds', 'fadeOutSeconds', 'gainEnvelope', 'volumeAutomation', 'gainRegions', 'transpose'], 'clip')
       unique(clip.id, clipIds, 'clip ID'); text(clip.name, 'clip name')
       const asset = assets.get(clip.assetId)
       if (!asset) fail(`clip ${clip.id} has missing asset ${clip.assetId}`)
@@ -114,6 +117,16 @@ export function validateProject(project) {
       number(clip.fadeInSeconds, 'fade in', 0, clip.durationSeconds)
       number(clip.fadeOutSeconds, 'fade out', 0, clip.durationSeconds)
       if (clip.fadeInSeconds + clip.fadeOutSeconds > clip.durationSeconds + EPSILON) fail('clip fades overlap; shorten a fade')
+      if (clip.gainRegions !== undefined) {
+        array(clip.gainRegions, 'clip gain regions', DAW_LIMITS.maxGainRegionsPerClip)
+        gainRegionCount += clip.gainRegions.length
+        if (gainRegionCount > DAW_LIMITS.maxGainRegions) fail('project exceeds 1024 gain regions')
+        const regionIds = new Set()
+        for (const region of clip.gainRegions) {
+          validateGainRegion(region, clip.durationSeconds)
+          unique(region.id, regionIds, 'gain region ID')
+        }
+      }
       if (clip.volumeAutomation !== undefined) {
         array(clip.volumeAutomation, 'volume automation', DAW_LIMITS.maxAutomationPoints)
         if (clip.volumeAutomation.length < 2) fail('volume automation needs start and end points')
@@ -143,6 +156,32 @@ export function validateProject(project) {
     }
   }
   return project
+}
+function validateGainRegion(region, clipDuration) {
+  onlyKeys(region, ['id', 'label', 'startSeconds', 'endSeconds', 'gain', 'fadeInSeconds', 'fadeOutSeconds', 'attenuationEnvelope'], 'gain region')
+  id(region.id, 'gain region ID')
+  if (region.label !== undefined && (typeof region.label !== 'string' || region.label.length > DAW_LIMITS.maxGainRegionLabel || /[\x00-\x1f\x7f]/.test(region.label))) fail('gain region label must be at most 120 characters without control characters')
+  number(region.startSeconds, 'gain region start', 0, clipDuration)
+  number(region.endSeconds, 'gain region end', region.startSeconds, clipDuration)
+  const duration = region.endSeconds - region.startSeconds
+  if (!(duration > 0)) fail('gain region must have positive duration')
+  number(region.gain, 'gain region gain', 0, 1)
+  number(region.fadeInSeconds, 'gain region fade in', 0, duration)
+  number(region.fadeOutSeconds, 'gain region fade out', 0, duration)
+  if (region.fadeInSeconds + region.fadeOutSeconds > duration + EPSILON) fail('gain region fades overlap; shorten a fade')
+  if (region.attenuationEnvelope !== undefined) {
+    array(region.attenuationEnvelope, 'gain region attenuation envelope', DAW_LIMITS.maxGainRegionEnvelopePoints)
+    if (region.attenuationEnvelope.length < 2) fail('gain region attenuation envelope needs start and end points')
+    let previous = -1
+    for (const point of region.attenuationEnvelope) {
+      onlyKeys(point, ['timeSeconds', 'value'], 'gain region attenuation point')
+      number(point.timeSeconds, 'gain region attenuation time', 0, duration)
+      number(point.value, 'gain region attenuation strength', 0, 1)
+      if (point.timeSeconds <= previous) fail('gain region attenuation points must be strictly ordered')
+      previous = point.timeSeconds
+    }
+    if (region.attenuationEnvelope[0].timeSeconds !== 0 || previous !== duration) fail('gain region attenuation envelope must span the region exactly')
+  }
 }
 /** Bounded optional lineage, versioned separately so old projects still open.
  * The fixed recipe is descriptive metadata, never executable/plugin data. */
@@ -216,6 +255,7 @@ function sliceClip(clip, start, end) {
     durationSeconds, fadeInSeconds: Math.min(durationSeconds, Math.max(0, clip.fadeInSeconds - start)),
     fadeOutSeconds: Math.min(durationSeconds, Math.max(0, end - (clip.durationSeconds - clip.fadeOutSeconds))),
     gainEnvelope: sliceEnvelope(getClipEnvelope(clip), start, end),
+    ...(clip.gainRegions ? { gainRegions: sliceGainRegions(clip.gainRegions, start, end) } : {}),
     ...(clip.volumeAutomation ? { volumeAutomation: sliceEnvelope(clip.volumeAutomation, start, end) } : {}) }
 }
 function makeTrack(input = {}) {
@@ -243,6 +283,32 @@ function patch(target, changes, allowed, label) {
   onlyKeys(changes, allowed, label)
   Object.assign(target, clone(changes))
 }
+function makeGainRegion(input, clipDuration) {
+  onlyKeys(input, ['id', 'label', 'startSeconds', 'endSeconds', 'gain', 'fadeInSeconds', 'fadeOutSeconds'], 'gain region input')
+  const defaultFade = Math.min(.01, (input.endSeconds - input.startSeconds) / 2)
+  const region = { id: generateId('region'), fadeInSeconds: defaultFade, fadeOutSeconds: defaultFade, ...input }
+  // Validate raw values before JSON cloning (Infinity/NaN must never become null).
+  validateGainRegion(region, clipDuration)
+  return clone(region)
+}
+/** Crop one timeline envelope into a clip. The shared geometry pins clip-edge
+ * intersections to their exact stored duration, avoiding subtraction drift at
+ * late timeline positions. Only roundoff at that endpoint is normalized. */
+function cropTrackGainRegion(region, clip, intersection) {
+  const cropped = sliceGainRegions([region], clip.atSeconds, clip.atSeconds + clip.durationSeconds)[0]
+  cropped.startSeconds = intersection.startSeconds
+  cropped.endSeconds = intersection.endSeconds
+  const duration = cropped.endSeconds - cropped.startSeconds
+  cropped.fadeInSeconds = Math.min(duration, cropped.fadeInSeconds)
+  cropped.fadeOutSeconds = Math.min(duration - cropped.fadeInSeconds, cropped.fadeOutSeconds)
+  if (cropped.attenuationEnvelope) {
+    const points = cropped.attenuationEnvelope
+    cropped.attenuationEnvelope = [points[0], ...points.slice(1, -1).filter(point => point.timeSeconds < duration),
+      { ...points.at(-1), timeSeconds: duration }]
+  }
+  validateGainRegion(cropped, clip.durationSeconds)
+  return cropped
+}
 /** Every successful command returns independent metadata; failed commands do not touch input. */
 export function applyCommand(project, command) {
   validateProject(project); object(command, 'command')
@@ -261,6 +327,22 @@ export function applyCommand(project, command) {
         clips: source.clips.map(clip => ({ ...clone(clip), id: generateId('clip') })) }); break
     }
     case 'track.update': patch(trackById(next, command.trackId), command.patch, ['name', 'gainDb', 'pan', 'mute', 'solo'], 'track patch'); break
+    case 'track.gainRegion.add': {
+      const track = trackById(next, command.trackId)
+      // Start/end are absolute timeline seconds. Construct the edge ramps once
+      // across the requested range, then crop, including gaps and overlapping
+      // clips. Splits inside the range must not restart an entrance/exit fade.
+      const region = makeGainRegion(command.region, DAW_LIMITS.maxDurationSeconds)
+      const { intersections } = intersectTrackRange(track, region.startSeconds, region.endSeconds)
+      if (!intersections.length) fail('gain region range does not intersect any audio clips')
+      for (const intersection of intersections) {
+        const clip = clipById(track, intersection.clipId)
+        clip.gainRegions = [...(clip.gainRegions ?? []), cropTrackGainRegion(region, clip, intersection)]
+      }
+      // The shared final validation checks every resulting clip, duplicate ID,
+      // and project limit before publishing this single command revision.
+      break
+    }
     case 'clip.add': trackById(next, command.trackId).clips.push(makeClip(next, clone(command.clip))); break
     case 'clip.remove': {
       const track = trackById(next, command.trackId); clipById(track, command.clipId)
@@ -324,6 +406,40 @@ export function applyCommand(project, command) {
     }
     case 'clip.automation.reset': {
       delete clipById(trackById(next, command.trackId), command.clipId).volumeAutomation
+      break
+    }
+    case 'clip.gainRegion.add':
+    case 'clip.gainRegion.addMany': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const regions = command.type === 'clip.gainRegion.add' ? [command.region] : command.regions
+      array(regions, 'new gain regions', DAW_LIMITS.maxGainRegionsPerClip)
+      if (!regions.length) fail('add at least one gain region')
+      clip.gainRegions = [...(clip.gainRegions ?? []), ...regions.map(region => makeGainRegion(region, clip.durationSeconds))]
+      break
+    }
+    case 'clip.gainRegion.update': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const index = clip.gainRegions?.findIndex(region => region.id === command.regionId) ?? -1
+      if (index < 0) fail(`gain region not found: ${command.regionId}`)
+      onlyKeys(command.patch, ['label', 'startSeconds', 'endSeconds', 'gain', 'fadeInSeconds', 'fadeOutSeconds'], 'gain region patch')
+      const region = { ...clip.gainRegions[index], ...command.patch }
+      // Only explicit boundary/fade edits reset a cropped shape. Strength and
+      // label changes keep exact partial fades, including a unity gain roundtrip.
+      if (['startSeconds', 'endSeconds', 'fadeInSeconds', 'fadeOutSeconds'].some(key => own(command.patch, key))) delete region.attenuationEnvelope
+      validateGainRegion(region, clip.durationSeconds)
+      clip.gainRegions[index] = clone(region)
+      break
+    }
+    case 'clip.gainRegion.remove': {
+      const clip = clipById(trackById(next, command.trackId), command.clipId)
+      const index = clip.gainRegions?.findIndex(region => region.id === command.regionId) ?? -1
+      if (index < 0) fail(`gain region not found: ${command.regionId}`)
+      clip.gainRegions.splice(index, 1)
+      if (!clip.gainRegions.length) delete clip.gainRegions
+      break
+    }
+    case 'clip.gainRegion.reset': {
+      delete clipById(trackById(next, command.trackId), command.clipId).gainRegions
       break
     }
     case 'clip.replaceSource': {

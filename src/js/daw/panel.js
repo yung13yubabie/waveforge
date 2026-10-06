@@ -8,6 +8,8 @@ import { sha256Hex } from '../audio/sha256.js'
 import { encodeWAV } from '../audio/wav.js'
 import { decodeDawAsset } from './decode.js'
 import { wavSampleRate } from '../audio/asset-decode.js'
+import { planLyricRegion } from './lyric-region-planner.js'
+import { planTimelineGainRegion, stageGainRegionDraft } from './gain-region-draft.js'
 
 const FILE_LIMIT = 64 * 1024 * 1024
 const abortError = () => new DOMException('已取消', 'AbortError')
@@ -38,7 +40,7 @@ function decodedBytes(buffers) {
 }
 
 /** Local runtime owns audio; project/history contain only portable metadata. */
-export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
+export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getLyricSelection, subscribeLyricSelection,
   confirmAction = message => window.confirm(message), downloadFile = download,
   AudioContextClass = globalThis.AudioContext, pitchClientFactory = createSignalsmithPitchClient } = {}) {
   const root = document.getElementById('mode-editor')
@@ -57,6 +59,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   let selection = null, cursor = 0, mix = null, job = null, generation = 0
   let replacement = null, replacementOwner = null, selectionVersion = 0, replacementReadBusy = false, pendingReplacementBytes = 0
   let pitchClient = null, transposeBusy = false, transposeVersion = 0, transposeControlOwner = null, pendingAudition = null
+  let vocalTrackId = null, regionId = '', regionControlOwner = null, regionVersion = 0, lyricDraft = null, observedLyricKey = null
   let loadWorkPending = false, pendingLoadBytes = 0
   let context = null, source = null, frame = null, playback = null, destroyed = false
   let drag = null, suppressClick = false, automationDrag = null, automationIndex = 0, automationClipId = null
@@ -176,6 +179,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     for (const key of ['replacement-original', 'replacement-preview', 'replacement-confirm']) button(key).disabled = Boolean(job || !replacement?.project)
     button('replacement-cancel').disabled = false
     el('save-state').textContent = job?.kind === 'save' ? '正在打包…' : dirty() ? '有未下載的修改' : hasDownloaded ? '已交付下載；請確認存檔' : project.tracks.length ? '已開啟工程' : '尚無修改'
+    refreshRegionControls()
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
@@ -193,10 +197,169 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       el('clip-track').value = track.id
     }
     renderTransposeSettings(item)
+    renderRegions(item)
     renderAutomation()
     renderReplacement()
     root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.clipId === selection?.clipId)))
     refreshControls()
+  }
+  function readLyricSelection() {
+    try { return getLyricSelection?.() || null } catch { return null }
+  }
+  function lyricSelectionKey(snapshot) {
+    return snapshot ? JSON.stringify(snapshot) : ''
+  }
+  function renderLyricSelection() {
+    const snapshot = readLyricSelection()
+    el('region-lyric').textContent = snapshot?.ready
+      ? `目前句子：「${snapshot.line.text}」· ${formatDawTime(snapshot.line.start)}–${formatDawTime(snapshot.line.end)}（歌詞原音檔：${snapshot.source.name}）${snapshot.line.confirmed ? '' : '。時間尚未確認，請先聽過再調整。'}`
+      : snapshot?.blocker || '請先在歌詞工作區選取有完整時間、已連結原音檔的句子；也可直接手動輸入範圍。'
+    return snapshot
+  }
+  function resetRegionMapping() {
+    vocalTrackId = null; regionId = ''; regionControlOwner = null; lyricDraft = null; regionVersion++
+    el('region-offset').value = ''; observedLyricKey = lyricSelectionKey(readLyricSelection())
+  }
+  function onLyricSelectionChange() {
+    if (destroyed) return
+    const snapshot = readLyricSelection(), key = lyricSelectionKey(snapshot)
+    if (observedLyricKey !== null && key !== observedLyricKey) {
+      const hadLyricDraft = Boolean(lyricDraft)
+      if (hadLyricDraft) {
+        regionVersion++; discardReplacement('歌詞或來源已修改，請重新核對並帶入句子')
+        lyricDraft = null; el('region-start').value = ''; el('region-end').value = ''
+        el('region-range').textContent = '歌詞已修改，請重新帶入句子，或手動填入時間軸範圍'
+      }
+      // An offset is a relationship between sources. Never reuse it after an
+      // external session/selection change that could introduce a new clock.
+      el('region-offset').value = ''
+    }
+    observedLyricKey = key; renderLyricSelection(); refreshRegionControls()
+  }
+  function regionSettingsKey() {
+    return JSON.stringify([vocalTrackId, regionId, lyricDraft?.key || '', lyricDraft ? el('region-offset').value : '', ...['select', 'label', 'start', 'end', 'gain', 'fade-in', 'fade-out'].map(id => el(`region-${id}`).value)])
+  }
+  function regionNumbers() {
+    const number = id => {
+      const value = el(`region-${id}`).value
+      if (!value.trim() || !Number.isFinite(Number(value))) throw new Error('請填入區間的起點、終點、保留音量與邊緣平滑數值')
+      return Number(value)
+    }
+    return { startSeconds: number('start'), endSeconds: number('end'), gain: number('gain') / 100,
+      fadeInSeconds: number('fade-in') / 1000, fadeOutSeconds: number('fade-out') / 1000, label: el('region-label').value.trim() }
+  }
+  function refreshRegionControls() {
+    const item = selected(), region = item?.clip.gainRegions?.find(region => region.id === regionId)
+    const locked = Boolean(job)
+    button('region-designate').disabled = locked || !item || vocalTrackId === item.track.id
+    button('region-prepare').disabled = locked || !item || !region && vocalTrackId !== item.track.id
+    button('region-use-lyric').disabled = locked || !item || vocalTrackId !== item.track.id || !readLyricSelection()?.ready
+    button('region-remove').disabled = locked || !region
+    button('region-reset').disabled = locked || !item?.clip.gainRegions?.length
+    el('region-select').disabled = locked || !item
+  }
+  function renderRegions(item) {
+    if (vocalTrackId && !project.tracks.some(track => track.id === vocalTrackId)) vocalTrackId = null
+    const regions = item?.clip.gainRegions || []
+    const key = item ? `${project.id}:${project.revision}:${item.track.id}:${item.clip.id}` : null
+    if (key !== regionControlOwner) {
+      regionControlOwner = key; regionVersion++; lyricDraft = null
+      if (!regions.some(region => region.id === regionId)) regionId = ''
+      const region = regions.find(region => region.id === regionId)
+      el('region-select').replaceChildren(...[node('option', '', '新增區間'), ...regions.map((region, index) => {
+        const option = node('option', '', `${region.label || `區間 ${index + 1}`} · ${region.gain === 0 ? '靜音' : `${Number((region.gain * 100).toFixed(2))}%`}`)
+        option.value = region.id; return option
+      })])
+      el('region-select').firstElementChild.value = ''; el('region-select').value = regionId
+      for (const [id, value] of Object.entries({ label: region?.label || '', start: item ? item.clip.atSeconds + (region?.startSeconds || 0) : '',
+        end: item ? item.clip.atSeconds + (region?.endSeconds ?? item.clip.durationSeconds) : '', gain: (region?.gain ?? 0) * 100,
+        'fade-in': (region?.fadeInSeconds ?? .01) * 1000, 'fade-out': (region?.fadeOutSeconds ?? .01) * 1000 })) el(`region-${id}`).value = String(value)
+      el('region-range').textContent = region ? `${formatDawTime(item.clip.atSeconds + region.startSeconds)}–${formatDawTime(item.clip.atSeconds + region.endSeconds)} · 已接受${region.attenuationEnvelope ? '。保留裁切前的邊緣形狀；修改時間或平滑會重新設定邊緣。' : ''}` : '可手動填入時間軸範圍；跨片段會一起處理指定音軌'
+    }
+    el('region-title').textContent = `人聲局部消音${regions.length ? ` · ${regions.length}` : ''}`
+    const designated = project.tracks.find(track => track.id === vocalTrackId)
+    el('region-track').textContent = designated ? `指定人聲軌：${designated.name}${item?.track.id !== vocalTrackId ? '；請選取該軌片段，或重新指定' : ''}` : '新增區間前，先指定目前音軌為已分離的人聲'
+    button('region-designate').textContent = item && item.track.id === vocalTrackId ? '已指定此人聲軌' : '指定為獨立人聲軌'
+    button('region-prepare').textContent = regionId ? '試聽區間修改' : '準備 A/B 試聽'
+    renderLyricSelection()
+  }
+  function designateVocalTrack() {
+    const item = selected(); if (!item) throw new Error('請先選取已分離人聲軌上的片段')
+    discardReplacement(); vocalTrackId = item.track.id; regionVersion++; lyricDraft = null
+    el('region-offset').value = ''; renderRegions(item); refreshControls()
+    status(`已指定「${item.track.name}」；此功能會降低該軌範圍內的全部聲音，請確認是獨立人聲`)
+  }
+  function useLyricRegion() {
+    const item = selected(), snapshot = readLyricSelection()
+    if (!item || vocalTrackId !== item.track.id) throw new Error('請先指定並選取獨立人聲軌')
+    const raw = el('region-offset').value
+    if (!raw.trim() || !Number.isFinite(Number(raw))) throw new Error('請先核對兩個音檔的起點，明確填入對齊秒數；相同起點請填 0')
+    const timelineOffsetSeconds = Number(raw)
+    const plan = planLyricRegion(project, snapshot, { trackId: vocalTrackId, timelineOffsetSeconds })
+    discardReplacement(); regionId = ''; regionVersion++
+    el('region-select').value = ''
+    lyricDraft = { snapshot, key: lyricSelectionKey(snapshot), timelineOffsetSeconds }
+    observedLyricKey = lyricDraft.key
+    el('region-start').value = String(plan.timelineRange.startSeconds); el('region-end').value = String(plan.timelineRange.endSeconds)
+    el('region-label').value = snapshot.line.text.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, DAW_LIMITS.maxGainRegionLabel)
+    el('region-range').textContent = `已帶入整句，可手動修正到單字範圍。${describeRegionPlan(plan)}`
+    button('region-prepare').textContent = '準備 A/B 試聽'; refreshControls()
+    status('已帶入歌詞整句時間；請確認起點與終點，再準備 A/B 試聽')
+  }
+  function describeRegionPlan(plan) {
+    return `${formatDawTime(plan.timelineRange.startSeconds)}–${formatDawTime(plan.timelineRange.endSeconds)} · ${plan.intersections.length} 片段${plan.gaps.length ? `；${plan.gaps.length} 段空白不處理（${plan.gaps.map(gap => `${formatDawTime(gap.startSeconds)}–${formatDawTime(gap.endSeconds)}`).join('、')}）` : ''}`
+  }
+  function prepareGainRegions() {
+    if (job && !['replacement', 'transpose', 'audition'].includes(job.kind)) throw new Error('請先等待或取消目前工作')
+    const item = selected()
+    if (!item || !regionId && vocalTrackId !== item.track.id) throw new Error('請先指定目前音軌為已分離的人聲')
+    const settings = regionNumbers()
+    let plan
+    if (lyricDraft) {
+      if (lyricDraft.key !== lyricSelectionKey(readLyricSelection())) throw new Error('歌詞或來源已修改，請重新帶入句子')
+      if (Number(el('region-offset').value) !== lyricDraft.timelineOffsetSeconds || !el('region-offset').value.trim()) throw new Error('對齊已修改，請重新帶入歌詞句子')
+      plan = planLyricRegion(project, lyricDraft.snapshot, { trackId: item.track.id, timelineOffsetSeconds: lyricDraft.timelineOffsetSeconds,
+        startSeconds: settings.startSeconds - lyricDraft.timelineOffsetSeconds, endSeconds: settings.endSeconds - lyricDraft.timelineOffsetSeconds })
+    } else plan = planTimelineGainRegion(project, item.track.id, settings.startSeconds, settings.endSeconds)
+    const next = stageGainRegionDraft(project, plan, settings, { clipId: item.clip.id, regionId })
+    if (regionId) plan = { ...plan, intersections: plan.intersections.filter(range => range.clipId === item.clip.id), gaps: [], completeCoverage: true, coveredDurationSeconds: settings.endSeconds - settings.startSeconds }
+    discardReplacement(); stop()
+    if (retainedBytes() + JSON.stringify(next).length * 4 > DAW_LIMITS.maxCombinedBytes) throw new Error('區間試聽超出記憶體預算；請先下載並精簡專案')
+    const owner = { ...captureReplacementOwner(), regionVersion, settingsKey: regionSettingsKey(), ...(lyricDraft ? { lyricKey: lyricDraft.key } : {}) }
+    replacement = { kind: 'gain-regions', owner, project: next, buffers, files, mix: null, plan, settings, regionId }
+    el('region-details').open = true; renderReplacement(); refreshControls()
+    status('區間已準備，請 A/B 試聽後接受；目前播放與下載仍使用已接受的專案')
+  }
+  function appendRegionCues(container, clip) {
+    for (const region of clip.gainRegions || []) {
+      const cue = node('span', 'daw-region-cue')
+      cue.style.left = `${region.startSeconds / clip.durationSeconds * 100}%`
+      cue.style.width = `${(region.endSeconds - region.startSeconds) / clip.durationSeconds * 100}%`
+      cue.dataset.regionId = region.id; cue.setAttribute('aria-hidden', 'true')
+      cue.title = `${region.label || '人聲區間'} · ${region.gain === 0 ? '靜音' : `${Number((region.gain * 100).toFixed(2))}%`}`
+      container.append(cue)
+    }
+  }
+  function renderRegionReview() {
+    const staged = replacement, review = el('replacement-review')
+    review.dataset.kind = 'gain-regions'; review.setAttribute('aria-label', '待接受的人聲局部消音')
+    el('region-details').append(review)
+    button('replacement-original').textContent = 'A 原混音'; button('replacement-preview').textContent = 'B 區間處理後'
+    button('replacement-confirm').textContent = '接受區間'; button('replacement-cancel').textContent = '取消'
+    button('replacement-confirm').setAttribute('aria-describedby', 'daw-region-warning')
+    const track = project.tracks.find(track => track.id === staged.owner.trackId)
+    el('replacement-summary').textContent = `「${track.name}」${staged.settings.gain === 0 ? '靜音' : `保留 ${Number((staged.settings.gain * 100).toFixed(2))}% 音量`}。${describeRegionPlan(staged.plan)}。尚未接受。`
+    el('replacement-audition-help').textContent = 'A/B 都播放這段範圍的完整混音；B 只改這條音軌的區間。接受前，一般播放、工程與 WAV 仍使用原設定。'
+    const graph = node('div', 'daw-region-preview-wave'), start = staged.plan.timelineRange.startSeconds, length = staged.plan.timelineRange.endSeconds - start
+    for (const range of staged.plan.intersections) {
+      const clip = track.clips.find(clip => clip.id === range.clipId)
+      const piece = node('div', 'daw-region-preview-piece')
+      piece.style.left = `${(clip.atSeconds + range.startSeconds - start) / length * 100}%`
+      piece.style.width = `${(range.endSeconds - range.startSeconds) / length * 100}%`
+      piece.append(waveform({ ...clip, offsetSeconds: clip.offsetSeconds + range.startSeconds, durationSeconds: range.endSeconds - range.startSeconds }))
+      graph.append(piece)
+    }
+    el('replacement-wave').append(graph)
   }
   function renderAutomation(previewPoints) {
     const item = selected(), graph = el('automation-graph')
@@ -312,8 +475,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       for (const clip of track.clips) {
         const control = node('button', 'daw-clip'); control.type = 'button'; control.dataset.clipId = clip.id; control.dataset.trackId = track.id
         control.style.top = `${20 + layers.get(clip.id) * 104}px`; control.style.left = `${clip.atSeconds * rate}px`; control.style.width = `${Math.max(12, clip.durationSeconds * rate)}px`
-        control.setAttribute('aria-label', `${track.name}，${clip.name}，${formatDawTime(clip.atSeconds)} 至 ${formatDawTime(clip.atSeconds + clip.durationSeconds)}。左右方向鍵移動`)
-        control.setAttribute('aria-pressed', String(selection?.clipId === clip.id)); control.append(node('span', 'daw-clip-name', clip.name), waveform(clip)); lane.append(control)
+        control.setAttribute('aria-label', `${track.name}，${clip.name}，${formatDawTime(clip.atSeconds)} 至 ${formatDawTime(clip.atSeconds + clip.durationSeconds)}${clip.gainRegions?.length ? `，${clip.gainRegions.length} 個局部消音區間` : ''}。左右方向鍵移動`)
+        control.setAttribute('aria-pressed', String(selection?.clipId === clip.id)); control.append(node('span', 'daw-clip-name', clip.name), waveform(clip));
+        appendRegionCues(control, clip); lane.append(control)
       }
       lane.append(node('i', 'daw-playhead')); row.append(controls, lane); return row
     })
@@ -425,8 +589,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
   const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
-  const replacementBytes = () => replacement ? replacement.buffer.length * replacement.buffer.numberOfChannels * 4 + replacement.file.size +
-    (replacement.mix ? replacement.mix.buffer.length * replacement.mix.buffer.numberOfChannels * 4 : 0) + JSON.stringify(replacement.registeredProject).length * 4 : 0
+  const replacementBytes = () => replacement ? (replacement.kind === 'gain-regions' ? 0 : replacement.buffer.length * replacement.buffer.numberOfChannels * 4 + replacement.file.size) +
+    (replacement.mix ? replacement.mix.buffer.length * replacement.mix.buffer.numberOfChannels * 4 : 0) + JSON.stringify(replacement.registeredProject || replacement.project).length * 4 : 0
   const retainedBytes = () => decodedBytes(buffers) + [...files.values()].reduce((sum, file) => sum + file.size, 0) + cachedMixBytes() + metadataBytes() + replacementBytes() + pendingReplacementBytes + pendingLoadBytes + getPendingNativeRenderBytes() +
     (pendingAudition && replacement !== pendingAudition.staged ? pendingAudition.bytes : 0)
   function captureReplacementOwner() {
@@ -437,7 +601,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   function checkReplacementOwner(owner) {
     if (destroyed || owner.snapshot !== project || owner.selectionVersion !== selectionVersion ||
       owner.trackId !== selection?.trackId || owner.clipId !== selection?.clipId || owner.sourceId !== selected()?.clip.assetId ||
-      owner.transposeVersion !== undefined && (owner.transposeVersion !== transposeVersion || owner.settingsKey !== transposeSettingsKey())) throw abortError()
+      owner.transposeVersion !== undefined && (owner.transposeVersion !== transposeVersion || owner.settingsKey !== transposeSettingsKey()) ||
+      owner.regionVersion !== undefined && (owner.regionVersion !== regionVersion || owner.settingsKey !== regionSettingsKey() || owner.lyricKey !== undefined && owner.lyricKey !== lyricSelectionKey(readLyricSelection()))) throw abortError()
   }
   function discardReplacement(message) {
     const present = replacement || replacementOwner || job && ['replacement', 'transpose', 'audition'].includes(job.kind)
@@ -458,20 +623,24 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   function renderReplacement() {
     const item = selected(), asset = item && project.assets.find(asset => asset.id === item.clip.assetId)
     el('current-source').textContent = item ? `目前錄音：${asset.name} · ${asset.sampleRate / 1000} kHz · 原檔 ${formatDawTime(item.clip.offsetSeconds)} 起，共 ${formatDawTime(item.clip.durationSeconds)}` : ''
-    const review = el('replacement-review'), wasTranspose = review.dataset.kind === 'transpose'
+    const review = el('replacement-review'), wasTranspose = review.dataset.kind === 'transpose', wasRegion = review.dataset.kind === 'gain-regions'
     const reviewHadFocus = review.contains(document.activeElement)
     review.hidden = !replacement
     if (!replacement && reviewHadFocus) {
-      const command = wasTranspose ? 'transpose-render' : 'replace'
-      const target = button(command).disabled ? el(wasTranspose ? 'transpose-details' : 'replacement-details').querySelector('summary') : button(command)
+      const command = wasRegion ? 'region-prepare' : wasTranspose ? 'transpose-render' : 'replace'
+      const target = button(command).disabled ? el(wasRegion ? 'region-details' : wasTranspose ? 'transpose-details' : 'replacement-details').querySelector('summary') : button(command)
       target.focus({ preventScroll: true })
     }
     el('replacement-wave').replaceChildren()
     if (!replacement) { el('replacement-summary').textContent = ''; return }
+    if (replacement.kind === 'gain-regions') { renderRegionReview(); return }
     const transposed = replacement.kind === 'transpose'
     review.dataset.kind = replacement.kind || 'replacement'
     el(transposed ? 'transpose-details' : 'replacement-details').append(review)
     review.setAttribute('aria-label', transposed ? '待接受的片段移調' : '待確認的替換錄音')
+    button('replacement-original').textContent = 'A 原錄音混音'
+    el('replacement-audition-help').textContent = '試聽此片段範圍的完整混音，包含其他音軌。確認前，一般播放與下載仍使用原錄音。'
+    button('replacement-confirm').setAttribute('aria-describedby', 'daw-replacement-privacy')
     button('replacement-preview').textContent = transposed ? 'B 處理後混音' : 'B 替換後混音'
     button('replacement-confirm').textContent = transposed ? '接受移調' : '確認替換錄音'
     button('replacement-cancel').textContent = transposed ? '取消' : '取消替換'
@@ -611,7 +780,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     })
   }
   function updateReplacementOffset() {
-    if (!replacement || replacement.kind === 'transpose') return
+    if (!replacement || ['transpose', 'gain-regions'].includes(replacement.kind)) return
     if (job?.kind === 'audition') cancelJob('起點已修改，請重新選擇替換錄音')
     if (!replacement) return
     stop(); replacement.mix = null; replacement.project = null
@@ -620,25 +789,27 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   }
   function confirmReplacement() {
     if (job) throw new Error('請等待試聽準備完成，或先取消目前工作')
-    if (!replacement) throw new Error('請先選擇替換錄音')
+    if (!replacement) throw new Error('請先選擇並準備要接受的試聽')
     checkReplacementOwner(replacement.owner)
     // Re-read the visible field so uncommitted keyboard edits cannot confirm a
     // different offset than the one the user sees. Validation is still atomic.
-    const next = replacementProject(replacement, replacement.kind === 'transpose' ? replacement.offsetSeconds : replacementOffset())
+    const next = replacement.kind === 'gain-regions' ? replacement.project : replacementProject(replacement, replacement.kind === 'transpose' ? replacement.offsetSeconds : replacementOffset())
     if (retainedBytes() > DAW_LIMITS.maxCombinedBytes) throw new Error('接受音訊會超出記憶體預算；原片段保持不變')
     const staged = replacement
     history.push(next)
     invalidate(); project = next; buffers = staged.buffers; files = staged.files
-    retainHistoryAssets(); render(); status(staged.kind === 'transpose' ? '已接受移調，位置、長度與音量曲線保持不變；可復原／重做，原錄音仍保留' : '已替換錄音，位置、長度與音量曲線保持不變；可復原／重做。ZIP 可能包含完整新舊錄音')
+    retainHistoryAssets(); render(); status(staged.kind === 'gain-regions' ? '已接受人聲區間；播放、WAV 與工程都會套用。可一次復原，原音仍保留' : staged.kind === 'transpose' ? '已接受移調，位置、長度與音量曲線保持不變；可復原／重做，原錄音仍保留' : '已替換錄音，位置、長度與音量曲線保持不變；可復原／重做。ZIP 可能包含完整新舊錄音')
   }
   async function previewReplacement(useReplacement) {
     if (pendingAudition) throw new Error('上一份試聽仍在結束，請稍候再試')
-    if (!replacement?.project) throw new Error('請先選擇有效的替換錄音與起點')
+    if (!replacement?.project) throw new Error('請先選擇有效的設定並準備試聽')
     const staged = replacement
     checkReplacementOwner(staged.owner)
     // Input events can precede change/blur; always preview the displayed range.
-    const offset = staged.kind === 'transpose' ? staged.offsetSeconds : replacementOffset()
-    if (staged.project.tracks.find(track => track.id === staged.owner.trackId).clips.find(clip => clip.id === staged.owner.clipId).offsetSeconds !== offset) updateReplacementOffset()
+    if (staged.kind !== 'gain-regions') {
+      const offset = staged.kind === 'transpose' ? staged.offsetSeconds : replacementOffset()
+      if (staged.project.tracks.find(track => track.id === staged.owner.trackId).clips.find(clip => clip.id === staged.owner.clipId).offsetSeconds !== offset) updateReplacementOffset()
+    }
     stop()
     // beforePlayback/resume can outlive Cancel; keep the staged map's retained
     // data counted until this asynchronous chain actually settles. Native work
@@ -654,7 +825,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
         if (!staged.mix) {
           const renderBytes = Math.ceil(duration() * project.sampleRate) * 2 * 4
           if (retainedBytes() + renderBytes > DAW_LIMITS.maxCombinedBytes) throw new Error('替換試聽會超出記憶體預算；請縮短錄音或時間軸')
-          status('正在準備替換後的混音試聽；尚未套用…')
+          status(staged.kind === 'gain-regions' ? '正在準備人聲區間混音試聽；尚未接受…' : '正在準備替換後的混音試聽；尚未套用…')
           const rendered = await renderProject(staged.project, staged.buffers, { signal: request.signal, isCurrent: () => replacement === staged && project === staged.owner.snapshot && selectionVersion === staged.owner.selectionVersion })
           check(); staged.mix = rendered
         }
@@ -662,13 +833,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       } else result = await getMix({ ...request, check })
       check()
       assertSafePlayback(result)
-      const clip = selected().clip, start = clip.atSeconds, end = start + clip.durationSeconds
+      const clip = selected().clip, start = staged.kind === 'gain-regions' ? staged.plan.timelineRange.startSeconds : clip.atSeconds, end = staged.kind === 'gain-regions' ? Math.min(duration(), staged.plan.timelineRange.endSeconds) : start + clip.durationSeconds
       source = ctx.createBufferSource(); source.buffer = result.buffer; source.connect(ctx.destination)
       playback = { start, end, loop: false, started: ctx.currentTime }; cursor = start
       const activeSource = source
       source.onended = () => { if (source === activeSource) { cursor = end; source.disconnect(); source = null; playback = null; button('play').textContent = '播放混音'; refreshControls(); paintPlayhead() } }
       source.start(0, start, end - start); button('play').textContent = '暫停'
-      status(useReplacement ? `B：正在試聽${staged.kind === 'transpose' ? '處理' : '替換'}後的完整混音；尚未確認套用` : 'A：正在試聽目前原錄音的完整混音')
+      status(useReplacement ? `B：正在試聽${staged.kind === 'gain-regions' ? '人聲區間調整' : staged.kind === 'transpose' ? '處理' : '替換'}後的完整混音；尚未確認套用` : 'A：正在試聽目前原錄音的完整混音')
       paintPlayhead()
     }) } finally { if (pendingAudition === audition) pendingAudition = null; refreshControls() }
   }
@@ -693,7 +864,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
         })
         check(); const nextHistory = new ProjectHistory(restored.project)
         invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
-        saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0
+        saved = JSON.stringify(project); hasDownloaded = false; selection = null; cursor = 0; resetRegionMapping()
         render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
       } finally { reservation.finish() }
     })
@@ -780,11 +951,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   function clear() {
     discardReplacement(); cancelJob(); stop({ rewind: true }); generation++
     project = createProject({ name: '未命名專案' }); history = new ProjectHistory(project)
-    buffers.clear(); files.clear(); mix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false
+    buffers.clear(); files.clear(); mix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; resetRegionMapping()
     el('audio-files').value = ''; el('project-file').value = ''; el('replacement-file').value = ''; el('replacement-offset').value = '0'; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
   function choose(trackId, clipId) {
-    if (selection?.trackId !== trackId || selection?.clipId !== clipId) { selectionVersion++; discardReplacement('已變更所選片段，請重新選擇替換錄音') }
+    if (selection?.trackId !== trackId || selection?.clipId !== clipId) { selectionVersion++; discardReplacement('已變更所選片段，待接受的試聽已取消') }
     automationDrag = null
     selection = { trackId, clipId }; const item = selected(); if (!item) { selection = null; return }
     stop(); cursor = item.clip.atSeconds; renderInspector(); paintPlayhead()
@@ -795,6 +966,9 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     clipCommand('clip.move', { atSeconds: Math.max(0, item.clip.atSeconds + direction * step) }, direction < 0 ? '已把片段提早' : '已把片段延後')
   }
   const actions = {
+    'region-designate': designateVocalTrack, 'region-use-lyric': useLyricRegion, 'region-prepare': prepareGainRegions,
+    'region-remove': () => clipCommand('clip.gainRegion.remove', { regionId }, '已刪除此人聲區間；可復原'),
+    'region-reset': () => clipCommand('clip.gainRegion.reset', {}, '已清除此片段的人聲區間；可一次復原'),
     'transpose-render': prepareTranspose, 'transpose-original': restoreTransposeOriginal,
     replace: () => { discardReplacement(); replacementOwner = captureReplacementOwner(); el('replacement-file').click() },
     'replacement-confirm': confirmReplacement, 'replacement-cancel': () => discardReplacement('已取消；原片段保持不變'),
@@ -838,6 +1012,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
       const owner = replacementOwner; replacementOwner = null
       try { if (owner && target.files?.[0]) await prepareReplacement(target.files[0], owner) } finally { target.value = '' }
     }
+    else if (id === 'daw-region-select') { discardReplacement(); regionId = target.value; regionControlOwner = null; renderRegions(selected()); refreshControls() }
     else if (id === 'daw-replacement-offset') updateReplacementOffset()
     else if (id === 'daw-project-file') { try { await openArchive(target.files?.[0]) } finally { target.value = '' } }
     else if (id === 'daw-name') command({ type: 'project.update', patch: { name: target.value.trim() } }, '已更新專案名稱')
@@ -852,6 +1027,14 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     else if (target.matches('input[data-track-control]')) command({ type: 'track.update', trackId: target.dataset.trackId, patch: { [target.dataset.trackControl]: Number(target.value) } }, '已更新音軌混音設定')
   }))
   for (const eventName of ['input', 'change']) listen(root, eventName, event => {
+    if (event.target.id?.startsWith('daw-region-') && event.target.matches('input')) {
+      regionVersion++
+      if (replacement?.kind === 'gain-regions') discardReplacement('區間設定已修改，請重新準備試聽')
+      if (event.target.id === 'daw-region-offset' && lyricDraft) {
+        lyricDraft = null; el('region-start').value = ''; el('region-end').value = '';
+        el('region-range').textContent = '對齊已修改，請重新帶入歌詞句子，或手動填入時間軸範圍'
+      }
+    }
     if (event.target.id?.startsWith('daw-transpose-')) {
       transposeVersion++
       if (replacement?.kind === 'transpose' || job?.kind === 'transpose') discardReplacement('移調設定已修改，請重新產生試聽')
@@ -930,7 +1113,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionVersion++; discardReplacement('已切換工作區，待確認的替換已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return
@@ -938,6 +1121,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback,
     if (context) { context.close().catch(() => {}); context = null }
   }
   listen(window, 'pagehide', event => { if (event.persisted) { selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
+  observedLyricKey = lyricSelectionKey(readLyricSelection())
+  if (subscribeLyricSelection) {
+    const unsubscribe = subscribeLyricSelection(onLyricSelectionChange)
+    if (typeof unsubscribe === 'function') disposers.push(unsubscribe)
+  }
   render()
-  return { clear, stop, destroy, importFiles, openArchive, prepareReplacement, prepareTranspose, confirmReplacement, getProject: () => JSON.parse(JSON.stringify(project)) }
+  return { prepareGainRegions, clear, stop, destroy, importFiles, openArchive, prepareReplacement, prepareTranspose, confirmReplacement, getProject: () => JSON.parse(JSON.stringify(project)) }
 }

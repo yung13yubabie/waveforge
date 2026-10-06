@@ -165,7 +165,7 @@ test('mobile keyboard workflow, sticky transport and reduced motion remain usabl
     const describe = selector => {
       const element = document.querySelector(selector), rect = element.getBoundingClientRect()
       return { selector, rect: rect.toJSON(), clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
-        clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop,
+        clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop, scrollLeft: element.scrollLeft,
         overflowX: getComputedStyle(element).overflowX, overflowY: getComputedStyle(element).overflowY }
     }
     const outsideEditorControls = [...document.querySelectorAll('#mode-editor button, #mode-editor input, #mode-editor select')]
@@ -179,10 +179,12 @@ test('mobile keyboard workflow, sticky transport and reduced motion remain usabl
   // Mobile body is its own scroller (100dvh + overflow-y:auto). Resetting only
   // window/editor leaves it scrolled; fullPage then captures a long blank canvas.
   const beforeReset = await captureGeometry()
+  expect(beforeReset.containers.find(item => item.selector === 'body').scrollLeft).toBe(0)
+  expect(beforeReset.containers.find(item => item.selector === 'body').scrollWidth).toBeLessThanOrEqual(beforeReset.viewport.width)
   await page.evaluate(() => {
     for (const element of [document.scrollingElement, document.documentElement, document.body,
       document.getElementById('app'), document.getElementById('mode-editor')]) {
-      if (element) { element.scrollTop = 0; element.scrollLeft = 0 }
+      if (element) element.scrollTop = 0
     }
     window.scrollTo(0, 0)
   })

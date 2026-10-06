@@ -1,5 +1,6 @@
 import { DAW_LIMITS, validateProject, getProjectDuration, getDecodedBytes, getClipEnvelope, getClipVolumeAutomation } from './project.js'
 import { measurePeaks } from '../audio/measure.js'
+import { getClipGainRegionSegments } from './gain-regions.js'
 
 const dbToGain = db => 10 ** (db / 20)
 let activeContext = false, pendingNativeBytes = 0
@@ -34,6 +35,7 @@ export function buildRenderPlan(project) {
         id: clip.id, assetId: clip.assetId, atSeconds: clip.atSeconds, offsetSeconds: clip.offsetSeconds,
         durationSeconds: clip.durationSeconds, gain: dbToGain(clip.gainDb), envelope: getClipEnvelope(clip),
         automation: getClipVolumeAutomation(clip),
+        gainRegions: getClipGainRegionSegments(clip),
       })),
     })),
   }
@@ -109,7 +111,17 @@ export async function renderProject(project, buffers, {
           if (index === 0) automationGain.gain.setValueAtTime(point.value, at)
           else automationGain.gain.linearRampToValueAtTime(point.value, at)
         }
-        source.connect(clipGain); clipGain.connect(automationGain); automationGain.connect(gain)
+        source.connect(clipGain); clipGain.connect(automationGain)
+        if (clip.gainRegions.some(segment => segment.startGain !== 1 || segment.endGain !== 1)) {
+          // One lower-envelope node per affected clip, never a node or copied
+          // PCM buffer per region. This also prevents multiplying overlaps.
+          const regionGain = context.createGain(); nodes.push(regionGain)
+          for (const segment of clip.gainRegions) {
+            regionGain.gain.setValueAtTime(segment.startGain, clip.atSeconds + segment.startSeconds)
+            regionGain.gain.linearRampToValueAtTime(segment.endGain, clip.atSeconds + segment.endSeconds)
+          }
+          automationGain.connect(regionGain); regionGain.connect(gain)
+        } else automationGain.connect(gain)
         source.start(clip.atSeconds, clip.offsetSeconds, clip.durationSeconds)
       }
     }

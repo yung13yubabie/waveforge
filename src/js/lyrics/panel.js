@@ -5,6 +5,7 @@ import { exportLyrics } from './export.js'
 import { createLocalAlignmentService } from './alignment-service.js'
 
 const STORAGE_KEY = 'waveforge.lyrics.recovery.v1'
+let selectionBridgeSequence = 0
 const ALIGNMENT_REASONS = {
   partial_lyrics: '只有部分原文字元能與辨識結果對上', extra_asr_words: '附近可能有原稿未列入的唱詞',
   protected_line: '保留已確認或手動調整的時間', protected_anchor: '使用已保留的時間作為位置參考',
@@ -25,6 +26,8 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   const el = id => document.getElementById(`lyrics-${id}`)
   let session = createSession(), history = new History(clone(session)), sessionTouched = false, selected = 'line-1'
   let acceptedSource = null, generation = 0, editEpoch = 0, pendingSource = false, waveform = null
+  const selectionBridgeId = ++selectionBridgeSequence, selectionSubscribers = new Set()
+  let selectionEpoch = 0, rawDraftEpoch = 0, lastSelectionToken = null
   const service = alignmentService ?? createLocalAlignmentService()
   let activeTask = null, proposal = null, taskSequence = 0, clearingCache = false
   let presentedRawText = null
@@ -33,6 +36,38 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   const selectedLine = () => session.lines.find(l => l.id === selected)
   const matchesSource = () => acceptedSource && session.source?.hash === acceptedSource.hash && Math.abs(session.source.duration - acceptedSource.duration) < .001
   const connected = () => !pendingSource && matchesSource()
+  function selectLine(id) {
+    if (id !== selected) { selected = id; selectionEpoch++ }
+  }
+  /** Detached accepted sentence timing, never an unadopted alignment proposal.
+   * Audio uses source-clock seconds; subtitle displayOffsetMs is unrelated. */
+  function getSelectionSnapshot() {
+    const line = selectedLine(), source = session.source
+    const sourceConnected = !!connected(), draftChanged = el('raw').value !== session.rawText
+    const blocker = !sourceConnected ? '請先載入並核對歌詞使用的原音檔'
+      : draftChanged ? '原文有修改，請先按「套用歌詞」'
+      : !line?.sung ? '請選取演唱歌詞行'
+      : !Number.isFinite(line.start) || !Number.isFinite(line.end) || line.start < 0 || line.end <= line.start || line.end > source.duration
+        ? '請先補齊這句的句首與句尾時間' : ''
+    return {
+      version: 1, token: [selectionBridgeId, generation, editEpoch, selectionEpoch, rawDraftEpoch,
+        Number(pendingSource), Number(sourceConnected), Number(draftChanged)].join(':'),
+      ready: !blocker, blocker, precision: 'sentence', sessionRevision: session.revision,
+      source: source ? { name: source.name, hash: source.hash, duration: source.duration } : null,
+      line: line ? { id: line.id, text: line.text, start: line.start, end: line.end,
+        sung: line.sung, confirmed: line.confirmed, timingOrigin: line.timingOrigin } : null,
+    }
+  }
+  function emitSelectionChange() {
+    const next = getSelectionSnapshot()
+    if (next.token === lastSelectionToken) return
+    lastSelectionToken = next.token
+    for (const listener of selectionSubscribers) {
+      // An optional consumer must not interrupt lyric history/backup or prevent
+      // another consumer from seeing an invalidated source/selection.
+      try { listener(clone(next)) } catch (error) { console.error('[wf:lyrics-selection]', error) }
+    }
+  }
   const recoverable = () => { try { return !!localStorage.getItem(STORAGE_KEY) } catch { return false } }
   let saveTimer, pendingBackup = null
   function persistRecovery(backup) {
@@ -72,7 +107,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     const restored = parseSession(next)
     cancelRecovery()
     invalidateAlignment('已開啟另一份工程，這次分析未套用')
-    editEpoch++; sessionTouched = true; session = restored; history.push(clone(session)); selected = session.lines[0].id
+    editEpoch++; sessionTouched = true; session = restored; history.push(clone(session)); selectLine(session.lines[0].id)
     el('raw').value = session.rawText
     render(); saveRecovery()
     notify(connected() ? '已恢復歌詞與時間，已核對為同一份原音檔' : '已恢復文字與時間；請載入同一份原音檔，核對完成後就能校正與匯出字幕')
@@ -94,7 +129,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   add('lyrics.apply', '套用這份歌詞', 'DAW-LYR01', () => {
     const next = createSession(el('raw').value, acceptedSource)
     next.revision = session.revision + 1
-    commit(next); selected = session.lines[0].id; render()
+    commit(next); selectLine(session.lines[0].id); render()
     notify('已套用原文，可自動找時間或手動校正。改用另一份歌詞會清除時間，可按「復原」取回')
   }, () => !pendingSource, '正在核對音檔，請稍候')
   add('lyrics.undo', '復原歌詞操作', 'DAW-LYR04', () => {
@@ -336,7 +371,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   }
   function selectRelative(delta) {
     const index = session.lines.findIndex(l => l.id === selected)
-    selected = session.lines[Math.max(0, Math.min(session.lines.length - 1, index + delta))].id
+    selectLine(session.lines[Math.max(0, Math.min(session.lines.length - 1, index + delta))].id)
     render(); el('list').querySelector(`[data-line="${selected}"]`)?.focus()
   }
   function refreshControls() {
@@ -361,7 +396,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     if (!hasLyrics || originalChanged) el('original').open = !hasLyrics
     el('original-summary').textContent = hasLyrics ? `編輯原文 · ${session.lines.length} 行` : '貼上歌詞'
     presentedRawText = session.rawText
-    if (!selectedLine()) selected = session.lines[0].id
+    if (!selectedLine()) selectLine(session.lines[0].id)
     const line = selectedLine()
     el('list').replaceChildren(...session.lines.map((l, index) => {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.line = l.id
@@ -389,6 +424,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     if (hasLyrics && originalChanged && originalHadFocus) el('waveform').focus({ preventScroll: true })
     if (!hasLyrics && editingHadFocus) el('original-summary').focus({ preventScroll: true })
     if (hasLyrics && focusedLine) el('list').querySelector(`[data-line="${focusedLine}"]`)?.focus({ preventScroll: true })
+    emitSelectionChange()
   }
   function drawWaveform() {
     const canvas = el('waveform'), ctx = canvas.getContext('2d')
@@ -409,7 +445,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   }
   root.addEventListener('click', e => {
     const button = e.target.closest('[data-command]'); if (button) dispatch(button.dataset.command)
-    const row = e.target.closest('[data-line], [data-preview-line]'); if (row) { selected = row.dataset.line ?? row.dataset.previewLine; render(); el('list').querySelector(`[data-line="${selected}"]`)?.focus() }
+    const row = e.target.closest('[data-line], [data-preview-line]'); if (row) { selectLine(row.dataset.line ?? row.dataset.previewLine); render(); el('list').querySelector(`[data-line="${selected}"]`)?.focus() }
   })
   for (const key of ['start', 'end']) el(`${key}-value`).addEventListener('change', e => {
     try { setTiming(key, e.target.value === '' ? NaN : Number(e.target.value)) } catch (err) { render(); notify(err.message) }
@@ -421,7 +457,9 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     try { commit(setManualLock(session, selected, e.target.checked)) } catch (err) { render(); notify(err.message) }
   })
   el('raw').addEventListener('input', () => {
+    rawDraftEpoch++
     invalidateAlignment('原文草稿已變更，這次分析未套用'); renderAlignment(); refreshControls()
+    emitSelectionChange()
   })
   for (const id of ['language', 'model-consent']) el(id).addEventListener('change', () => {
     invalidateAlignment(id === 'language' ? '語言設定已變更，請重新分析' : '模型下載同意已變更，這次分析未套用'); renderAlignment(); refreshControls()
@@ -484,6 +522,7 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
     // BFCache resumes the page with existing controls; never resume an old model task.
     if (!event.persisted) {
       clearInterval(ticker); observer.disconnect()
+      selectionSubscribers.clear()
       window.removeEventListener('pagehide', onPageHide); window.removeEventListener('pageshow', onPageShow)
     }
   }
@@ -502,6 +541,13 @@ export function initLyricsPanel({ engine, getCurrentFile, playRange, stopPlaybac
   render()
   if (recoverable()) notify('此瀏覽器有上次備份，可按「恢復上次」；不會自動覆蓋目前工作')
   return {
+    getSelectionSnapshot,
+    // Read the initial snapshot explicitly; subscriptions notify later changes.
+    subscribeSelection(listener) {
+      if (typeof listener !== 'function') throw new TypeError('歌詞選取訂閱需要函式')
+      selectionSubscribers.add(listener)
+      return () => selectionSubscribers.delete(listener)
+    },
     sourceLoading() {
       invalidateAlignment('音檔正在更換，這次分析未套用')
       ++generation; pendingSource = true; flushRecovery(); stopPlayback(); render()

@@ -5,6 +5,7 @@ import { createZip } from '../../src/js/audio/zip.js'
 import { sha256Hex } from '../../src/js/audio/sha256.js'
 import { exportProjectArchive, importProjectArchive, archiveFileName, ARCHIVE_LIMITS, decodeArchiveAsset } from '../../src/js/daw/archive.js'
 import { ProjectHistory, cloneProjectMetadata } from '../../src/js/daw/history.js'
+import { getClipGainRegionSegments } from '../../src/js/daw/gain-regions.js'
 
 const encode = value => new TextEncoder().encode(value)
 const decode = value => new TextDecoder().decode(value)
@@ -107,6 +108,28 @@ describe('portable DAW archive', () => {
     expect(result.project.tracks[0].name).toBe(before.tracks[0].name)
     expect(result.project.assets[0].hash).toMatch(/^[a-f0-9]{64}$/)
     expect(project.assets[0].hash).toBeUndefined()
+  })
+
+  it('restores editable gain regions, exact cropped boundaries and unchanged original files', async () => {
+    let { project, files, originals } = await fixture()
+    project = applyCommand(project, { type: 'clip.gainRegion.addMany', trackId: 'track-one', clipId: 'clip-a', regions: [
+      { id: 'first-line', label: '一句', startSeconds: .1, endSeconds: .9, gain: 0, fadeInSeconds: .3, fadeOutSeconds: .3 },
+      { id: 'second-line', label: '第二句', startSeconds: .6, endSeconds: 1, gain: .4, fadeInSeconds: .1, fadeOutSeconds: .1 },
+    ] })
+    project = applyCommand(project, { type: 'clip.automation.add', trackId: 'track-one', clipId: 'clip-a', point: { timeSeconds: .5, value: 1.8 } })
+    project = applyCommand(project, { type: 'clip.split', trackId: 'track-one', clipId: 'clip-a', atSeconds: 12.75, newId: 'tail' })
+    project = applyCommand(project, { type: 'clip.trim', trackId: 'track-one', clipId: 'clip-a', startSeconds: 12.2, endSeconds: 12.7 })
+    const archive = await exportProjectArchive(project, files)
+    const restored = await importProjectArchive(archive, { decodeAsset })
+    expect(restored.project).toEqual(project)
+    for (const [index, clip] of project.tracks[0].clips.entries()) expect(getClipGainRegionSegments(restored.project.tracks[0].clips[index])).toEqual(getClipGainRegionSegments(clip))
+    const changed = applyCommand(restored.project, { type: 'clip.gainRegion.update', trackId: 'track-one', clipId: 'clip-a', regionId: 'first-line', patch: { gain: .5 } })
+    expect(changed.tracks[0].clips[0].gainRegions[0].attenuationEnvelope).toEqual(project.tracks[0].clips[0].gainRegions[0].attenuationEnvelope)
+    const removed = applyCommand(changed, { type: 'clip.gainRegion.remove', trackId: 'track-one', clipId: 'clip-a', regionId: 'first-line' })
+    expect(removed.tracks[0].clips[0].gainRegions.map(region => region.id)).toEqual(['second-line'])
+    expect((await entriesOf(archive))[1].data).toEqual(originals[0])
+    expect((await entriesOf(archive))[2].data).toEqual(originals[1])
+    expect(await entriesOf(await exportProjectArchive(restored.project, restored.files))).toEqual(await entriesOf(archive))
   })
 
   it('restores an empty project and reports completion', async () => {
@@ -290,6 +313,23 @@ describe('portable DAW archive', () => {
 })
 
 describe('strict archive rejection', () => {
+  it.each([
+    r => { r.gain = 1.1 }, r => { r.startSeconds = -.1 }, r => { r.endSeconds = 2 },
+    r => { r.label = 'a'.repeat(121) }, r => { r.transcript = { tokens: ['unbounded ASR data'] } },
+    r => { r.attenuationEnvelope = [{ timeSeconds: 0, value: 0 }, { timeSeconds: 1, value: 1 }] },
+    r => { r.attenuationEnvelope = [{ timeSeconds: 0, value: 0 }, { timeSeconds: .8, value: -1 }] },
+  ])('rejects malformed gain regions transactionally before any audio decode', async mutate => {
+    const { project, archive, files } = await fixture(), before = copy(project), decoder = vi.fn(decodeAsset)
+    const bad = await editManifest(archive, manifest => {
+      const region = { id: 'line', startSeconds: .1, endSeconds: .9, gain: 0, fadeInSeconds: .1, fadeOutSeconds: .1 }
+      mutate(region); manifest.project.tracks[0].clips[0].gainRegions = [region]
+    })
+    const current = { project, files, buffers: new Map() }
+    await expect(importProjectArchive(bad, { decodeAsset: decoder }).then(restored => Object.assign(current, restored))).rejects.toThrow()
+    expect(decoder).not.toHaveBeenCalled(); expect(current.project).toBe(project); expect(project).toEqual(before)
+    expect(current.files).toBe(files); expect(current.buffers.size).toBe(0)
+  })
+
   it.each([
     ['future archive version', manifest => { manifest.version = 2 }],
     ['future project schema', manifest => { manifest.project.schema = 'waveforge.project.v2' }],
