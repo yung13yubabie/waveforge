@@ -1166,8 +1166,8 @@
     </div>
     <div class="daw-editor-grid">
       <div class="daw-arrangement">
-        <div class="daw-section-title"><h2>音軌</h2><span id="daw-summary">0 軌 · 0 片段</span><button type="button" data-daw="add-track">新增音軌</button>
-          <details class="daw-grid-settings"><summary>格線與縮放</summary><div class="daw-grid-fields">
+        <div class="daw-section-title"><h2>音軌</h2><span id="daw-summary">0 軌 · 0 片段</span><button type="button" data-daw="multi-select" aria-pressed="false" aria-label="多選片段" title="多選後點選片段；桌面也可按 Shift 加選">多選</button><button type="button" data-daw="add-track">新增音軌</button>
+          <details class="daw-grid-settings"><summary aria-label="格線與縮放">格線</summary><div class="daw-grid-fields">
             <label class="daw-inline">BPM<input id="daw-tempo" type="number" min="20" max="300" step="any" value="120"></label>
             <label class="daw-check"><input id="daw-snap" type="checkbox" checked> 吸附拍格</label>
             <label class="daw-inline">格線<select id="daw-grid"><option value="1">一拍</option><option value="0.5">半拍</option><option value="0.25">四分之一拍</option></select></label>
@@ -1176,7 +1176,7 @@
             <p class="daw-note">BPM 只改格線，不改音訊速度</p>
           </div></details>
         </div>
-        <div id="daw-timeline" class="daw-timeline" tabindex="0" aria-label="多軌時間軸，選取片段後可用左右方向鍵移動，Delete 刪除">
+        <div id="daw-timeline" class="daw-timeline" tabindex="0" aria-label="多軌時間軸，Shift 加選，Ctrl 或 Command A 全選；左右方向鍵移動，Delete 刪除，Escape 取消拖曳或結束多選">
           <div id="daw-ruler" class="daw-ruler" aria-label="時間刻度"></div>
           <div id="daw-tracks"></div>
           <p id="daw-empty" class="daw-empty">匯入音檔，或拖到這裡<span>音訊在裝置內處理，不會上傳</span></p>
@@ -1185,6 +1185,7 @@
       </div>
       <aside class="daw-inspector" aria-label="所選片段參數">
         <div class="daw-inspector-heading"><span>片段</span><h2 id="daw-selection-title">選取片段以編輯</h2><p id="daw-selection-range" class="daw-note">點選時間軸上的波形</p></div>
+        <div id="daw-group-tools" hidden></div>
         <fieldset id="daw-clip-fields" disabled hidden>
           <label>名稱<input id="daw-clip-name" maxlength="120"></label>
           <div class="daw-actions daw-edit-actions"><button type="button" data-daw="split" title="在播放位置分割">分割</button><button type="button" data-daw="duplicate" title="複製到片段後方">複製</button><button type="button" data-daw="delete">刪除</button></div>
@@ -1287,6 +1288,8 @@
     <details class="daw-help" id="daw-help"><summary>操作說明與資料保存</summary>
       <h3>編輯與快捷鍵</h3>
       <p>匯入 → 點選片段 → 移動／裁切 → 試聽 → 下載工程或混音。拖曳片段或用左右方向鍵移動，空白鍵播放／暫停，Ctrl／⌘ Z 復原。提早／延後在吸附開啟時移動一格，關閉時移動 10 毫秒。分割使用目前播放位置；複製會放在原片段後方。</p>
+      <p>按「多選」後逐一點片段；桌面也可用 Shift 加選，在時間軸按 Ctrl／⌘ A 全選。整組移動保留軌道與間距，「複製到尾端」接在整個工程最後。多選時只顯示整組操作；結束多選後可編輯單一片段。Escape 取消拖曳，或在時間軸結束多選；在整組數字欄位則取消未套用輸入。每次整組操作可一次復原。</p>
+      <p>「循環所選」播放從最早片段到最晚片段結尾的完整混音，包含中間空白與其他音軌。選取外的同軌片段預設不能被整組移動疊到；若要混合重疊聲音，須為這次數字移動勾選允許重疊。多選狀態與復原步驟只留在本頁；接受的編輯會保存在工程。</p>
       <p>保留起點／終點以時間軸秒數計算；裁切保留兩者之間的聲音，可復原，不改原始錄音、音高或播放速度。BPM 只改拍格。每個音檔新增一軌，起點在 0 秒。</p>
       <h3>音量與混音</h3>
       <p>音量曲線的 100% 不變、0% 靜音，最高 200%（約 +6 dB）；最多 32 點。起點與終點可調音量，時間固定。新增點位於最寬空隙中間，點與點之間平滑改變音量。曲線與片段音量、淡入淡出相乘。淡入與淡出合計不能超過片段長度。</p>
@@ -1303,7 +1306,7 @@
     </details>
     <div class="daw-transport" role="toolbar" aria-label="多軌專案播放控制">
       <div class="daw-play-actions"><button type="button" data-daw="begin" aria-label="回到專案開頭">回開頭</button><button type="button" data-daw="play" class="daw-primary" disabled>播放混音</button><button type="button" data-daw="stop" disabled>停止</button></div>
-      <label class="daw-check"><input id="daw-loop" type="checkbox"> 循環片段</label>
+      <label class="daw-check"><input id="daw-loop" type="checkbox"> 循環所選</label>
       <label class="daw-seek-label"><span class="daw-sr-only">播放位置</span><input id="daw-seek" type="range" min="0" max="0" step="0.01" value="0" aria-label="多軌播放位置（秒）"></label>
       <output id="daw-time">00:00.000 / 00:00.000</output>
     </div>

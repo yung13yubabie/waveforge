@@ -17,6 +17,9 @@ import { midiToNote, midiToFrequency } from '../pitch/analysis.js'
 import { planNoteCentering, combineNoteCenteringPlans, NOTE_CENTERING_LIMITS } from './note-centering.js'
 import { getDawGridOrigin, snapDawGridTime, nextDawGridTime } from './grid.js'
 import { createTempoControls } from './tempo-controls.js'
+import { createMultiClipSelection, createClipSelectionHistory } from './multi-clip-selection.js'
+import { createClipGroupControls } from './clip-group-controls.js'
+import { describeClipGroup, planClipGroupDuplicate } from './clip-groups.js'
 
 const FILE_LIMIT = 64 * 1024 * 1024
 const abortError = () => new DOMException('已取消', 'AbortError')
@@ -61,9 +64,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   }
   let project = createProject({ name: '未命名專案' })
   let history = new ProjectHistory(project)
+  const clipSelection = createMultiClipSelection(), selectionHistory = createClipSelectionHistory()
   let buffers = new Map(), files = new Map()
   let saved = JSON.stringify(project), hasDownloaded = false, hasProjectDocument = false
-  let selection = null, cursor = 0, mix = null, selectionMix = null, selectionControls = null, tempoControls = null, job = null, generation = 0
+  let selection = null, cursor = 0, mix = null, selectionMix = null, selectionControls = null, tempoControls = null, groupControls = null, job = null, generation = 0
   let replacement = null, replacementOwner = null, selectionVersion = 0, replacementReadBusy = false, pendingReplacementBytes = 0
   let pitchClient = null, transposeBusy = false, transposeVersion = 0, transposeControlOwner = null, pendingAudition = null
   let noteAnalyses = null, noteOwner = null, noteProposal = null, noteControlOwner = null, noteAnalysisClient = null, noteAnalysisBytes = 0, noteReference = null
@@ -75,6 +79,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   const getContext = () => context ||= new AudioContextClass()
   const dirty = () => saved !== JSON.stringify(project)
   const selected = () => {
+    if (clipSelection.refs.length > 1) return null
     const track = project.tracks.find(item => item.id === selection?.trackId)
     const clip = track?.clips.find(item => item.id === selection?.clipId)
     return clip ? { track, clip } : null
@@ -97,6 +102,23 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     status(error?.message || String(error), true)
   }
   const run = task => Promise.resolve().then(task).catch(report)
+  const isSelected = (trackId, clipId) => clipSelection.refs.some(ref => ref.trackId === trackId && ref.clipId === clipId)
+  const gridKey = () => JSON.stringify([project.tempo, getDawGridOrigin(project), el('grid').value, el('snap').checked, el('zoom').value])
+  function rememberSelection() {
+    selectionHistory.set(history.currentKey, clipSelection.snapshot())
+    selectionHistory.prune(history.retainedKeys)
+  }
+  function syncSelection() { clipSelection.reconcile(project); selection = clipSelection.primary; rememberSelection() }
+  function selectionChanged() {
+    const hadDragPreview = Boolean(drag?.moved)
+    // Move focus before the controls' cancel/render hides their subtree.
+    if (clipSelection.refs.length < 2 && el('group-tools').contains(document.activeElement)) el('timeline').focus({ preventScroll: true })
+    selectionVersion++; discardReplacement('已變更所選片段，待接受的試聽已取消')
+    automationDrag = null; drag = null; groupControls?.cancel()
+    selection = clipSelection.primary; rememberSelection(); stop()
+    if (hadDragPreview) renderTracks()
+    renderInspector(); paintPlayhead()
+  }
   const currentTime = () => {
     if (!playback || !context) return cursor
     const elapsed = context.currentTime - playback.started
@@ -133,6 +155,10 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     status(message); refreshControls()
   }
   function invalidate() {
+    // Retire the group's pending UI action before other helpers refresh it.
+    // Temporarily disabling a focused button makes native browsers blur it,
+    // losing the focus needed when the contextual inspector disappears.
+    drag = null; groupControls?.cancel()
     discardReplacement()
     resetNoteCentering()
     automationDrag = null
@@ -145,18 +171,20 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     for (const id of buffers.keys()) if (!ids.has(id)) buffers.delete(id)
     for (const id of files.keys()) if (!ids.has(id)) files.delete(id)
   }
-  function commit(next, label) {
+  function commit(next, label, nextSelection) {
     const rangeCleared = Boolean(project.timelineSelection && !next.timelineSelection && getProjectDuration(next) < project.timelineSelection.endSeconds)
+    rememberSelection()
     history.push(next) // Validate before replacing state or invalidating playback.
     invalidate(); project = next
     retainHistoryAssets()
-    if (!selected()) selection = null
+    if (nextSelection) clipSelection.restore(nextSelection)
+    syncSelection()
     cursor = clamp(cursor, 0, duration())
     render(); status(label + (rangeCleared ? '；原選區已超出工程，已清除，可復原找回' : ''))
   }
-  function command(value, label) {
+  function command(value, label, nextSelection) {
     if (job && ['import', 'open'].includes(job.kind)) throw new Error('請等待匯入完成，或先取消目前工作')
-    commit(applyCommand(project, value), label)
+    commit(applyCommand(project, value), label, nextSelection)
   }
   function clipCommand(type, extra, label) {
     const item = selected()
@@ -165,10 +193,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   }
   function changeHistory(direction) {
     if (job && ['import', 'open'].includes(job.kind)) return
+    rememberSelection()
     const next = history[direction]()
     if (!next) return
     invalidate(); project = next
-    if (!selected()) selection = null
+    const previousSelection = selectionHistory.get(history.currentKey)
+    if (previousSelection) clipSelection.restore(previousSelection)
+    syncSelection()
     cursor = clamp(cursor, 0, duration()); render(); status(direction === 'undo' ? '已復原上一步' : '已重做')
   }
   function refreshControls() {
@@ -182,6 +213,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     button('stop').disabled = !source && !noteReference && !job && cursor === 0
     button('cancel').hidden = !job
     button('add-track').disabled = Boolean(locked || project.tracks.length >= DAW_LIMITS.maxTracks)
+    button('multi-select').disabled = Boolean(job || !project.tracks.some(track => track.clips.length))
+    button('multi-select').setAttribute('aria-pressed', String(clipSelection.mode))
     el('clip-fields').disabled = Boolean(locked || !selected())
     for (const key of ['name', 'tempo', 'sample-rate', 'master-gain']) el(key).disabled = Boolean(locked)
     root.querySelectorAll('[data-track-control]').forEach(control => { control.disabled = Boolean(locked) })
@@ -201,16 +234,19 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     refreshRegionControls()
     selectionControls?.render()
     tempoControls?.render()
+    groupControls?.render()
     root.setAttribute('aria-busy', String(Boolean(job)))
   }
   function renderInspector() {
     const item = selected()
+    const group = clipSelection.refs.length > 1 ? describeClipGroup(project, clipSelection.refs) : null
     // Keep keyboard focus in the workspace when its contextual form disappears.
     const inspectorHadFocus = el('clip-fields').contains(document.activeElement)
+    const groupHadFocus = el('group-tools').contains(document.activeElement)
     el('clip-fields').hidden = !item
-    if (!item && inspectorHadFocus) el('timeline').focus({ preventScroll: true })
-    el('selection-title').textContent = item ? item.clip.name : '選取片段以編輯'
-    el('selection-range').textContent = item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)}${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : '點選時間軸上的波形'
+    if (!item && inspectorHadFocus || !group && groupHadFocus) el('timeline').focus({ preventScroll: true })
+    el('selection-title').textContent = group ? `已選 ${group.count} 個片段` : item ? item.clip.name : '選取片段以編輯'
+    el('selection-range').textContent = group ? `${group.trackCount} 軌 · 保留軌道與間距` : item ? `${formatDawTime(item.clip.atSeconds)}–${formatDawTime(item.clip.atSeconds + item.clip.durationSeconds)}${item.clip.gainEnvelope ? '。保留裁切前的接縫曲線；重新套用淡入／淡出會替換它' : ''}` : clipSelection.mode ? '點選片段加入或取消選取' : '點選時間軸上的波形'
     if (item) {
       const { clip, track } = item
       for (const [key, value] of Object.entries({ 'clip-name': clip.name, 'clip-at': clip.atSeconds, 'trim-start': clip.atSeconds, 'trim-end': clip.atSeconds + clip.durationSeconds, 'clip-gain': clip.gainDb, 'fade-in': clip.fadeInSeconds, 'fade-out': clip.fadeOutSeconds })) el(key).value = typeof value === 'number' ? String(value) : value
@@ -223,7 +259,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     renderRegions(item)
     renderAutomation()
     renderReplacement()
-    root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.clipId === selection?.clipId)))
+    root.querySelectorAll('.daw-clip').forEach(control => control.setAttribute('aria-pressed', String(isSelected(control.dataset.trackId, control.dataset.clipId))))
     refreshControls()
   }
   function readLyricSelection() {
@@ -507,7 +543,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
         const control = node('button', 'daw-clip'); control.type = 'button'; control.dataset.clipId = clip.id; control.dataset.trackId = track.id
         control.style.top = `${20 + layers.get(clip.id) * 104}px`; control.style.left = `${clip.atSeconds * rate}px`; control.style.width = `${Math.max(12, clip.durationSeconds * rate)}px`
         control.setAttribute('aria-label', `${track.name}，${clip.name}，${formatDawTime(clip.atSeconds)} 至 ${formatDawTime(clip.atSeconds + clip.durationSeconds)}${clip.gainRegions?.length ? `，${clip.gainRegions.length} 個局部消音區間` : ''}。左右方向鍵移動`)
-        control.setAttribute('aria-pressed', String(selection?.clipId === clip.id)); control.append(node('span', 'daw-clip-name', clip.name), waveform(clip));
+        control.setAttribute('aria-pressed', String(isSelected(track.id, clip.id))); control.append(node('span', 'daw-clip-name', clip.name), waveform(clip));
         appendRegionCues(control, clip); lane.append(control)
       }
       lane.append(node('i', 'daw-playhead')); row.append(controls, lane); return row
@@ -520,6 +556,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   function render() {
     el('name').value = project.name; el('tempo').value = String(project.tempo); el('sample-rate').value = String(project.sampleRate); el('master-gain').value = String(project.masterGainDb)
     el('summary').textContent = `${project.tracks.length} 軌 · ${project.tracks.reduce((sum, track) => sum + track.clips.length, 0)} 片段 · ${formatDawTime(duration())}`
+    el('summary').title = el('summary').textContent
     el('seek').max = String(duration()); el('seek').disabled = !duration()
     if (!mix) el('render-info').textContent = '尚未產生目前版本的混音；峰值過載時會停止 WAV 輸出'
     renderTracks(); renderInspector(); paintPlayhead()
@@ -618,7 +655,8 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
           next = applyCommand(next, { type: 'clip.add', trackId, clip: { id: clipId, assetId: registered.asset.id, name: file.name } })
           if (i === list.length - 1) nextSelection = { trackId, clipId }
         }
-        check(); history.push(next); invalidate(); project = next; selection = nextSelection; buffers = nextBuffers; files = nextFiles
+        check(); rememberSelection(); history.push(next); invalidate(); project = next; buffers = nextBuffers; files = nextFiles
+        clipSelection.setMode(false); if (nextSelection) clipSelection.select(nextSelection); syncSelection()
         retainHistoryAssets(); cursor = 0; render(); status(`已匯入 ${list.length} 個音檔，各自從 0 秒開始。可復原整批匯入`)
       } finally {
         // Cancel/Clear only retire UI ownership. Unabortable reads, hashes and
@@ -628,7 +666,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     })
   }
   const cachedMixBytes = () => mix ? mix.buffer.length * mix.buffer.numberOfChannels * 4 : 0
-  const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2
+  const metadataBytes = () => history.bytes * 2 + JSON.stringify(project).length * 2 + selectionHistory.bytes * 2
   const replacementBytes = () => replacement ? (replacement.kind === 'gain-regions' ? 0 : replacement.buffer.length * replacement.buffer.numberOfChannels * 4 + replacement.file.size) +
     (replacement.mix ? replacement.mix.buffer.length * replacement.mix.buffer.numberOfChannels * 4 : 0) + JSON.stringify(replacement.registeredProject || replacement.project).length * 4 : 0
   const pcmBytes = buffer => buffer ? buffer.length * buffer.numberOfChannels * 4 : 0
@@ -1020,7 +1058,12 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
         })
         check(); const nextHistory = new ProjectHistory(restored.project)
         invalidate(); project = restored.project; files = restored.files; buffers = restored.buffers; history = nextHistory
-        saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = true; selection = null; cursor = 0; resetRegionMapping()
+        clipSelection.reset(); selectionHistory.clear(); syncSelection()
+        saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = true; cursor = 0; resetRegionMapping()
+        // A restored document has no selected clips. Do not carry an old
+        // focused clip/control ID into renderTracks, which would focus and
+        // select a same-ID replacement from the new document.
+        if (!root.hidden && el('timeline').contains(document.activeElement)) el('timeline').focus({ preventScroll: true })
         render(); status('工程已還原，音檔、剪輯與混音設定可繼續修改')
       } finally { reservation.finish() }
     })
@@ -1076,10 +1119,11 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       const ctx = getContext(); await ctx.resume(); request.check()
       const result = rangeOnly ? await getSelectionMix(request) : await getMix(request); request.check()
       assertSafePlayback(result)
-      const item = selected(), looping = rangeOnly ? loopRange : el('loop').checked
-      if (looping && !rangeOnly && !item) throw new Error('循環試聽前請先選取片段')
-      const start = rangeOnly ? result.startSeconds : looping ? item.clip.atSeconds : cursor >= duration() ? 0 : cursor
-      const end = rangeOnly ? result.endSeconds : looping ? item.clip.atSeconds + item.clip.durationSeconds : duration()
+      const item = selected(), group = clipSelection.refs.length > 1 ? describeClipGroup(project, clipSelection.refs) : null
+      const looping = rangeOnly ? loopRange : el('loop').checked
+      if (looping && !rangeOnly && !item && !group) throw new Error('循環試聽前請先選取片段')
+      const start = rangeOnly ? result.startSeconds : looping ? group?.startSeconds ?? item.clip.atSeconds : cursor >= duration() ? 0 : cursor
+      const end = rangeOnly ? result.endSeconds : looping ? group?.endSeconds ?? item.clip.atSeconds + item.clip.durationSeconds : duration()
       source = ctx.createBufferSource(); source.buffer = result.buffer; source.connect(ctx.destination)
       playback = { start, end, loop: looping, started: ctx.currentTime }; cursor = start
       if (looping) { source.loop = true; source.loopStart = start; source.loopEnd = end }
@@ -1135,14 +1179,60 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   function clear() {
     discardReplacement(); cancelJob(); stop({ rewind: true }); generation++
     project = createProject({ name: '未命名專案' }); history = new ProjectHistory(project)
-    buffers.clear(); files.clear(); mix = null; selectionMix = null; selection = null; saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = false; resetRegionMapping()
+    buffers.clear(); files.clear(); mix = null; selectionMix = null; clipSelection.reset(); selectionHistory.clear(); syncSelection(); drag = null; groupControls?.cancel(); saved = JSON.stringify(project); hasDownloaded = false; hasProjectDocument = false; resetRegionMapping()
     el('audio-files').value = ''; el('project-file').value = ''; el('replacement-file').value = ''; el('replacement-offset').value = '0'; render(); status('已清除此多軌專案與復原紀錄。裝置上的原檔與下載檔仍保留')
   }
-  function choose(trackId, clipId) {
-    if (selection?.trackId !== trackId || selection?.clipId !== clipId) { selectionVersion++; discardReplacement('已變更所選片段，待接受的試聽已取消') }
+  function choose(trackId, clipId, options = {}) {
+    const clip = project.tracks.find(track => track.id === trackId)?.clips.find(clip => clip.id === clipId)
+    if (!clip) return
     automationDrag = null
-    selection = { trackId, clipId }; const item = selected(); if (!item) { selection = null; return }
-    stop(); cursor = item.clip.atSeconds; renderInspector(); paintPlayhead()
+    const version = clipSelection.version
+    clipSelection.select({ trackId, clipId }, options)
+    if (clipSelection.version !== version) selectionChanged()
+    stop(); cursor = clip.atSeconds; renderInspector(); paintPlayhead()
+  }
+  function setMultiMode(enabled) {
+    clipSelection.setMode(enabled); selectionChanged()
+    status(enabled ? '多選已開啟；點選片段加入或取消，整組保留間距與音軌' : '已結束多選')
+  }
+  function groupContextCurrent(context) {
+    return !destroyed && !root.hidden && !job && context.owner.projectId === project.id && context.owner.revision === project.revision &&
+      context.owner.selectionVersion === clipSelection.version && context.owner.sourceVersion === generation &&
+      JSON.stringify(context.refs) === JSON.stringify(clipSelection.refs)
+  }
+  function moveGroupTo(atSeconds, context) {
+    if (!groupContextCurrent(context)) throw abortError()
+    const group = describeClipGroup(project, context.refs), deltaSeconds = atSeconds - group.startSeconds
+    if (!deltaSeconds) return
+    try {
+      command({ type: 'clips.move', refs: context.refs, deltaSeconds, allowOverlap: context.allowOverlap }, `已移動 ${group.count} 個片段；可一次復原`)
+    } catch (error) {
+      if (error.code === 'CLIP_GROUP_OVERLAP') error.message = `會和同軌其他片段重疊（${error.overlaps.length} 處）；位置未改變。若要疊加聲音，請勾選「這次允許重疊」後套用數字位置`
+      throw error
+    }
+  }
+  function nudgeGroup(direction, context) {
+    if (!groupContextCurrent(context)) throw abortError()
+    const group = describeClipGroup(project, context.refs), maximum = group.startSeconds + group.maxDeltaSeconds
+    const atSeconds = el('snap').checked
+      ? nextDawGridTime(group.startSeconds, direction, project.tempo, Number(el('grid').value), getDawGridOrigin(project), maximum)
+      : clamp(group.startSeconds + direction * .01, 0, maximum)
+    moveGroupTo(atSeconds, context)
+  }
+  function captureGroupContext() {
+    return { refs: clipSelection.refs, allowOverlap: false, owner: { projectId: project.id, revision: project.revision, selectionVersion: clipSelection.version, sourceVersion: generation } }
+  }
+  function duplicateGroup(context) {
+    if (!groupContextCurrent(context)) throw abortError()
+    if (project.tracks.reduce((sum, track) => sum + track.clips.length, 0) + context.refs.length > DAW_LIMITS.maxClips) throw new Error('複製後會超過 256 個片段；目前工程保持不變')
+    if (describeClipGroup(project, context.refs).durationSeconds + duration() > DAW_LIMITS.maxDurationSeconds) throw new Error('複製到尾端會超過 10 分鐘；目前工程保持不變')
+    const plan = planClipGroupDuplicate(project, context.refs, { snapEnabled: el('snap').checked, gridBeats: Number(el('grid').value) })
+    const newIds = context.refs.map(() => generateId('clip')), refs = context.refs.map((ref, index) => ({ trackId: ref.trackId, clipId: newIds[index] }))
+    command({ type: 'clips.duplicate', refs: context.refs, deltaSeconds: plan.deltaSeconds, newIds }, `已複製 ${refs.length} 個片段到專案尾端；原音檔共用，不增加音訊副本`, { mode: true, refs, primary: refs.at(-1) })
+  }
+  function removeGroup(context) {
+    if (!groupContextCurrent(context)) throw abortError()
+    command({ type: 'clips.remove', refs: context.refs }, `已刪除 ${context.refs.length} 個片段；可一次復原，原音檔仍保留`)
   }
   function nudge(direction) {
     const item = selected(); if (!item) return
@@ -1154,6 +1244,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     clipCommand('clip.move', { atSeconds }, direction < 0 ? '已把片段提早' : '已把片段延後')
   }
   const actions = {
+    'multi-select': () => setMultiMode(!clipSelection.mode),
     'note-center-analyze': analyzeNoteCenter, 'note-center-render': prepareCenteredNote, 'note-center-reference': playNoteReference,
     'region-designate': designateVocalTrack, 'region-use-lyric': useLyricRegion, 'region-prepare': prepareGainRegions,
     'region-remove': () => clipCommand('clip.gainRegion.remove', { regionId }, '已刪除此人聲區間；可復原'),
@@ -1170,7 +1261,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     'automation-add': addAutomationPoint, 'automation-apply': applyAutomationPoint,
     'automation-remove': () => clipCommand('clip.automation.remove', { index: automationIndex }, '已刪除中間音量點；相鄰點會平滑連接'),
     'automation-reset': () => clipCommand('clip.automation.reset', {}, '已重設句內音量為 100%；片段音量與淡入淡出仍保留'),
-    move: () => { const clipId = selection?.clipId, toTrackId = el('clip-track').value; clipCommand('clip.move', { atSeconds: snap(Number(el('clip-at').value)), toTrackId }, '已套用片段位置'); selection = { trackId: toTrackId, clipId }; renderInspector() },
+    move: () => { const item = selected(); if (!item) return; const ref = { trackId: el('clip-track').value, clipId: item.clip.id }; command({ type: 'clip.move', trackId: item.track.id, clipId: item.clip.id, atSeconds: snap(Number(el('clip-at').value)), toTrackId: ref.trackId }, '已套用片段位置', { mode: false, refs: [ref], primary: ref }) },
     trim: () => clipCommand('clip.trim', { startSeconds: Number(el('trim-start').value), endSeconds: Number(el('trim-end').value) }, '已裁切片段，原檔仍保留'),
     split: () => clipCommand('clip.split', { atSeconds: currentTime() }, '已在播放位置切開片段'),
     duplicate: () => clipCommand('clip.duplicate', {}, '已複製到片段後方'),
@@ -1190,7 +1281,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       }); return
     }
     const clip = event.target.closest('.daw-clip')
-    if (clip) { if (!suppressClick) choose(clip.dataset.trackId, clip.dataset.clipId); suppressClick = false; return }
+    if (clip) { if (drag) return; if (!suppressClick) choose(clip.dataset.trackId, clip.dataset.clipId, { toggle: event.shiftKey || clipSelection.mode }); suppressClick = false; return }
     const lane = event.target.closest('[data-seek-lane]')
     if (lane) { stop(); cursor = clamp((event.clientX - lane.getBoundingClientRect().left) / Number(el('zoom').value), 0, duration()); paintPlayhead(); refreshControls() }
   })
@@ -1212,7 +1303,7 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     else if (id === 'daw-clip-name') clipCommand('clip.update', { patch: { name: target.value.trim() } }, '已更新片段名稱')
     else if (id === 'daw-automation-point') { automationDrag = null; automationIndex = Number(target.value); renderAutomation() }
     else if (id === 'daw-clip-gain') clipCommand('clip.update', { patch: { gainDb: Number(target.value) } }, '已更新片段音量')
-    else if (['daw-zoom', 'daw-grid', 'daw-snap'].includes(id)) { renderTracks(); paintPlayhead() }
+    else if (['daw-zoom', 'daw-grid', 'daw-snap'].includes(id)) { drag = null; groupControls?.cancel(); renderTracks(); paintPlayhead() }
     else if (id === 'daw-loop') { stop(); refreshControls() }
     else if (target.matches('input[data-track-control]')) command({ type: 'track.update', trackId: target.dataset.trackId, patch: { [target.dataset.trackControl]: Number(target.value) } }, '已更新音軌混音設定')
   }))
@@ -1233,19 +1324,31 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   })
   listen(el('seek'), 'input', () => { const next = Number(el('seek').value); stop(); cursor = next; paintPlayhead(); refreshControls() })
   listen(root, 'keydown', event => {
+    if (event.key === 'Escape' && drag) { event.preventDefault(); drag = null; renderTracks(); paintPlayhead(); status('已取消拖曳；片段位置保持不變'); return }
     if (event.key === 'Escape' && automationDrag) { automationDrag = null; renderAutomation(); return }
     if (event.defaultPrevented || event.isComposing || event.target.matches('input,textarea,select,[contenteditable=true]')) return
     const mod = event.ctrlKey || event.metaKey
-    if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(event.shiftKey ? 'redo' : 'undo') }
+    if (event.key === 'Escape' && clipSelection.mode) { event.preventDefault(); setMultiMode(false) }
+    else if (mod && event.key.toLowerCase() === 'a' && el('timeline').contains(event.target)) { event.preventDefault(); if (!job) { clipSelection.selectAll(project); selectionChanged() } }
+    else if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(event.shiftKey ? 'redo' : 'undo') }
     else if (mod && event.key.toLowerCase() === 'y') { event.preventDefault(); changeHistory('redo') }
     else if (event.code === 'Space' && !event.target.closest('button,summary')) { event.preventDefault(); run(play) }
-    else if (event.target.closest('.daw-clip') && ['ArrowLeft', 'ArrowRight', 'Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); run(() => event.key.startsWith('Arrow') ? nudge(event.key === 'ArrowLeft' ? -1 : 1) : actions.delete()) }
+    else if ((event.target.closest('.daw-clip') || event.target === el('timeline') && clipSelection.refs.length > 1) && ['ArrowLeft', 'ArrowRight', 'Delete', 'Backspace'].includes(event.key)) {
+      event.preventDefault()
+      if (clipSelection.refs.length > 1) {
+        const context = captureGroupContext()
+        run(() => event.key.startsWith('Arrow') ? nudgeGroup(event.key === 'ArrowLeft' ? -1 : 1, context) : removeGroup(context))
+      } else run(() => event.key.startsWith('Arrow') ? nudge(event.key === 'ArrowLeft' ? -1 : 1) : actions.delete())
+    }
   })
   listen(root, 'focusin', event => {
     const clip = event.target.closest('.daw-clip')
-    if (clip && clip.dataset.clipId !== selection?.clipId) choose(clip.dataset.trackId, clip.dataset.clipId)
+    if (clip && !drag && !clipSelection.mode && clip.dataset.clipId !== selection?.clipId) choose(clip.dataset.trackId, clip.dataset.clipId)
   })
   listen(root, 'pointerdown', event => {
+    // A second touch/pen must not replace the first gesture's owner or leave
+    // its preview positions behind. Other pointer types can also be primary.
+    if (event.isPrimary === false || drag && drag.pointerId !== event.pointerId || automationDrag && automationDrag.pointerId !== event.pointerId) return
     const point = event.target.closest('[data-automation-index]')
     if (point) {
       if ((event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
@@ -1257,8 +1360,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
     }
     const clip = event.target.closest('.daw-clip')
     if (!clip || (event.button !== undefined && event.button !== 0) || job && ['import', 'open'].includes(job.kind)) return
-    choose(clip.dataset.trackId, clip.dataset.clipId)
-    drag = { trackId: clip.dataset.trackId, clipId: clip.dataset.clipId, x: event.clientX, at: selected().clip.atSeconds, moved: false }
+    const ref = { trackId: clip.dataset.trackId, clipId: clip.dataset.clipId }, additive = event.shiftKey || clipSelection.mode
+    const toggleOnRelease = additive && isSelected(ref.trackId, ref.clipId)
+    if (!toggleOnRelease) choose(ref.trackId, ref.clipId, { additive })
+    const group = describeClipGroup(project, clipSelection.refs)
+    drag = { ...ref, x: event.clientX, pointerId: event.pointerId, at: group.startSeconds, moved: false,
+      context: captureGroupContext(), grid: gridKey(), minDelta: group.minDeltaSeconds, maxDelta: group.maxDeltaSeconds,
+      toggleOnRelease, group: group.count > 1 }
   })
   listen(window, 'pointermove', event => {
     if (automationDrag) {
@@ -1274,10 +1382,17 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       points[index] = { timeSeconds, value: clamp((124 - (event.clientY - box.top) / box.height * 140) / 54, 0, DAW_LIMITS.maxAutomationGain) }
       automationDrag.changed = true; renderAutomation(points); return
     }
-    if (!drag || Math.abs(event.clientX - drag.x) < 4 && !drag.moved) return
+    if (!drag || event.pointerId !== drag.pointerId) return
+    if (!groupContextCurrent(drag.context) || drag.grid !== gridKey()) { drag = null; renderTracks(); return }
+    if (Math.abs(event.clientX - drag.x) < 4 && !drag.moved) return
     drag.moved = true
-    const clip = [...root.querySelectorAll('.daw-clip')].find(c => c.dataset.clipId === drag.clipId)
-    if (clip) clip.style.left = `${snap(drag.at + (event.clientX - drag.x) / Number(el('zoom').value)) * Number(el('zoom').value)}px`
+    const rate = Number(el('zoom').value)
+    drag.deltaSeconds = clamp(snap(drag.at + (event.clientX - drag.x) / rate) - drag.at, drag.minDelta, drag.maxDelta)
+    for (const ref of drag.context.refs) {
+      const clip = [...root.querySelectorAll('.daw-clip')].find(c => c.dataset.clipId === ref.clipId)
+      const original = project.tracks.find(track => track.id === ref.trackId)?.clips.find(clip => clip.id === ref.clipId)
+      if (clip && original) clip.style.left = `${(original.atSeconds + drag.deltaSeconds) * rate}px`
+    }
   })
   listen(window, 'pointerup', event => {
     if (automationDrag) {
@@ -1291,27 +1406,39 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
       } else renderAutomation()
       return
     }
-    if (!drag) return
+    if (!drag || event.pointerId !== drag.pointerId) return
     const previous = drag; drag = null
-    if (!previous.moved) return
     suppressClick = true; setTimeout(() => { suppressClick = false }, 0)
-    run(() => { const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest('.daw-lane')
-      command({ type: 'clip.move', trackId: previous.trackId, clipId: previous.clipId, toTrackId: target?.dataset.trackId || previous.trackId, atSeconds: snap(previous.at + (event.clientX - previous.x) / Number(el('zoom').value)) }, '已移動片段；這次拖曳可一次復原')
-      selection = { trackId: target?.dataset.trackId || previous.trackId, clipId: previous.clipId }; renderInspector()
+    if (!groupContextCurrent(previous.context) || previous.grid !== gridKey()) { renderTracks(); return }
+    if (!previous.moved) {
+      if (previous.toggleOnRelease) choose(previous.trackId, previous.clipId, { toggle: true })
+      return
+    }
+    run(() => {
+      if (!groupContextCurrent(previous.context) || previous.grid !== gridKey()) return
+      if (previous.group) { moveGroupTo(previous.at + previous.deltaSeconds, previous.context); return }
+      const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest('.daw-lane')
+      const ref = { trackId: target?.dataset.trackId || previous.trackId, clipId: previous.clipId }
+      command({ type: 'clip.move', trackId: previous.trackId, clipId: previous.clipId, toTrackId: ref.trackId, atSeconds: previous.at + previous.deltaSeconds }, '已移動片段；這次拖曳可一次復原', { mode: clipSelection.mode, refs: [ref], primary: ref })
     }).finally(() => { renderTracks(); paintPlayhead() })
   })
-  listen(window, 'pointercancel', () => { drag = null; automationDrag = null; renderAutomation(); renderTracks(); paintPlayhead() })
+  listen(window, 'pointercancel', event => {
+    let cancelled = false
+    if (drag && (event.pointerId === undefined || drag.pointerId === event.pointerId)) { drag = null; cancelled = true }
+    if (automationDrag && (event.pointerId === undefined || automationDrag.pointerId === event.pointerId)) { automationDrag = null; cancelled = true }
+    if (cancelled) { renderAutomation(); renderTracks(); paintPlayhead() }
+  })
   listen(el('timeline'), 'dragover', event => { event.preventDefault(); el('timeline').dataset.drop = 'true' })
   listen(el('timeline'), 'dragleave', () => { el('timeline').dataset.drop = 'false' })
   listen(el('timeline'), 'drop', event => { event.preventDefault(); el('timeline').dataset.drop = 'false'; run(() => importFiles(event.dataTransfer?.files || [])) })
-  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); stop(); if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
+  listen(document, 'wf:mode-change', event => { if (event.detail?.mode !== 'editor') { drag = null; groupControls?.cancel(); selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement('已切換工作區，待接受的試聽已取消'); automationDrag = null; renderAutomation(); renderTracks(); stop(); if (job && ['render', 'transfer', 'note-analysis', 'note-reference'].includes(job.kind)) cancelJob('已切換工作區；可回來繼續編輯') } })
   listen(window, 'beforeunload', event => { if (dirty()) { event.preventDefault(); event.returnValue = '' } })
   function destroy() {
     if (destroyed) return
-    destroyed = true; discardReplacement(); cancelJob(); resetNoteCentering(); pitchClient?.dispose(); selectionControls?.destroy(); tempoControls?.destroy(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null; selectionMix = null
+    destroyed = true; drag = null; discardReplacement(); cancelJob(); resetNoteCentering(); pitchClient?.dispose(); selectionControls?.destroy(); tempoControls?.destroy(); groupControls?.destroy(); clipSelection.reset(); selectionHistory.clear(); stop(); disposers.forEach(dispose => dispose()); buffers.clear(); files.clear(); mix = null; selectionMix = null
     if (context) { context.close().catch(() => {}); context = null }
   }
-  listen(window, 'pagehide', event => { if (event.persisted) { selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement(); cancelJob(); stop() } else destroy() })
+  listen(window, 'pagehide', event => { if (event.persisted) { drag = null; groupControls?.cancel(); selectionControls?.cancel(); tempoControls?.cancel(); resetNoteCentering(); selectionVersion++; discardReplacement(); cancelJob(); renderTracks(); stop() } else destroy() })
   observedLyricKey = lyricSelectionKey(readLyricSelection())
   if (subscribeLyricSelection) {
     const unsubscribe = subscribeLyricSelection(onLyricSelectionChange)
@@ -1326,6 +1453,13 @@ export function initDawPanel({ decodeAsset, onSendToMaster, beforePlayback, getL
   tempoControls = createTempoControls({ root: el('tempo-tools'), getProject: () => project,
     isBusy: () => Boolean(job), getCurrentTime: currentTime,
     applyGridPatch: patch => command({ type: 'project.update', patch }, '已更新拍格；錄音速度與音高不變'), onStatus: status })
+  groupControls = createClipGroupControls({ host: el('group-tools'), getProject: () => project,
+    getSelection: () => clipSelection, isBusy: () => Boolean(job), getOwnerVersion: () => generation,
+    getGridInfo: () => ({ stepSeconds: el('snap').checked ? gridStep() : .01, snapEnabled: el('snap').checked, version: gridKey() }),
+    moveTo: moveGroupTo, nudge: nudgeGroup, duplicateToEnd: duplicateGroup, remove: removeGroup,
+    clear: context => { if (groupContextCurrent(context)) { clipSelection.clear(); selectionChanged() } },
+    exit: context => { if (groupContextCurrent(context)) setMultiMode(false) }, onStatus: status })
+  rememberSelection()
   for (let midi = 24; midi <= 95; midi++) {
     const option = node('option', '', midiToNote(midi)); option.value = String(midi); el('note-center-target').append(option)
   }

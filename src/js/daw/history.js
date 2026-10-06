@@ -42,6 +42,7 @@ export class ProjectHistory {
     this._maxBytes = maxBytes
     this._stack = []
     this._index = -1
+    this._nextKey = 0
     this.reset(initial)
   }
 
@@ -50,12 +51,16 @@ export class ProjectHistory {
   get length() { return this._stack.length }
   get current() { return this._index < 0 ? null : JSON.parse(this._stack[this._index].json) }
   get bytes() { return this._stack.reduce((sum, item) => sum + item.bytes, 0) }
+  // UI sidecars can follow history without retaining project/audio objects.
+  // Keys are local to this history and are never serialized into a project.
+  get currentKey() { return this._stack[this._index]?.key ?? null }
+  get retainedKeys() { return this._stack.map(item => item.key) }
 
   _entry(project) {
     const json = JSON.stringify(cloneProjectMetadata(project))
     const bytes = new TextEncoder().encode(json).length
     if (bytes > this._maxBytes) throw new Error('Project exceeds the history memory budget')
-    return { json, bytes }
+    return { json, bytes, key: ++this._nextKey }
   }
 
   push(project) {

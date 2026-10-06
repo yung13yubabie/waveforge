@@ -293,6 +293,118 @@ function clipById(track, clipId) {
   if (!clip) fail(`clip not found: ${clipId}`)
   return clip
 }
+// Group commands accept data only, including their reference arrays. Reject
+// accessors and hidden/symbol keys before reading them or cloning metadata.
+function groupKeys(value, allowed, label) {
+  object(value, label)
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!allowed.includes(key) || !descriptor.enumerable || !own(descriptor, 'value')) fail(`${label}: unsupported field ${String(key)}`)
+  }
+}
+function groupArray(value, label) {
+  array(value, label, DAW_LIMITS.maxClips)
+  if (Object.getPrototypeOf(value) !== Array.prototype || !value.length) fail(`${label} must contain 1–${DAW_LIMITS.maxClips} items`)
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === 'length') continue
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (typeof key !== 'string' || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length ||
+        !descriptor.enumerable || !own(descriptor, 'value')) fail(`${label}: invalid array metadata`)
+  }
+  for (let index = 0; index < value.length; index++) if (!own(value, index)) fail(`${label}: missing item`)
+}
+function resolveClipGroup(project, refs) {
+  groupArray(refs, 'clip references')
+  const seen = new Set()
+  return refs.map(ref => {
+    groupKeys(ref, ['trackId', 'clipId'], 'clip reference')
+    id(ref.trackId, 'reference track ID'); unique(ref.clipId, seen, 'reference clip ID')
+    const track = trackById(project, ref.trackId), clip = clipById(track, ref.clipId)
+    return { track, clip }
+  })
+}
+function describeResolvedGroup(selected) {
+  const startSeconds = Math.min(...selected.map(({ clip }) => clip.atSeconds))
+  const endSeconds = Math.max(...selected.map(({ clip }) => clip.atSeconds + clip.durationSeconds))
+  return { refs: selected.map(({ track, clip }) => ({ trackId: track.id, clipId: clip.id })),
+    count: selected.length, trackCount: new Set(selected.map(({ track }) => track.id)).size,
+    startSeconds, endSeconds, durationSeconds: endSeconds - startSeconds,
+    minDeltaSeconds: startSeconds === 0 ? 0 : -startSeconds, maxDeltaSeconds: DAW_LIMITS.maxDurationSeconds - endSeconds }
+}
+/** Group positions share one delta. Bounds never clamp members separately or
+ * quantize source offsets, durations, fades or common-envelope coordinates. */
+export function describeClipGroup(project, refs) {
+  validateProject(project)
+  return describeResolvedGroup(resolveClipGroup(project, refs))
+}
+function validateGroupDelta(selected, deltaSeconds) {
+  const { minDeltaSeconds, maxDeltaSeconds } = describeResolvedGroup(selected)
+  number(deltaSeconds, 'clip group delta seconds', minDeltaSeconds, maxDeltaSeconds)
+}
+function resolvedGroupOverlaps(selected, deltaSeconds, duplicate) {
+  const selectedIds = new Set(selected.map(({ clip }) => clip.id)), overlaps = []
+  for (const { track, clip } of selected) {
+    const at = clip.atSeconds + deltaSeconds, end = at + clip.durationSeconds
+    for (const other of track.clips) {
+      // Moving replaces the selected clips. Copying leaves all originals in
+      // place, so those originals must also count as potential collisions.
+      if (!duplicate && selectedIds.has(other.id)) continue
+      const startSeconds = Math.max(at, other.atSeconds)
+      const endSeconds = Math.min(end, other.atSeconds + other.durationSeconds)
+      // Endpoints are half-open. Only arithmetic roundoff is ignored, far
+      // below a single native/output frame even at the latest project time.
+      const tolerance = 8 * Number.EPSILON * Math.max(1, Math.abs(startSeconds), Math.abs(endSeconds))
+      if (endSeconds - startSeconds > tolerance) overlaps.push({ trackId: track.id, clipId: clip.id,
+        otherClipId: other.id, startSeconds, endSeconds })
+    }
+  }
+  return overlaps
+}
+/** Concrete same-track collision pairs for preview and the atomic guard. */
+export function getClipGroupOverlaps(project, refs, deltaSeconds, options = {}) {
+  validateProject(project)
+  groupKeys(options, ['duplicate'], 'clip overlap options')
+  if (own(options, 'duplicate') && typeof options.duplicate !== 'boolean') fail('duplicate must be boolean')
+  const selected = resolveClipGroup(project, refs)
+  validateGroupDelta(selected, deltaSeconds)
+  return resolvedGroupOverlaps(selected, deltaSeconds, options.duplicate === true)
+}
+function applyClipGroupCommand(project, command) {
+  const duplicate = command.type === 'clips.duplicate', remove = command.type === 'clips.remove'
+  groupKeys(command, remove ? ['type', 'refs'] : ['type', 'refs', 'deltaSeconds', 'allowOverlap', ...(duplicate ? ['newIds'] : [])], 'clip group command')
+  const selected = resolveClipGroup(project, command.refs)
+  if (remove) {
+    const selectedIds = new Set(selected.map(({ clip }) => clip.id))
+    for (const track of project.tracks) track.clips = track.clips.filter(clip => !selectedIds.has(clip.id))
+    return
+  }
+  validateGroupDelta(selected, command.deltaSeconds)
+  if (own(command, 'allowOverlap') && typeof command.allowOverlap !== 'boolean') fail('allowOverlap must be boolean')
+  if (command.allowOverlap !== true) {
+    const overlaps = resolvedGroupOverlaps(selected, command.deltaSeconds, duplicate)
+    if (overlaps.length) {
+      const error = new Error(`DAW: clip group would overlap ${overlaps.length} existing clip pair(s); confirm overlap for this operation`)
+      error.code = 'CLIP_GROUP_OVERLAP'; error.overlaps = overlaps
+      throw error
+    }
+  }
+  if (duplicate) {
+    const usedIds = new Set(project.tracks.flatMap(track => track.clips.map(clip => clip.id)))
+    if (usedIds.size + selected.length > DAW_LIMITS.maxClips) fail('project exceeds 256 clips')
+    if (own(command, 'newIds')) {
+      groupArray(command.newIds, 'new clip IDs')
+      if (command.newIds.length !== selected.length) fail('new clip IDs must match clip references')
+    }
+    const newIds = selected.map((_, index) => {
+      const newId = command.newIds ? command.newIds[index] : generateId('clip')
+      unique(newId, usedIds, 'clip ID')
+      return newId
+    })
+    selected.forEach(({ track, clip }, index) => track.clips.push({ ...clone(clip), id: newIds[index], atSeconds: clip.atSeconds + command.deltaSeconds }))
+  } else {
+    for (const { clip } of selected) clip.atSeconds += command.deltaSeconds
+  }
+}
 function patch(target, changes, allowed, label) {
   onlyKeys(changes, allowed, label)
   Object.assign(target, clone(changes))
@@ -326,6 +438,8 @@ function cropTrackGainRegion(region, clip, intersection) {
 /** Every successful command returns independent metadata; failed commands do not touch input. */
 export function applyCommand(project, command) {
   validateProject(project); object(command, 'command')
+  const type = Object.getOwnPropertyDescriptor(command, 'type')
+  if (!type || !own(type, 'value')) fail('command type must be plain metadata')
   const next = clone(project)
   switch (command.type) {
     case 'project.update': {
@@ -375,6 +489,9 @@ export function applyCommand(project, command) {
       break
     }
     case 'clip.add': trackById(next, command.trackId).clips.push(makeClip(next, clone(command.clip))); break
+    case 'clips.move':
+    case 'clips.duplicate':
+    case 'clips.remove': applyClipGroupCommand(next, command); break
     case 'clip.remove': {
       const track = trackById(next, command.trackId); clipById(track, command.clipId)
       track.clips = track.clips.filter(clip => clip.id !== command.clipId); break
