@@ -273,6 +273,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1188, height: 761 
     await testInfo.attach('editor-composition.json', { body: JSON.stringify(composition, null, 2), contentType: 'application/json' })
     await page.locator('.daw-grid-settings > summary').click()
     await expect(page.locator('#daw-zoom')).toBeVisible()
+    for (const selector of ['#daw-tempo', '#daw-grid', '#daw-zoom']) {
+      const box = await page.locator(selector).boundingBox()
+      expect(box.x, selector).toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, selector).toBeLessThanOrEqual(viewport.width)
+    }
     await page.locator('#daw-zoom').selectOption('96')
     await page.locator('.daw-grid-settings > summary').click()
     await expect(page.locator('#daw-zoom')).toBeHidden()

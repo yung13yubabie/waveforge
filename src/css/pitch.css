@@ -1,10 +1,10 @@
 .mode-tab[data-mode=pitch] { min-height: 44px; }
-#app.mode-pitch { grid-template: var(--header-h) auto minmax(0, 1fr) / minmax(0, 1fr); }
+#app.mode-pitch { grid-template: var(--header-h) auto minmax(0, 1fr) / minmax(0, 1fr); height: 100dvh; min-height: 0; overflow: hidden; }
 #app.mode-pitch > .header { grid-row: 1; }
 #app.mode-pitch > .mode-nav { grid-row: 2; min-height: 48px; flex-wrap: wrap; }
 #app.mode-pitch > :is(.analysis-bar, .transport, .chain-panel),
 #app.mode-pitch .header > .header-actions { display: none; }
-#app.mode-pitch > #mode-pitch { grid-column: 1 / -1; grid-row: 3; overflow: auto; min-width: 0; }
+#app.mode-pitch > #mode-pitch { grid-column: 1 / -1; grid-row: 3; overflow: auto; min-width: 0; min-height: 0; }
 .pitch-panel { padding: 20px 24px 80px; min-width: 0; width: 100%; flex: 0 0 auto; user-select: text; max-width: 1600px; margin: 0 auto; }
 .pitch-panel [hidden] { display: none !important; }
 .pitch-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }

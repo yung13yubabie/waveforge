@@ -39,6 +39,7 @@
 .daw-panel summary { padding: 12px 0; min-height: 44px; cursor: pointer; font-size: 13px; font-weight: 500; }
 .daw-grid-settings > summary { padding: 12px 8px; border-radius: 5px; }
 .daw-grid-settings[open] > summary { color: var(--c-primary); background: var(--c-bg-surface); }
+.daw-grid-settings:not([open]) > .daw-grid-fields { display: none; }
 .daw-grid-fields { position: absolute; right: 0; top: 100%; width: min(100%, 410px); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 12px; background: var(--c-bg-elevated); border: 1px solid var(--c-border-focus); box-shadow: 0 8px 20px #0004; z-index: 5; }
 .daw-grid-fields .daw-note { width: 100%; margin: 0; }
 .daw-inline input { width: 94px; }
