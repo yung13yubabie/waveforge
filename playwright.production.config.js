@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   reporter: process.env.CI ? 'line' : undefined,
   testDir: './tests/e2e',
-  testMatch: ['final-preview.spec.js', 'smoke.spec.js', 'controls-stems.spec.js', 'session-cleanup.spec.js', 'studio-layout.spec.js', 'audio-trust-foundation.spec.js', 'lyrics.spec.js', 'lyrics-auto-alignment.spec.js', 'daw-editor.spec.js', 'daw-transfer.spec.js', 'daw-automation.spec.js', 'daw-replacement.spec.js', 'daw-transpose.spec.js', 'daw-transpose-overload.spec.js', 'daw-vocal-regions.spec.js', 'daw-selection.spec.js', 'daw-note-centering.spec.js', 'signalsmith-lifecycle.spec.js', 'pitch-assistant.spec.js', 'foundation-recovery.spec.js', 'resource-lifecycle.spec.js'],
+  testMatch: ['final-preview.spec.js', 'smoke.spec.js', 'controls-stems.spec.js', 'session-cleanup.spec.js', 'studio-layout.spec.js', 'audio-trust-foundation.spec.js', 'lyrics.spec.js', 'lyrics-auto-alignment.spec.js', 'daw-editor.spec.js', 'daw-transfer.spec.js', 'daw-automation.spec.js', 'daw-replacement.spec.js', 'daw-transpose.spec.js', 'daw-transpose-overload.spec.js', 'daw-vocal-regions.spec.js', 'daw-selection.spec.js', 'daw-note-centering.spec.js', 'daw-tempo-grid.spec.js', 'signalsmith-lifecycle.spec.js', 'pitch-assistant.spec.js', 'foundation-recovery.spec.js', 'resource-lifecycle.spec.js'],
   outputDir: './test-results-production',
   timeout: 30000,
   workers: 1,

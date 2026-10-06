@@ -73,12 +73,14 @@ export function validateTimelineSelection(selection, durationSeconds, sampleRate
   return selection
 }
 export function validateProject(project) {
-  onlyKeys(project, ['schema', 'id', 'revision', 'name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'assets', 'tracks', 'timelineSelection'], 'project')
+  onlyKeys(project, ['schema', 'id', 'revision', 'name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'gridOriginSeconds', 'assets', 'tracks', 'timelineSelection'], 'project')
   if (project.schema !== PROJECT_SCHEMA) fail('unsupported project schema')
   id(project.id, 'project ID'); text(project.name, 'project name')
   integer(project.revision, 'revision', 0, Number.MAX_SAFE_INTEGER - 1)
   if (!OUTPUT_RATES.includes(project.sampleRate)) fail('output sample rate must be 44100, 48000 or 96000 Hz')
   number(project.tempo, 'tempo', 20, 300)
+  // Grid metadata never changes audio timing and must survive deleting clips.
+  if (own(project, 'gridOriginSeconds')) number(project.gridOriginSeconds, 'grid origin seconds', 0, DAW_LIMITS.maxDurationSeconds)
   number(project.masterGainDb, 'master gain dB', -60, 12)
   if (!Array.isArray(project.timeSignature) || project.timeSignature.length !== 2) fail('invalid time signature')
   integer(project.timeSignature[0], 'time signature numerator', 1, 16)
@@ -326,7 +328,12 @@ export function applyCommand(project, command) {
   validateProject(project); object(command, 'command')
   const next = clone(project)
   switch (command.type) {
-    case 'project.update': patch(next, command.patch, ['name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature'], 'project patch'); break
+    case 'project.update': {
+      patch(next, command.patch, ['name', 'masterGainDb', 'sampleRate', 'tempo', 'timeSignature', 'gridOriginSeconds'], 'project patch')
+      // Check the raw optional field too: JSON cloning can discard undefined.
+      if (own(command.patch, 'gridOriginSeconds')) number(command.patch.gridOriginSeconds, 'grid origin seconds', 0, DAW_LIMITS.maxDurationSeconds)
+      break
+    }
     case 'timelineSelection.set': {
       onlyKeys(command, ['type', 'selection'], 'timeline selection command')
       // Validate before JSON cloning; non-finite numbers must never become null.
